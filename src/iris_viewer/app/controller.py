@@ -110,9 +110,7 @@ class ViewerController:
         self._bind_viewer_events()
 
     def _configure_backend_availability(self):
-        backend_names = {b.name for b in self.backends if b.is_available()}
-        for method in ["Cellpose", "StarDist", "CellSAM", "InstanSeg"]:
-            self.segmentation_panel.set_method_available(method, method in backend_names)
+        self.segmentation_panel.update_available_methods(self.pipeline_service.get_available_methods())
 
     def _bind_control_signals(self):
         self.control_widget.loadDirectoryTriggered.connect(self._on_load_directory)
@@ -126,8 +124,8 @@ class ViewerController:
         self.control_widget.viewLockToggled.connect(self._toggle_view_lock)
 
     def _bind_segmentation_signals(self):
-        self.segmentation_panel.runSegmentation.connect(self._run_segmentation_pipeline)
-        self.segmentation_panel.cancelSegmentation.connect(self._cancel_segmentation)
+        self.segmentation_panel.runSequence.connect(self._run_segmentation_pipeline)
+        self.segmentation_panel.cancelSequence.connect(self._cancel_segmentation)
 
     def _bind_consensus_signals(self):
         self.consensus_panel.generateConsensusRequested.connect(self._generate_consensus)
@@ -361,19 +359,18 @@ class ViewerController:
         n_cells = len(np.unique(mask_data)) - 1
         self.control_widget.update_dashboard(seg_status="Loaded from file", total_cells=f"{n_cells:,}")
 
-    def _run_segmentation_pipeline(self, method_names: list, params: dict):
+    def _run_segmentation_pipeline(self, steps: list):
         if self.state.raw_image is None:
             QMessageBox.warning(self.control_widget, "No Image", "Load an image before running segmentation.")
             return
-            
-        steps = []
-        for method_name in method_names:
-            self.state.segmentation_results.pop(method_name, None)
-            self.state.segmentation_status[method_name] = "Queued"
-            self.segmentation_panel.update_method_status(method_name, "Queued")
-            
-            method_kwargs = self._build_method_kwargs(method_name, params)
-            steps.append(SegmentationStep(method_name=method_name, params=method_kwargs))
+
+        self.state.segmentation_results.clear()
+        self.state.segmentation_status.clear()
+        
+        for idx, step in enumerate(steps):
+            step_key = f"{step.method_name}_{idx}"
+            self.state.segmentation_status[step_key] = "Queued"
+            self.segmentation_panel.update_step_status(idx, "Queued")
             
         self.segmentation_panel.set_running_state(True)
         
@@ -386,66 +383,23 @@ class ViewerController:
             on_error=self._on_segmentation_error
         )
 
-    def _build_method_kwargs(self, method_name: str, params: dict) -> dict:
-        def get_idx(name):
-            return self.state.markers.index(name) if name in self.state.markers else 0
-        def get_opt_idx(name):
-            return self.state.markers.index(name) if name in self.state.markers and name != 'None' else None
-            
-        kwargs = {}
-        if method_name == "Cellpose":
-            kwargs['nuclear_channel'] = get_idx(params.get('cp_nuc'))
-            kwargs['membrane_channel'] = get_opt_idx(params.get('cp_mem'))
-            kwargs['expand_radius'] = 0
-            kwargs['model_type'] = params.get('cp_model', 'cyto3')
-            kwargs['diameter'] = params.get('cp_diam', None)
-            kwargs['flow_threshold'] = params.get('cp_flow', 0.4)
-            kwargs['cellprob_threshold'] = params.get('cp_prob', 0.0)
-            
-        elif method_name == "StarDist":
-            kwargs['nuclear_channel'] = get_idx(params.get('sd_nuc'))
-            kwargs['membrane_channel'] = None
-            kwargs['expand_radius'] = params.get('sd_cyto', 0)
-            kwargs['diameter'] = None
-            kwargs['model_name'] = params.get('sd_model', '2D_versatile_fluo')
-            kwargs['prob_thresh'] = params.get('sd_prob', 0.5)
-            kwargs['nms_thresh'] = params.get('sd_nms', 0.4)
-            
-        elif method_name == "InstanSeg":
-            kwargs['nuclear_channel'] = get_idx(params.get('is_nuc'))
-            kwargs['membrane_channel'] = get_opt_idx(params.get('is_mem'))
-            kwargs['expand_radius'] = 0
-            kwargs['diameter'] = None
-            kwargs['model_name'] = params.get('is_model', 'fluorescence_nuclei_and_cells')
-            kwargs['pixel_size'] = params.get('is_pixel', 0.5)
-            
-        elif method_name == "CellSAM":
-            kwargs['nuclear_channel'] = 0
-            kwargs['membrane_channel'] = None
-            kwargs['expand_radius'] = 0
-            kwargs['diameter'] = None
-            kwargs['token'] = params.get('cellsam_token', '')
-            kwargs['chan1_idx'] = get_opt_idx(params.get('cs_r'))
-            kwargs['chan2_idx'] = get_opt_idx(params.get('cs_g'))
-            kwargs['chan3_idx'] = get_opt_idx(params.get('cs_b'))
-            
-        return kwargs
+    def _on_segmentation_error(self, step_idx: int, method_name: str, error_msg: str):
+        step_key = f"{method_name}_{step_idx}"
+        self.state.segmentation_status[step_key] = "Failed"
+        self.segmentation_panel.update_step_status(step_idx, "Failed")
+        print(f"[Pipeline Error] {method_name} (Step {step_idx}): {error_msg}")
 
-    def _on_segmentation_error(self, method_name: str, error_msg: str):
-        self.state.segmentation_status[method_name] = "Failed"
-        self.segmentation_panel.update_method_status(method_name, "Failed")
-        print(f"[Pipeline Error] {method_name}: {error_msg}")
-
-    def _on_single_segmentation_done(self, method_name: str, seg_result: dict):
-        self.state.segmentation_results[method_name] = seg_result
-        self.state.segmentation_status[method_name] = "Done"
-        self.segmentation_panel.update_method_status(method_name, "Done")
+    def _on_single_segmentation_done(self, step_idx: int, method_name: str, seg_result: dict):
+        step_key = f"{method_name}_{step_idx}"
+        self.state.segmentation_results[step_key] = seg_result
+        self.state.segmentation_status[step_key] = "Done"
+        self.segmentation_panel.update_step_status(step_idx, "Done")
         
         scale_val = self.control_widget.spin_scale.value()
         
         def _add_mask_layer(mask_data, name_suffix):
             if mask_data is None: return
-            layer_name = f"{method_name} {name_suffix}"
+            layer_name = f"{method_name} (S{step_idx}) {name_suffix}"
             try:
                 seg_layer = self.viewer.add_labels(
                     mask_data, name=layer_name, opacity=0.3,
@@ -544,10 +498,16 @@ class ViewerController:
     def _cancel_segmentation(self):
         self.pipeline_service.cancel_all()
         self.segmentation_panel.set_running_state(False)
-        for method in self.state.segmentation_status:
-            if self.state.segmentation_status[method] in ("Running", "Queued"):
-                self.state.segmentation_status[method] = "Cancelled"
-                self.segmentation_panel.update_method_status(method, "Idle")
+        for key in list(self.state.segmentation_status.keys()):
+            if self.state.segmentation_status[key] in ("Running", "Queued"):
+                self.state.segmentation_status[key] = "Cancelled"
+                
+                # Extract step index from key 'Method_Idx'
+                try:
+                    idx = int(key.split('_')[-1])
+                    self.segmentation_panel.update_step_status(idx, "Cancelled")
+                except ValueError:
+                    pass
                 
         QMessageBox.information(
             self.control_widget, "Cancellation Sent", 

@@ -57,6 +57,7 @@ class CellSAMBackend(SegmentationBackend):
             nuc = self._normalize_channel(np.asarray(image[nuclear_channel] if image.ndim == 3 else image))
             composite = np.stack([nuc, nuc, nuc], axis=-1)
 
+        print(f"[IRIS-Viewer] CellSAM Execution: Segmenting...")
         mask, _, _ = segment_cellular_image(composite, model, device=device)
         return {
             'nuclear': mask.astype(np.uint32),

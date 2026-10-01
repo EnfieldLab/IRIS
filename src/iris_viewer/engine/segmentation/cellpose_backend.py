@@ -61,56 +61,33 @@ class CellposeBackend(SegmentationBackend):
                 self._cached_model_cyto = models.CellposeModel(gpu=use_gpu, device=torch_device, model_type=model_type)
             self._cached_cyto_type = model_type
             self._cached_device = device
-            
-        # Cache Nuclei Model
-        if run_two_pass:
-            if self._cached_model_nuc is None or self._cached_device != device:
-                if is_v4:
-                    self._cached_model_nuc = models.CellposeModel(gpu=use_gpu, device=torch_device, pretrained_model='nuclei')
-                else:
-                    self._cached_model_nuc = models.CellposeModel(gpu=use_gpu, device=torch_device, model_type='nuclei')
 
         try:
-            if run_two_pass:
-                # PASS 1: Nuclear Only (DAPI)
-                print(f"[IRIS-Viewer] Cellpose 2-Pass Execution: Running 'nuclei' model on channel {nuclear_channel}...")
-                nuc_img = np.asarray(image[nuclear_channel])
-                
-                nuc_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
-                if not is_v4: nuc_kwargs['channels'] = [0,0]
-                    
-                res_nuc = self._cached_model_nuc.eval(nuc_img, **nuc_kwargs)
-                
-                # PASS 2: Cytoplasm (DAPI + Membrane Marker)
-                print(f"[IRIS-Viewer] Cellpose 2-Pass Execution: Running '{model_type}' model on channels {membrane_channel} and {nuclear_channel}...")
+            if membrane_channel is not None and membrane_channel != nuclear_channel:
                 mem_img = np.asarray(image[membrane_channel])
-                input_cyto = np.stack([mem_img, nuc_img], axis=0 if is_v4 else -1)
+                nuc_img = np.asarray(image[nuclear_channel])
+                input_img = np.stack([mem_img, nuc_img], axis=0 if is_v4 else -1)
                 
-                cyto_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
-                if is_v4: cyto_kwargs['channel_axis'] = 0
-                else: cyto_kwargs['channels'] = [1,2]
-                    
-                res_cyto = self._cached_model_cyto.eval(input_cyto, **cyto_kwargs)
-                
-                masks_nuc = res_nuc[0]
-                masks_cyto = res_cyto[0]
-                result = {'nuclear': masks_nuc.astype(np.uint32), 'cytoplasm': masks_cyto.astype(np.uint32)}
-                
+                kwargs_eval = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
+                if is_v4: kwargs_eval['channel_axis'] = 0
+                else: kwargs_eval['channels'] = [1, 2] # 1=membrane, 2=nuclear
             else:
                 input_img = np.asarray(image[nuclear_channel] if image.ndim == 3 else image)
-                single_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
-                if not is_v4: single_kwargs['channels'] = [0,0]
+                kwargs_eval = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
+                if not is_v4: kwargs_eval['channels'] = [0, 0]
 
-                res = self._cached_model_cyto.eval(input_img, **single_kwargs)
-                masks = res[0]
-                result = {'nuclear': masks.astype(np.uint32)}
-                
-                if model_type != 'nuclei' and expand_radius == 0:
-                    result['cytoplasm'] = masks.astype(np.uint32)
-                elif expand_radius > 0:
-                    result['cytoplasm'] = self._expand_nuclear_to_cytoplasm(masks, expand_radius)
-                else:
-                    result['cytoplasm'] = None
+            print(f"[IRIS-Viewer] Cellpose Execution: Running '{model_type}'...")
+            res = self._cached_model_cyto.eval(input_img, **kwargs_eval)
+            masks = res[0]
+            
+            result = {}
+            if model_type == 'nuclei':
+                result['nuclear'] = masks.astype(np.uint32)
+                result['cytoplasm'] = None
+            else:
+                # If a cyto model is run, it segments the whole cell. We assign it to both.
+                result['nuclear'] = masks.astype(np.uint32)
+                result['cytoplasm'] = masks.astype(np.uint32)
 
         finally:
             if use_gpu:

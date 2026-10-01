@@ -68,6 +68,8 @@ class StardistBackend(SegmentationBackend):
         h, w = nuc_img.shape
         n_tiles = (max(1, int(np.ceil(h / 1024))), max(1, int(np.ceil(w / 1024))))
         
+        print(f"[IRIS-Viewer] StarDist Execution: Running '{model_name}'...")
+        
         # Execute with cached model
         labels, details = self._cached_model.predict_instances(
             nuc_img,

@@ -72,6 +72,7 @@ class InstanSegBackend(SegmentationBackend):
         torch.quantile = safe_quantile
 
         try:
+            print(f"[IRIS-Viewer] InstanSeg Execution: Running '{model_name}'...")
             eval_result = self._cached_model.eval_medium_image(
                 input_tensor, 
                 pixel_size=pixel_size, 

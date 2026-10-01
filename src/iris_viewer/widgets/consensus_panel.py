@@ -50,7 +50,6 @@ class ConsensusPanelWidget(QWidget):
         self._build_generation_controls()
         self._build_threshold_controls()
         self._build_overlay_controls()
-        self._build_color_legend()
         self._build_review_controls()
         self._build_statistics()
         self.main_layout.addStretch()
@@ -163,38 +162,6 @@ class ConsensusPanelWidget(QWidget):
             )
             self.method_visibility_checks[method] = chk
             gl.addWidget(chk)
-
-        self.main_layout.addWidget(group)
-
-    # ── Color Legend ─────────────────────────────────────────────────
-    def _build_color_legend(self):
-        group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(5, 5, 5, 5)
-        gl.setSpacing(4)
-        group.setLayout(gl)
-
-        title = QLabel("Confidence Legend")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
-
-        self._add_separator(gl)
-
-        for label_text, color in [
-            ("High Confidence (≥ threshold)", CONFIDENCE_HIGH_COLOR),
-            ("Medium Confidence (≥ 0.5 × threshold)", CONFIDENCE_MEDIUM_COLOR),
-            ("Low Confidence (< 0.5 × threshold)", CONFIDENCE_LOW_COLOR),
-        ]:
-            row = QHBoxLayout()
-            swatch = QLabel()
-            swatch.setFixedSize(16, 16)
-            swatch.setStyleSheet(f"background-color: {color}; border: 1px solid #888;")
-            row.addWidget(swatch)
-            lbl = QLabel(label_text)
-            lbl.setStyleSheet("color: #CCC; font-size: 11px;")
-            row.addWidget(lbl)
-            row.addStretch()
-            gl.addLayout(row)
 
         self.main_layout.addWidget(group)
 

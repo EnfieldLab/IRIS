@@ -1,354 +1,388 @@
-""" IRIS-Viewer Segmentation Panel Widget """
+""" IRIS-Viewer Segmentation Sequence Builder Panel """
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QPushButton, QGroupBox, QFrame,
-    QSizePolicy, QScrollArea, QLineEdit
+    QDoubleSpinBox, QPushButton, QGroupBox, QFrame, QScrollArea, QLineEdit, QStackedWidget,
+    QMenu, QAction
 )
 from qtpy.QtCore import Qt, Signal
 from iris_viewer.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
+from iris_viewer.engine.pipeline import SegmentationStep
+
+class MultiSelectButton(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setText("None")
+        self.setStyleSheet("text-align: left; padding: 4px;")
+        self.menu = QMenu(self)
+        self.setMenu(self.menu)
+        self.menu.aboutToHide.connect(self._update_text)
+        self.menu.triggered.connect(self._update_text)
+
+    def addItems(self, items):
+        self.menu.clear()
+        for text in items:
+            action = QAction(text, self.menu)
+            action.setCheckable(True)
+            self.menu.addAction(action)
+
+    def clear(self):
+        self.menu.clear()
+        self.setText("None")
+
+    def get_checked_items(self):
+        return [act.text() for act in self.menu.actions() if act.isChecked()]
+
+    def set_checked_items(self, items):
+        for act in self.menu.actions():
+            act.setChecked(act.text() in items)
+        self._update_text()
+
+    def _update_text(self):
+        checked = self.get_checked_items()
+        if not checked:
+            self.setText("None")
+        else:
+            self.setText(", ".join(checked))
+
+class StepWidget(QFrame):
+    removed = Signal(object)
+
+    def __init__(self, available_methods, markers, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet("QFrame { background-color: #2A2A2A; border-radius: 4px; border: 1px solid #444; margin-bottom: 2px; padding: 4px; }")
+        self.available_methods = available_methods
+        self.markers = markers
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(6)
+        
+        # Step Type Row
+        row0 = QHBoxLayout()
+        self.combo_type = QComboBox()
+        self.combo_type.addItems(["Nuclear (Base)", "Cytoplasm (Sequential)", "Cytoplasm (Dilate Remaining)"])
+        self.combo_type.currentTextChanged.connect(self._on_type_changed)
+        row0.addWidget(QLabel("Step Type:"))
+        row0.addWidget(self.combo_type, stretch=1)
+        
+        self.lbl_status = QLabel("Idle")
+        self.lbl_status.setStyleSheet("color: #888; font-size: 10px; font-weight: bold;")
+        row0.addWidget(self.lbl_status)
+        
+        self.btn_remove = QPushButton("X")
+        self.btn_remove.setFixedSize(20, 20)
+        self.btn_remove.setStyleSheet("background-color: #CC4444; color: white; font-weight: bold; border-radius: 3px;")
+        self.btn_remove.clicked.connect(lambda: self.removed.emit(self))
+        row0.addWidget(self.btn_remove)
+        main_layout.addLayout(row0)
+
+        # Method Row
+        self.row_method = QHBoxLayout()
+        self.combo_method = QComboBox()
+        self.combo_method.addItems(available_methods)
+        self.combo_method.currentTextChanged.connect(self._on_method_changed)
+        self.row_method.addWidget(QLabel("Algorithm:"))
+        self.row_method.addWidget(self.combo_method, stretch=1)
+        
+        # Dilation Radius (Only for Type 3)
+        self.spin_dilate = QSpinBox()
+        self.spin_dilate.setRange(1, 100)
+        self.spin_dilate.setValue(5)
+        self.row_method.addWidget(self.spin_dilate)
+        self.lbl_dilate = QLabel("Radius (px):")
+        self.row_method.addWidget(self.lbl_dilate)
+        self.spin_dilate.hide()
+        self.lbl_dilate.hide()
+        main_layout.addLayout(self.row_method)
+
+        # Channels Row
+        self.row_channels = QHBoxLayout()
+        self.combo_nuc = QComboBox()
+        self.combo_mem = MultiSelectButton()
+        self._update_dropdowns()
+        
+        self.lbl_nuc = QLabel("Nuc:")
+        self.row_channels.addWidget(self.lbl_nuc)
+        self.row_channels.addWidget(self.combo_nuc, stretch=1)
+        self.lbl_mem = QLabel("Mem:")
+        self.row_channels.addWidget(self.lbl_mem)
+        self.row_channels.addWidget(self.combo_mem, stretch=1)
+        main_layout.addLayout(self.row_channels)
+
+        # Advanced Settings Stack
+        self.stack = QStackedWidget()
+        
+        self.page_cp = QWidget()
+        cp_lyt = QHBoxLayout(self.page_cp)
+        cp_lyt.setContentsMargins(0,0,0,0)
+        self.combo_cp_model = QComboBox()
+        self.combo_cp_model.addItems(["cyto3", "cyto2", "cyto", "nuclei"])
+        self.spin_cp_diam = QSpinBox()
+        self.spin_cp_diam.setRange(0, 500)
+        self.spin_cp_diam.setSpecialValueText("Auto")
+        cp_lyt.addWidget(QLabel("Model:"))
+        cp_lyt.addWidget(self.combo_cp_model)
+        cp_lyt.addWidget(QLabel("Diam:"))
+        cp_lyt.addWidget(self.spin_cp_diam)
+        self.stack.addWidget(self.page_cp)
+        
+        self.page_sd = QWidget()
+        sd_lyt = QHBoxLayout(self.page_sd)
+        sd_lyt.setContentsMargins(0,0,0,0)
+        self.combo_sd_model = QComboBox()
+        self.combo_sd_model.addItems(["2D_versatile_fluo", "2D_versatile_he"])
+        self.spin_sd_prob = QDoubleSpinBox()
+        self.spin_sd_prob.setRange(0.0, 1.0)
+        self.spin_sd_prob.setValue(0.5)
+        sd_lyt.addWidget(QLabel("Model:"))
+        sd_lyt.addWidget(self.combo_sd_model)
+        sd_lyt.addWidget(QLabel("Prob:"))
+        sd_lyt.addWidget(self.spin_sd_prob)
+        self.stack.addWidget(self.page_sd)
+        
+        self.page_is = QWidget()
+        is_lyt = QHBoxLayout(self.page_is)
+        is_lyt.setContentsMargins(0,0,0,0)
+        self.combo_is_model = QComboBox()
+        self.combo_is_model.addItems(["fluorescence_nuclei_and_cells", "fluorescence_nuclei"])
+        is_lyt.addWidget(QLabel("Model:"))
+        is_lyt.addWidget(self.combo_is_model)
+        self.stack.addWidget(self.page_is)
+
+        self.page_cs = QWidget()
+        cs_lyt = QHBoxLayout(self.page_cs)
+        cs_lyt.setContentsMargins(0,0,0,0)
+        self.txt_cs_token = QLineEdit()
+        self.txt_cs_token.setPlaceholderText("DeepCell Token")
+        self.txt_cs_token.setEchoMode(QLineEdit.Password)
+        cs_lyt.addWidget(QLabel("Token:"))
+        cs_lyt.addWidget(self.txt_cs_token)
+        self.stack.addWidget(self.page_cs)
+
+        self.page_empty = QWidget()
+        self.stack.addWidget(self.page_empty)
+
+        main_layout.addWidget(self.stack)
+        
+        self._on_method_changed(self.combo_method.currentText())
+        self._on_type_changed(self.combo_type.currentText())
+
+    def _update_dropdowns(self):
+        curr_nuc = self.combo_nuc.currentText()
+        checked_mems = self.combo_mem.get_checked_items()
+        
+        self.combo_nuc.blockSignals(True)
+        self.combo_nuc.clear()
+        self.combo_mem.clear()
+        
+        for m in self.markers:
+            self.combo_nuc.addItem(m)
+        self.combo_mem.addItems(self.markers)
+            
+        if curr_nuc in self.markers: self.combo_nuc.setCurrentText(curr_nuc)
+        else: self.combo_nuc.setCurrentIndex(0)
+            
+        self.combo_mem.set_checked_items(checked_mems)
+            
+        self.combo_nuc.blockSignals(False)
+
+    def _on_method_changed(self, method_name):
+        if method_name == "Cellpose": self.stack.setCurrentWidget(self.page_cp)
+        elif method_name == "StarDist": self.stack.setCurrentWidget(self.page_sd)
+        elif method_name == "InstanSeg": self.stack.setCurrentWidget(self.page_is)
+        elif method_name == "CellSAM": self.stack.setCurrentWidget(self.page_cs)
+        else: self.stack.setCurrentWidget(self.page_empty)
+        
+        # Hide mem if StarDist
+        step_type = self.combo_type.currentText()
+        if method_name == "StarDist" and step_type != "Cytoplasm (Dilate Remaining)":
+            self.lbl_mem.hide()
+            self.combo_mem.hide()
+        elif step_type == "Cytoplasm (Sequential)":
+            self.lbl_mem.show()
+            self.combo_mem.show()
+
+    def _on_type_changed(self, step_type):
+        if step_type == "Nuclear (Base)":
+            self.combo_method.show()
+            self.row_method.itemAt(0).widget().show() # QLabel Algorithm
+            self.spin_dilate.hide()
+            self.lbl_dilate.hide()
+            self.lbl_nuc.show()
+            self.combo_nuc.show()
+            self.lbl_mem.hide()
+            self.combo_mem.hide()
+            self.stack.show()
+            
+        elif step_type == "Cytoplasm (Sequential)":
+            self.combo_method.show()
+            self.row_method.itemAt(0).widget().show()
+            self.spin_dilate.hide()
+            self.lbl_dilate.hide()
+            self.lbl_nuc.show()
+            self.combo_nuc.show()
+            self.lbl_mem.show()
+            self.combo_mem.show()
+            self.stack.show()
+            self._on_method_changed(self.combo_method.currentText()) # re-evaluate hide logic
+            
+        elif step_type == "Cytoplasm (Dilate Remaining)":
+            self.combo_method.hide()
+            self.row_method.itemAt(0).widget().hide()
+            self.spin_dilate.show()
+            self.lbl_dilate.show()
+            self.lbl_nuc.hide()
+            self.combo_nuc.hide()
+            self.lbl_mem.hide()
+            self.combo_mem.hide()
+            self.stack.hide()
+
+    def update_markers(self, markers):
+        self.markers = markers
+        self._update_dropdowns()
+
+    def set_status(self, status: str):
+        self.lbl_status.setText(status)
+        color = "#888"
+        if status == "Running": color = "#44AAEE"
+        elif status == "Done": color = "#44AA44"
+        elif status == "Failed" or status == "Error": color = "#DD4444"
+        self.lbl_status.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+
+    def get_step_config(self, markers_list) -> SegmentationStep:
+        step_type = self.combo_type.currentText()
+        method = self.combo_method.currentText()
+        
+        nuc = self.combo_nuc.currentText()
+        nuc_idx = markers_list.index(nuc) if nuc in markers_list else 0
+        
+        checked_mems = self.combo_mem.get_checked_items()
+        mem_indices = [markers_list.index(m) for m in checked_mems if m in markers_list]
+        
+        params = {
+            'nuclear_channel': nuc_idx,
+            'membrane_channels': mem_indices,
+            'dilation_radius': self.spin_dilate.value() if step_type == "Cytoplasm (Dilate Remaining)" else 0
+        }
+        
+        if step_type != "Cytoplasm (Dilate Remaining)":
+            if method == "Cellpose":
+                params['model_type'] = self.combo_cp_model.currentText()
+                params['diameter'] = self.spin_cp_diam.value() if self.spin_cp_diam.value() > 0 else None
+                params['flow_threshold'] = 0.4
+                params['cellprob_threshold'] = 0.0
+            elif method == "StarDist":
+                params['model_name'] = self.combo_sd_model.currentText()
+                params['prob_thresh'] = self.spin_sd_prob.value()
+                params['nms_thresh'] = 0.4
+            elif method == "InstanSeg":
+                params['model_name'] = self.combo_is_model.currentText()
+                params['pixel_size'] = 0.5
+            elif method == "CellSAM":
+                params['token'] = self.txt_cs_token.text().strip()
+            
+        return SegmentationStep(method_name=method, params=params, rule=step_type)
 
 class SegmentationPanelWidget(QWidget):
-    
-    runSegmentation = Signal(list, dict)
-    cancelSegmentation = Signal()
+    runSequence = Signal(list)
+    cancelSequence = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(SHARED_DARK_THEME)
+        
+        self.available_methods = ["Cellpose", "StarDist", "InstanSeg", "CellSAM"]
+        self.markers = []
+        self.step_widgets = []
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
         
         self.content_widget = QWidget()
-        self.main_layout = QVBoxLayout()
+        self.main_layout = QVBoxLayout(self.content_widget)
         self.main_layout.setContentsMargins(5, 5, 5, 5)
         self.main_layout.setSpacing(6)
-        self.content_widget.setLayout(self.main_layout)
         self.scroll_area.setWidget(self.content_widget)
         
-        outer_layout = QVBoxLayout()
+        outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(self.scroll_area)
-        self.setLayout(outer_layout)
-
-        # UI Building (Removed global Channel Assignment & Global Cyto Expansion)
-        self._build_segmentation_modules()
-        self._build_run_controls()
-        self._build_status_panel()
-        self.main_layout.addStretch()
-
-    def _build_segmentation_modules(self):
-        group_main = QGroupBox()
-        gl_main = QVBoxLayout()
-        gl_main.setContentsMargins(5, 5, 5, 5)
-        gl_main.setSpacing(4)
-        group_main.setLayout(gl_main)
-
-        title = QLabel("Segmentation Modules")
+        
+        title = QLabel("Sequential Workflow Builder")
         title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl_main.addWidget(title)
-        self._add_separator(gl_main)
-
-        info = QLabel("Check the box for each method you wish to run. Configure channels per method.")
+        self.main_layout.addWidget(title)
+        
+        info = QLabel("Steps execute top-to-bottom. Use Base Nuclear first, then add Sequential Cytoplasm for specific cell types.")
         info.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
         info.setWordWrap(True)
-        gl_main.addWidget(info)
-
-        self.method_checkboxes = {}
-
-        # -- Cellpose --
-        self.group_cp = QGroupBox("Cellpose")
-        self.group_cp.setCheckable(True)
-        self.group_cp.setChecked(True)
-        self.method_checkboxes["Cellpose"] = self.group_cp
-        cp_layout = QVBoxLayout()
+        self.main_layout.addWidget(info)
         
-        row_cp_c = QHBoxLayout()
-        self.combo_cp_nuc = QComboBox()
-        self.combo_cp_mem = QComboBox()
-        row_cp_c.addWidget(QLabel("Nuc Channel:"))
-        row_cp_c.addWidget(self.combo_cp_nuc)
-        row_cp_c.addWidget(QLabel("Mem Channel:"))
-        row_cp_c.addWidget(self.combo_cp_mem)
-        cp_layout.addLayout(row_cp_c)
+        self.steps_layout = QVBoxLayout()
+        self.main_layout.addLayout(self.steps_layout)
         
-        row_cp1 = QHBoxLayout()
-        self.combo_cp_model = QComboBox()
-        self.combo_cp_model.addItems(["cyto3", "cyto2", "cyto", "nuclei"])
-        row_cp1.addWidget(QLabel("Model:"))
-        row_cp1.addWidget(self.combo_cp_model)
-        self.spin_cp_diameter = QSpinBox()
-        self.spin_cp_diameter.setRange(0, 500)
-        self.spin_cp_diameter.setValue(0)
-        self.spin_cp_diameter.setSpecialValueText("Auto")
-        row_cp1.addWidget(QLabel("Diameter:"))
-        row_cp1.addWidget(self.spin_cp_diameter)
-        cp_layout.addLayout(row_cp1)
-
-        row_cp2 = QHBoxLayout()
-        self.spin_cp_flow = QDoubleSpinBox()
-        self.spin_cp_flow.setRange(0.0, 5.0)
-        self.spin_cp_flow.setValue(0.4)
-        self.spin_cp_flow.setSingleStep(0.1)
-        row_cp2.addWidget(QLabel("Flow Thresh:"))
-        row_cp2.addWidget(self.spin_cp_flow)
-        self.spin_cp_cellprob = QDoubleSpinBox()
-        self.spin_cp_cellprob.setRange(-10.0, 10.0)
-        self.spin_cp_cellprob.setValue(0.0)
-        row_cp2.addWidget(QLabel("Cell Prob:"))
-        row_cp2.addWidget(self.spin_cp_cellprob)
-        cp_layout.addLayout(row_cp2)
+        self.btn_add = QPushButton("+ Add Step")
+        self.btn_add.setStyleSheet("background-color: #444; color: white; font-weight: bold; padding: 4px;")
+        self.btn_add.clicked.connect(self._add_step)
+        self.main_layout.addWidget(self.btn_add)
+        self.main_layout.addStretch()
         
-        self.group_cp.setLayout(cp_layout)
-        gl_main.addWidget(self.group_cp)
-
-        # -- StarDist --
-        self.group_sd = QGroupBox("StarDist")
-        self.group_sd.setCheckable(True)
-        self.group_sd.setChecked(False)
-        self.method_checkboxes["StarDist"] = self.group_sd
-        sd_layout = QVBoxLayout()
-        
-        row_sd_c = QHBoxLayout()
-        self.combo_sd_nuc = QComboBox()
-        row_sd_c.addWidget(QLabel("Nuc Channel:"))
-        row_sd_c.addWidget(self.combo_sd_nuc)
-        row_sd_c.addStretch()
-        sd_layout.addLayout(row_sd_c)
-        
-        row_sd = QHBoxLayout()
-        self.combo_sd_model = QComboBox()
-        self.combo_sd_model.addItems(["2D_versatile_fluo", "2D_versatile_he"])
-        row_sd.addWidget(QLabel("Model:"))
-        row_sd.addWidget(self.combo_sd_model)
-        self.spin_sd_prob = QDoubleSpinBox()
-        self.spin_sd_prob.setRange(0.0, 1.0)
-        self.spin_sd_prob.setValue(0.5)
-        row_sd.addWidget(QLabel("Prob:"))
-        row_sd.addWidget(self.spin_sd_prob)
-        self.spin_sd_nms = QDoubleSpinBox()
-        self.spin_sd_nms.setRange(0.0, 1.0)
-        self.spin_sd_nms.setValue(0.4)
-        row_sd.addWidget(QLabel("NMS:"))
-        row_sd.addWidget(self.spin_sd_nms)
-        sd_layout.addLayout(row_sd)
-        
-        row_sd_cyto = QHBoxLayout()
-        self.chk_sd_cyto = QCheckBox("Approximate Cytoplasm")
-        row_sd_cyto.addWidget(self.chk_sd_cyto)
-        self.spin_sd_cyto_rad = QSpinBox()
-        self.spin_sd_cyto_rad.setRange(1, 100)
-        self.spin_sd_cyto_rad.setValue(5)
-        self.spin_sd_cyto_rad.setEnabled(False)
-        self.chk_sd_cyto.toggled.connect(self.spin_sd_cyto_rad.setEnabled)
-        row_sd_cyto.addWidget(QLabel("Radius (px):"))
-        row_sd_cyto.addWidget(self.spin_sd_cyto_rad)
-        sd_layout.addLayout(row_sd_cyto)
-        
-        self.group_sd.setLayout(sd_layout)
-        gl_main.addWidget(self.group_sd)
-
-        # -- InstanSeg --
-        self.group_is = QGroupBox("InstanSeg")
-        self.group_is.setCheckable(True)
-        self.group_is.setChecked(False)
-        self.method_checkboxes["InstanSeg"] = self.group_is
-        is_layout = QVBoxLayout()
-        
-        row_is_c = QHBoxLayout()
-        self.combo_is_nuc = QComboBox()
-        self.combo_is_mem = QComboBox()
-        row_is_c.addWidget(QLabel("Nuc Channel:"))
-        row_is_c.addWidget(self.combo_is_nuc)
-        row_is_c.addWidget(QLabel("Mem Channel:"))
-        row_is_c.addWidget(self.combo_is_mem)
-        is_layout.addLayout(row_is_c)
-        
-        row_is = QHBoxLayout()
-        self.combo_is_model = QComboBox()
-        self.combo_is_model.addItems([
-            "fluorescence_nuclei_and_cells",
-            "fluorescence_nuclei",
-            "brightfield_nuclei",
-        ])
-        row_is.addWidget(QLabel("Model:"))
-        row_is.addWidget(self.combo_is_model)
-        self.spin_is_pixelsize = QDoubleSpinBox()
-        self.spin_is_pixelsize.setRange(0.00, 10.0)
-        self.spin_is_pixelsize.setValue(0.0)
-        self.spin_is_pixelsize.setSpecialValueText("Disabled (Native)")
-        row_is.addWidget(QLabel("Pixel Size (µm):"))
-        row_is.addWidget(self.spin_is_pixelsize)
-        is_layout.addLayout(row_is)
-        
-        self.group_is.setLayout(is_layout)
-        gl_main.addWidget(self.group_is)
-        
-        # -- CellSAM --
-        self.group_cs = QGroupBox("CellSAM")
-        self.group_cs.setCheckable(True)
-        self.group_cs.setChecked(False)
-        self.method_checkboxes["CellSAM"] = self.group_cs
-        cs_layout = QVBoxLayout()
-        
-        row_cs_c = QHBoxLayout()
-        self.combo_cs_chan1 = QComboBox()
-        self.combo_cs_chan2 = QComboBox()
-        self.combo_cs_chan3 = QComboBox()
-        row_cs_c.addWidget(QLabel("R:"))
-        row_cs_c.addWidget(self.combo_cs_chan1)
-        row_cs_c.addWidget(QLabel("G:"))
-        row_cs_c.addWidget(self.combo_cs_chan2)
-        row_cs_c.addWidget(QLabel("B:"))
-        row_cs_c.addWidget(self.combo_cs_chan3)
-        cs_layout.addLayout(row_cs_c)
-        
-        row_cs_token = QHBoxLayout()
-        row_cs_token.addWidget(QLabel("Token:"))
-        self.txt_cs_token = QLineEdit()
-        self.txt_cs_token.setPlaceholderText("Paste DeepCell token here...")
-        self.txt_cs_token.setEchoMode(QLineEdit.Password)
-        row_cs_token.addWidget(self.txt_cs_token)
-        cs_layout.addLayout(row_cs_token)
-        self.group_cs.setLayout(cs_layout)
-        gl_main.addWidget(self.group_cs)
-
-        self.main_layout.addWidget(group_main)
-
-    def _build_run_controls(self):
-        self.btn_run = QPushButton("Run Selected Methods")
-        self.btn_run.setStyleSheet(
-            "QPushButton { background-color: #3A6A9A; color: white; font-weight: bold; padding: 8px; font-size: 13px; } "
-            "QPushButton:hover { background-color: #4A7FBA; }"
-        )
+        self.btn_run = QPushButton("Run Sequence")
+        self.btn_run.setStyleSheet("QPushButton { background-color: #3A6A9A; color: white; font-weight: bold; padding: 8px; font-size: 13px; } QPushButton:hover { background-color: #4A7FBA; }")
         self.btn_run.clicked.connect(self._emit_run_signal)
         self.main_layout.addWidget(self.btn_run)
-
+        
         self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setStyleSheet(
-            "QPushButton { background-color: #CC4444; color: white; font-weight: bold; padding: 6px; } "
-            "QPushButton:hover { background-color: #DD5555; }"
-        )
-        self.btn_cancel.clicked.connect(lambda: self.cancelSegmentation.emit())
+        self.btn_cancel.setStyleSheet("QPushButton { background-color: #CC4444; color: white; font-weight: bold; padding: 6px; } QPushButton:hover { background-color: #DD5555; }")
+        self.btn_cancel.clicked.connect(lambda: self.cancelSequence.emit())
         self.btn_cancel.hide()
         self.main_layout.addWidget(self.btn_cancel)
-
-    def _build_status_panel(self):
-        group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(5, 5, 5, 5)
-        gl.setSpacing(4)
-        group.setLayout(gl)
-
-        title = QLabel("Status")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
-        self._add_separator(gl)
-
-        self.status_labels = {}
-        for method in ["Cellpose", "StarDist", "CellSAM", "InstanSeg"]:
-            row = QHBoxLayout()
-            lbl_name = QLabel(f"{method}:")
-            lbl_name.setFixedWidth(80)
-            row.addWidget(lbl_name)
-
-            lbl_status = QLabel("Idle")
-            lbl_status.setStyleSheet(STATUS_STYLES['Idle'])
-            self.status_labels[method] = lbl_status
-            row.addWidget(lbl_status)
-            row.addStretch()
-            gl.addLayout(row)
-
-        self.lbl_consensus_status = QLabel("Consensus: ")
+        
+        self.lbl_consensus_status = QLabel("Consensus: Ready")
         self.lbl_consensus_status.setStyleSheet("color: #AAA; font-size: 11px; margin-top: 4px;")
-        gl.addWidget(self.lbl_consensus_status)
-        self.main_layout.addWidget(group)
+        self.main_layout.addWidget(self.lbl_consensus_status)
 
-    def _add_separator(self, layout):
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #555555; background-color: #555555; max-height: 1px; margin-bottom: 4px;")
-        layout.addWidget(line)
+        # Add initial Base step automatically
+        self._add_step()
 
-    def _emit_run_signal(self):
-        selected_methods = [name for name, grp in self.method_checkboxes.items() if grp.isChecked()]
-        if not selected_methods:
-            return
-
-        params = {
-            # Cellpose
-            'cp_nuc': self.combo_cp_nuc.currentText(),
-            'cp_mem': self.combo_cp_mem.currentText(),
-            'cp_model': self.combo_cp_model.currentText(),
-            'cp_diam': self.spin_cp_diameter.value() if self.spin_cp_diameter.value() > 0 else None,
-            'cp_flow': self.spin_cp_flow.value(),
-            'cp_prob': self.spin_cp_cellprob.value(),
+    def _add_step(self):
+        step = StepWidget(self.available_methods, self.markers)
+        step.removed.connect(self._remove_step)
+        if len(self.step_widgets) == 0:
+            step.combo_type.setCurrentText("Nuclear (Base)")
+        else:
+            step.combo_type.setCurrentText("Cytoplasm (Sequential)")
             
-            # StarDist
-            'sd_nuc': self.combo_sd_nuc.currentText(),
-            'sd_model': self.combo_sd_model.currentText(),
-            'sd_prob': self.spin_sd_prob.value(),
-            'sd_nms': self.spin_sd_nms.value(),
-            'sd_cyto': self.spin_sd_cyto_rad.value() if self.chk_sd_cyto.isChecked() else 0,
-            
-            # InstanSeg
-            'is_nuc': self.combo_is_nuc.currentText(),
-            'is_mem': self.combo_is_mem.currentText(),
-            'is_model': self.combo_is_model.currentText(),
-            'is_pixel': self.spin_is_pixelsize.value(),
+        self.step_widgets.append(step)
+        self.steps_layout.addWidget(step)
 
-            # CellSAM
-            'cs_r': self.combo_cs_chan1.currentText(),
-            'cs_g': self.combo_cs_chan2.currentText(),
-            'cs_b': self.combo_cs_chan3.currentText(),
-            'cellsam_token': self.txt_cs_token.text().strip(),
-        }
-
-        self.runSegmentation.emit(selected_methods, params)
+    def _remove_step(self, step_widget):
+        self.step_widgets.remove(step_widget)
+        self.steps_layout.removeWidget(step_widget)
+        step_widget.deleteLater()
 
     def update_channel_dropdowns(self, markers: list):
-        combos = [
-            self.combo_cp_nuc, self.combo_cp_mem,
-            self.combo_sd_nuc,
-            self.combo_is_nuc, self.combo_is_mem,
-            self.combo_cs_chan1, self.combo_cs_chan2, self.combo_cs_chan3
-        ]
-        
-        for combo in combos:
-            combo.blockSignals(True)
-            combo.clear()
-            # Everything gets a 'None' option except StarDist nuclear (must have a channel)
-            if combo != self.combo_sd_nuc:
-                combo.addItem("None")
-            for m in markers:
-                combo.addItem(m)
-            combo.blockSignals(False)
+        self.markers = markers
+        for sw in self.step_widgets:
+            sw.update_markers(markers)
 
-        # Auto-select DAPI for nuclear channels
-        for i, m in enumerate(markers):
-            if m.upper() == "DAPI":
-                self.combo_cp_nuc.setCurrentText(m)
-                self.combo_sd_nuc.setCurrentText(m)
-                self.combo_is_nuc.setCurrentText(m)
-                break
+    def update_available_methods(self, methods: list):
+        self.available_methods = methods
 
-    def update_method_status(self, method_name: str, status: str):
-        if method_name in self.status_labels:
-            self.status_labels[method_name].setText(status)
-            self.status_labels[method_name].setStyleSheet(STATUS_STYLES.get(status, STATUS_STYLES['Idle']))
-
-    def set_method_available(self, method_name: str, available: bool):
-        if method_name in self.method_checkboxes:
-            grp = self.method_checkboxes[method_name]
-            grp.setEnabled(available)
-            if not available:
-                grp.setChecked(False)
-                grp.setToolTip(f"{method_name}: Not installed.")
-                grp.setStyleSheet("QGroupBox { color: #555; }")
+    def update_step_status(self, step_idx: int, status: str):
+        if 0 <= step_idx < len(self.step_widgets):
+            self.step_widgets[step_idx].set_status(status)
 
     def set_running_state(self, is_running: bool):
         self.btn_run.setVisible(not is_running)
         self.btn_cancel.setVisible(is_running)
-        for grp in self.method_checkboxes.values():
-            grp.setEnabled(not is_running)
+        self.btn_add.setEnabled(not is_running)
+        for sw in self.step_widgets:
+            sw.setEnabled(not is_running)
+
+    def _emit_run_signal(self):
+        if not self.step_widgets:
+            return
+        steps = [sw.get_step_config(self.markers) for sw in self.step_widgets]
+        self.runSequence.emit(steps)
