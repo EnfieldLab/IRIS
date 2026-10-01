@@ -74,19 +74,19 @@ class CellposeBackend(SegmentationBackend):
             if run_two_pass:
                 # PASS 1: Nuclear Only (DAPI)
                 print(f"[IRIS-Viewer] Cellpose 2-Pass Execution: Running 'nuclei' model on channel {nuclear_channel}...")
-                nuc_img = image[nuclear_channel]
+                nuc_img = np.asarray(image[nuclear_channel])
                 
-                nuc_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4}
+                nuc_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
                 if not is_v4: nuc_kwargs['channels'] = [0,0]
                     
                 res_nuc = self._cached_model_nuc.eval(nuc_img, **nuc_kwargs)
                 
                 # PASS 2: Cytoplasm (DAPI + Membrane Marker)
                 print(f"[IRIS-Viewer] Cellpose 2-Pass Execution: Running '{model_type}' model on channels {membrane_channel} and {nuclear_channel}...")
-                mem_img = image[membrane_channel]
+                mem_img = np.asarray(image[membrane_channel])
                 input_cyto = np.stack([mem_img, nuc_img], axis=0 if is_v4 else -1)
                 
-                cyto_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4}
+                cyto_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
                 if is_v4: cyto_kwargs['channel_axis'] = 0
                 else: cyto_kwargs['channels'] = [1,2]
                     
@@ -97,8 +97,8 @@ class CellposeBackend(SegmentationBackend):
                 result = {'nuclear': masks_nuc.astype(np.uint32), 'cytoplasm': masks_cyto.astype(np.uint32)}
                 
             else:
-                input_img = image[nuclear_channel] if image.ndim == 3 else image
-                single_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4}
+                input_img = np.asarray(image[nuclear_channel] if image.ndim == 3 else image)
+                single_kwargs = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
                 if not is_v4: single_kwargs['channels'] = [0,0]
 
                 res = self._cached_model_cyto.eval(input_img, **single_kwargs)

@@ -43,11 +43,11 @@ class InstanSegBackend(SegmentationBackend):
 
         if image.ndim == 3 and image.shape[0] > 1:
             if membrane_channel is not None and membrane_channel != nuclear_channel:
-                input_img = np.stack([image[nuclear_channel], image[membrane_channel]], axis=0).astype(np.float32)
+                input_img = np.stack([np.asarray(image[nuclear_channel]), np.asarray(image[membrane_channel])], axis=0).astype(np.float32)
             else:
-                input_img = image[nuclear_channel:nuclear_channel + 1].astype(np.float32)
+                input_img = np.asarray(image[nuclear_channel:nuclear_channel + 1]).astype(np.float32)
         else:
-            input_img = (image[np.newaxis] if image.ndim == 2 else image).astype(np.float32)
+            input_img = np.asarray(image[np.newaxis] if image.ndim == 2 else image).astype(np.float32)
 
         # FIX: Implement per-channel percentile normalization to prevent model hallucination on empty spaces
         normalized_img = np.zeros_like(input_img, dtype=np.float32)

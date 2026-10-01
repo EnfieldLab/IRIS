@@ -57,18 +57,23 @@ class StardistBackend(SegmentationBackend):
             self._cached_model_name = model_name
         
         if image.ndim == 3:
-            nuc_img = image[nuclear_channel].astype(np.float32)
+            nuc_img = np.asarray(image[nuclear_channel]).astype(np.float32)
         else:
-            nuc_img = image.astype(np.float32)
+            nuc_img = np.asarray(image).astype(np.float32)
             
         if do_normalize:
             nuc_img = normalize(nuc_img, pmin, pmax, axis=(0, 1))
             
+        # Compute optimal number of tiles based on 1024x1024 chunks
+        h, w = nuc_img.shape
+        n_tiles = (max(1, int(np.ceil(h / 1024))), max(1, int(np.ceil(w / 1024))))
+        
         # Execute with cached model
         labels, details = self._cached_model.predict_instances(
             nuc_img,
             prob_thresh=prob_thresh,
             nms_thresh=nms_thresh,
+            n_tiles=n_tiles
         )
         
         result = {'nuclear': labels.astype(np.uint32)}

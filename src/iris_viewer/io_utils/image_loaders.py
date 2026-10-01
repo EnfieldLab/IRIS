@@ -5,8 +5,9 @@ and marker channel assignment via the panel configuration dialog.
 """
 import tifffile
 import numpy as np
+import dask.array as da
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 
 
 def discover_image_files(directory: Path) -> Dict[str, Path]:
@@ -33,18 +34,19 @@ def discover_image_files(directory: Path) -> Dict[str, Path]:
     return file_map
 
 
-def load_multichannel_tiff(filepath: Path) -> Tuple[np.ndarray, int]:
+def load_multichannel_tiff(filepath: Path) -> Tuple[Any, int]:
     """
-    Load a multi-channel TIFF image.
+    Load a multi-channel TIFF image lazily using Dask.
     
     Returns
     -------
-    image : np.ndarray
-        Array of shape (C, H, W) for multi-channel, or (1, H, W) for single-channel.
+    image : dask.array.Array
+        Lazy array of shape (C, H, W) for multi-channel, or (1, H, W) for single-channel.
     num_channels : int
         Number of channels detected.
     """
-    raw = tifffile.imread(str(filepath))
+    store = tifffile.imread(str(filepath), aszarr=True)
+    raw = da.from_zarr(store)
 
     if raw.ndim == 2:
         # Single 2D image -> (1, H, W)
@@ -53,7 +55,7 @@ def load_multichannel_tiff(filepath: Path) -> Tuple[np.ndarray, int]:
         # Could be (C, H, W) or (H, W, 3/4) for RGB/RGBA
         if raw.shape[-1] in (3, 4) and raw.shape[0] > 4:
             # Likely (H, W, C) -> transpose to (C, H, W)
-            return np.transpose(raw, (2, 0, 1)), raw.shape[-1]
+            return da.transpose(raw, (2, 0, 1)), raw.shape[-1]
         else:
             # Likely (C, H, W) already
             return raw, raw.shape[0]

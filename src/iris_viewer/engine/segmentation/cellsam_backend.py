@@ -46,15 +46,15 @@ class CellSAMBackend(SegmentationBackend):
 
         def get_ch(idx):
             if idx is not None and idx < image.shape[0]:
-                return self._normalize_channel(image[idx])
-            return np.zeros_like(image[0] if image.ndim == 3 else image, dtype=np.uint8)
+                return self._normalize_channel(np.asarray(image[idx]))
+            return np.zeros_like(np.asarray(image[0] if image.ndim == 3 else image), dtype=np.uint8)
 
         # Use explicitly mapped RGB channels
         if c1_idx is not None or c2_idx is not None or c3_idx is not None:
             composite = np.stack([get_ch(c1_idx), get_ch(c2_idx), get_ch(c3_idx)], axis=-1)
         else:
             # Fallback to nuclear channel if user didn't pick any specific RGB layers
-            nuc = self._normalize_channel(image[nuclear_channel] if image.ndim == 3 else image)
+            nuc = self._normalize_channel(np.asarray(image[nuclear_channel] if image.ndim == 3 else image))
             composite = np.stack([nuc, nuc, nuc], axis=-1)
 
         mask, _, _ = segment_cellular_image(composite, model, device=device)

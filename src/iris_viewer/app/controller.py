@@ -267,7 +267,14 @@ class ViewerController:
             if i >= raw_image.shape[0]:
                 break
             chan_data = raw_image[i]
-            clims = [float(np.percentile(chan_data, 1)), float(np.percentile(chan_data, 99.9))]
+            # Fast approximation of contrast limits to avoid computing full dask array
+            step_h = max(1, chan_data.shape[0] // 500)
+            step_w = max(1, chan_data.shape[1] // 500)
+            small_chan = chan_data[::step_h, ::step_w]
+            if hasattr(small_chan, 'compute'):
+                small_chan = small_chan.compute()
+                
+            clims = [float(np.percentile(small_chan, 1)), float(np.percentile(small_chan, 99.9))]
             if clims[0] >= clims[1]:
                 clims[1] = clims[0] + 1.0
                 
