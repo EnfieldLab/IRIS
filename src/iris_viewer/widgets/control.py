@@ -9,7 +9,7 @@ from qtpy.QtWidgets import (
     QFileDialog, QMessageBox, QSizePolicy, QScrollArea
 )
 from qtpy.QtCore import Qt, Signal
-from widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.styles import SHARED_DARK_THEME
 import os
 
 class ViewerControlWidget(QWidget):

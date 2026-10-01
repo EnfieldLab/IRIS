@@ -22,26 +22,26 @@ from napari.qt import thread_worker
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QFileDialog, QMessageBox, QMenu
 
-from core.state import ViewerAppState
-from engine.segmentation import get_available_backends
-from engine.consensus import compute_consensus_mask, apply_manual_override
-from engine.feature_extraction import extract_cell_features
-from io_utils.image_loaders import (
+from iris_viewer.core.state import ViewerAppState
+from iris_viewer.engine.segmentation import get_available_backends
+from iris_viewer.engine.consensus import compute_consensus_mask, apply_manual_override
+from iris_viewer.engine.feature_extraction import extract_cell_features
+from iris_viewer.io_utils.image_loaders import (
     discover_image_files, load_multichannel_tiff,
     load_existing_mask, probe_channel_count
 )
-from io_utils.exporters import (
+from iris_viewer.io_utils.exporters import (
     export_consensus_mask, export_features_csv,
     export_confidence_map, export_batch_summary
 )
 
-from widgets.control import ViewerControlWidget
-from widgets.segmentation_panel import SegmentationPanelWidget
-from widgets.consensus_panel import ConsensusPanelWidget
-from widgets.feature_panel import FeaturePanelWidget
-from widgets.legend import ViewerLegendWidget
-from widgets.config_dialogs import ViewerPanelConfigDialog
-from widgets.styles import (
+from iris_viewer.widgets.control import ViewerControlWidget
+from iris_viewer.widgets.segmentation_panel import SegmentationPanelWidget
+from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
+from iris_viewer.widgets.feature_panel import FeaturePanelWidget
+from iris_viewer.widgets.legend import ViewerLegendWidget
+from iris_viewer.widgets.config_dialogs import ViewerPanelConfigDialog
+from iris_viewer.widgets.styles import (
     CONFIDENCE_HIGH_COLOR, CONFIDENCE_MEDIUM_COLOR, CONFIDENCE_LOW_COLOR
 )
 

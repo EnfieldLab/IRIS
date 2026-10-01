@@ -15,6 +15,7 @@ class InstanSegBackend(SegmentationBackend):
     def is_available(self) -> bool:
         try:
             import instanseg
+            from instanseg import InstanSeg
             return True
         except ImportError:
             return False

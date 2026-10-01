@@ -12,7 +12,7 @@ os.environ["TORCH_HOME"] = str(local_data_dir / "torch")
 os.environ["HF_HOME"] = str(local_data_dir / "huggingface")
 
 import napari
-from app.controller import ViewerController
+from iris_viewer.app.controller import ViewerController
 
 def main():
     controller = ViewerController()

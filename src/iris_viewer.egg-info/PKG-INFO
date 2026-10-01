@@ -1,0 +1,33 @@
+Metadata-Version: 2.4
+Name: iris-viewer
+Version: 0.1.0
+Summary: A production-quality Python application for multiplexed immunofluorescence imaging
+Author: IRIS Team
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: napari[all]>=0.4.18
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: scikit-image
+Requires-Dist: matplotlib
+Requires-Dist: tifffile
+Requires-Dist: qtpy
+Provides-Extra: cellpose
+Requires-Dist: cellpose>=3.0; extra == "cellpose"
+Provides-Extra: stardist
+Requires-Dist: stardist; extra == "stardist"
+Requires-Dist: csbdeep; extra == "stardist"
+Provides-Extra: instanseg
+Requires-Dist: instanseg; extra == "instanseg"
+Provides-Extra: cellsam
+Requires-Dist: cellSAM; extra == "cellsam"
+Provides-Extra: all
+Requires-Dist: cellpose; extra == "all"
+Requires-Dist: stardist; extra == "all"
+Requires-Dist: instanseg; extra == "all"
+Requires-Dist: cellSAM; extra == "all"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-qt; extra == "dev"

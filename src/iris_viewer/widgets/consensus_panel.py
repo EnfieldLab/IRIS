@@ -9,7 +9,7 @@ from qtpy.QtWidgets import (
     QCheckBox, QPushButton, QGroupBox, QFrame, QSizePolicy, QScrollArea
 )
 from qtpy.QtCore import Qt, Signal
-from widgets.styles import (
+from iris_viewer.widgets.styles import (
     SHARED_DARK_THEME, CONFIDENCE_HIGH_COLOR,
     CONFIDENCE_MEDIUM_COLOR, CONFIDENCE_LOW_COLOR
 )

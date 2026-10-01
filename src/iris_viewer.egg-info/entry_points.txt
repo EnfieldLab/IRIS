@@ -1,0 +1,2 @@
+[console_scripts]
+iris-viewer = iris_viewer.main:main

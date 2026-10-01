@@ -5,7 +5,7 @@ from qtpy.QtWidgets import (
     QSizePolicy, QScrollArea, QLineEdit
 )
 from qtpy.QtCore import Qt, Signal
-from widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
+from iris_viewer.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
 
 class SegmentationPanelWidget(QWidget):
     
@@ -203,6 +203,14 @@ class SegmentationPanelWidget(QWidget):
         row_cs_c.addWidget(QLabel("B:"))
         row_cs_c.addWidget(self.combo_cs_chan3)
         cs_layout.addLayout(row_cs_c)
+        
+        row_cs_token = QHBoxLayout()
+        row_cs_token.addWidget(QLabel("Token:"))
+        self.txt_cs_token = QLineEdit()
+        self.txt_cs_token.setPlaceholderText("Paste DeepCell token here...")
+        self.txt_cs_token.setEchoMode(QLineEdit.Password)
+        row_cs_token.addWidget(self.txt_cs_token)
+        cs_layout.addLayout(row_cs_token)
         self.group_cs.setLayout(cs_layout)
         gl_main.addWidget(self.group_cs)
 
@@ -294,6 +302,7 @@ class SegmentationPanelWidget(QWidget):
             'cs_r': self.combo_cs_chan1.currentText(),
             'cs_g': self.combo_cs_chan2.currentText(),
             'cs_b': self.combo_cs_chan3.currentText(),
+            'cellsam_token': self.txt_cs_token.text().strip(),
         }
 
         self.runSegmentation.emit(selected_methods, params)
