@@ -24,6 +24,7 @@ from qtpy.QtWidgets import QFileDialog, QMessageBox, QMenu
 
 from iris_viewer.core.state import ViewerAppState
 from iris_viewer.engine.segmentation import get_available_backends
+from iris_viewer.engine.pipeline import PipelineService, SegmentationSequence, SegmentationStep
 from iris_viewer.engine.consensus import compute_consensus_mask, apply_manual_override
 from iris_viewer.engine.feature_extraction import extract_cell_features
 from iris_viewer.io_utils.image_loaders import (
@@ -59,7 +60,7 @@ class ViewerController:
         self._pending_seg_count = 0
         self._completed_seg_count = 0
         self.added_legend_entries = set()
-        self.gpu_lock = threading.Lock()
+        self.pipeline_service = PipelineService()
         
         self.viewer = napari.Viewer(title="IRIS-Viewer")
         try:
@@ -365,47 +366,25 @@ class ViewerController:
             QMessageBox.warning(self.control_widget, "No Image", "Load an image before running segmentation.")
             return
             
-        try:
-            import torch
-            device = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
-        except ImportError:
-            device = "cpu"
-            
+        steps = []
         for method_name in method_names:
             self.state.segmentation_results.pop(method_name, None)
             self.state.segmentation_status[method_name] = "Queued"
             self.segmentation_panel.update_method_status(method_name, "Queued")
             
-        self.segmentation_panel.set_running_state(True)
-        self._pending_seg_count = len(method_names)
-        self._completed_seg_count = 0
-        
-        for method_name in method_names:
-            backend = next((b for b in self.backends if b.name == method_name and b.is_available()), None)
-            if backend is None:
-                self.state.segmentation_status[method_name] = "Failed"
-                self.segmentation_panel.update_method_status(method_name, "Failed")
-                self._completed_seg_count += 1
-                continue
-                
             method_kwargs = self._build_method_kwargs(method_name, params)
-            self.state.segmentation_status[method_name] = "Running"
-            self.segmentation_panel.update_method_status(method_name, "Running")
+            steps.append(SegmentationStep(method_name=method_name, params=method_kwargs))
             
-            @thread_worker(progress={'total': 0, 'desc': f"Seg: {method_name}"})
-            def _run_single(b=backend, image=self.state.raw_image, d=device, kw=method_kwargs, mn=method_name):
-                with self.gpu_lock:
-                    result = b.segment(image=image, device=d, **kw)
-                return mn, result
-                
-            worker = _run_single()
-            worker.returned.connect(self._on_single_segmentation_done)
-            worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
-            
-            if not hasattr(self, '_active_workers'):
-                self._active_workers = []
-            self._active_workers.append(worker)
-            worker.start()
+        self.segmentation_panel.set_running_state(True)
+        
+        sequence = SegmentationSequence(steps=steps)
+        self.pipeline_service.execute_sequence(
+            sequence=sequence,
+            image=self.state.raw_image,
+            on_step_complete=self._on_single_segmentation_done,
+            on_sequence_complete=self._on_all_segmentations_complete,
+            on_error=self._on_segmentation_error
+        )
 
     def _build_method_kwargs(self, method_name: str, params: dict) -> dict:
         def get_idx(name):
@@ -452,8 +431,12 @@ class ViewerController:
             
         return kwargs
 
-    def _on_single_segmentation_done(self, result):
-        method_name, seg_result = result
+    def _on_segmentation_error(self, method_name: str, error_msg: str):
+        self.state.segmentation_status[method_name] = "Failed"
+        self.segmentation_panel.update_method_status(method_name, "Failed")
+        print(f"[Pipeline Error] {method_name}: {error_msg}")
+
+    def _on_single_segmentation_done(self, method_name: str, seg_result: dict):
         self.state.segmentation_results[method_name] = seg_result
         self.state.segmentation_status[method_name] = "Done"
         self.segmentation_panel.update_method_status(method_name, "Done")
@@ -479,10 +462,6 @@ class ViewerController:
                 
         _add_mask_layer(seg_result.get('nuclear'), "Nuclear Mask")
         _add_mask_layer(seg_result.get('cytoplasm'), "Cyto Mask")
-        
-        self._completed_seg_count += 1
-        if self._completed_seg_count >= self._pending_seg_count:
-            self._on_all_segmentations_complete()
 
     def _on_all_segmentations_complete(self):
         self.segmentation_panel.set_running_state(False)
@@ -562,19 +541,11 @@ class ViewerController:
         self._update_confidence_overlay(self.consensus_panel.get_threshold())
         QMessageBox.information(self.control_widget, "Success", "Consensus Map and Confidence Contours generated successfully!")
 
-    def _cleanup_worker(self, worker):
-        if hasattr(self, '_active_workers') and worker in self._active_workers:
-            self._active_workers.remove(worker)
-
     def _cancel_segmentation(self):
-        if hasattr(self, '_active_workers'):
-            for worker in self._active_workers:
-                worker.quit()
-            self._active_workers.clear()
-            
+        self.pipeline_service.cancel_all()
         self.segmentation_panel.set_running_state(False)
         for method in self.state.segmentation_status:
-            if self.state.segmentation_status[method] == "Running":
+            if self.state.segmentation_status[method] in ("Running", "Queued"):
                 self.state.segmentation_status[method] = "Cancelled"
                 self.segmentation_panel.update_method_status(method, "Idle")
                 
