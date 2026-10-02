@@ -49,7 +49,6 @@ class ConsensusPanelWidget(QWidget):
 
         self._build_generation_controls()
         self._build_threshold_controls()
-        self._build_overlay_controls()
         self._build_review_controls()
         self._build_statistics()
         self.main_layout.addStretch()
@@ -72,6 +71,14 @@ class ConsensusPanelWidget(QWidget):
         self.lbl_gen_status.setStyleSheet("color: #AAA; font-size: 11px;")
         gl.addWidget(self.lbl_gen_status)
         
+        row_compare = QHBoxLayout()
+        row_compare.addWidget(QLabel("Compare:"))
+        from qtpy.QtWidgets import QComboBox
+        self.combo_compare = QComboBox()
+        self.combo_compare.addItems(["Nuclear Masks", "Cytoplasm Masks", "Both"])
+        row_compare.addWidget(self.combo_compare, stretch=1)
+        gl.addLayout(row_compare)
+        
         self.main_layout.addWidget(group)
 
     def set_generating_state(self, is_generating: bool):
@@ -92,14 +99,14 @@ class ConsensusPanelWidget(QWidget):
         gl.setSpacing(4)
         group.setLayout(gl)
 
-        title = QLabel("Confidence Threshold")
+        title = QLabel("Required IoU Overlap")
         title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
         gl.addWidget(title)
 
         self._add_separator(gl)
 
-        info = QLabel("Cells below this threshold are highlighted for review.\n"
-                       "Confidence = fraction of methods that agree on the cell.")
+        info = QLabel("Cells below this Intersection-over-Union (IoU) overlap\n"
+                       "are flagged for interactive review.")
         info.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
         info.setWordWrap(True)
         gl.addWidget(info)
@@ -122,48 +129,7 @@ class ConsensusPanelWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Overlay Controls ─────────────────────────────────────────────
-    def _build_overlay_controls(self):
-        group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(5, 5, 5, 5)
-        gl.setSpacing(4)
-        group.setLayout(gl)
-
-        title = QLabel("Overlay Controls")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
-
-        self._add_separator(gl)
-
-        self.chk_show_consensus = QCheckBox("Show Consensus Mask")
-        self.chk_show_consensus.setChecked(True)
-        self.chk_show_consensus.toggled.connect(
-            lambda v: self.showConsensusToggled.emit(v)
-        )
-        gl.addWidget(self.chk_show_consensus)
-
-        self.chk_show_confidence = QCheckBox("Show Confidence Contours")
-        self.chk_show_confidence.setChecked(True)
-        gl.addWidget(self.chk_show_confidence)
-
-        self._add_separator(gl)
-
-        lbl_individual = QLabel("Individual Method Masks:")
-        lbl_individual.setStyleSheet("color: #BBB; font-size: 11px;")
-        gl.addWidget(lbl_individual)
-
-        self.method_visibility_checks = {}
-        for method in ["Cellpose", "StarDist", "CellSAM", "InstanSeg"]:
-            chk = QCheckBox(method)
-            chk.setChecked(False)
-            chk.toggled.connect(
-                lambda checked, m=method: self.showIndividualToggled.emit(m, checked)
-            )
-            self.method_visibility_checks[method] = chk
-            gl.addWidget(chk)
-
-        self.main_layout.addWidget(group)
+    # ── Removed Overlay Controls ─────────────────────────────────────
 
     # ── Review Controls ──────────────────────────────────────────────
     def _build_review_controls(self):
@@ -179,17 +145,32 @@ class ConsensusPanelWidget(QWidget):
 
         self._add_separator(gl)
 
-        info = QLabel("Enable review mode, then click on low-confidence cells\n"
-                       "to inspect each method's segmentation and pick the best one.")
+        info = QLabel("Use Next/Prev to automatically jump to flagged inconsistencies (Red Bounding Box).")
         info.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
         info.setWordWrap(True)
         gl.addWidget(info)
 
-        self.chk_review_mode = QCheckBox("Enable Review Mode")
-        self.chk_review_mode.toggled.connect(
-            lambda v: self.reviewModeToggled.emit(v)
-        )
-        gl.addWidget(self.chk_review_mode)
+        self.chk_enable_review = QCheckBox("Enable Interactive Review Mode")
+        self.chk_enable_review.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        gl.addWidget(self.chk_enable_review)
+
+        row_nav = QHBoxLayout()
+        self.btn_prev_issue = QPushButton("◀ Prev Issue")
+        self.btn_next_issue = QPushButton("Next Issue ▶")
+        
+        # Define new signals at class level later, but for now we can just emit custom signals
+        # Or better, we define them in __init__ dynamically, or we use existing mechanisms.
+        # Actually, let's just create these buttons and we will connect them in controller.py
+        self.btn_prev_issue.setStyleSheet("background-color: #555; font-weight: bold; padding: 4px;")
+        self.btn_next_issue.setStyleSheet("background-color: #555; font-weight: bold; padding: 4px;")
+        row_nav.addWidget(self.btn_prev_issue)
+        row_nav.addWidget(self.btn_next_issue)
+        gl.addLayout(row_nav)
+        
+        self.lbl_issue_count = QLabel("0 issues found")
+        self.lbl_issue_count.setAlignment(Qt.AlignCenter)
+        self.lbl_issue_count.setStyleSheet("color: #FFAA00; font-size: 11px; font-weight: bold;")
+        gl.addWidget(self.lbl_issue_count)
 
         self._add_separator(gl)
 
@@ -233,19 +214,15 @@ class ConsensusPanelWidget(QWidget):
         self.lbl_total_cells.setStyleSheet("color: #AAA; font-size: 11px;")
         gl.addWidget(self.lbl_total_cells)
 
-        self.lbl_high_conf = QLabel("High Confidence: —")
+        self.lbl_high_conf = QLabel("Agreed (Safe): —")
         self.lbl_high_conf.setStyleSheet(f"color: {CONFIDENCE_HIGH_COLOR}; font-size: 11px; font-weight: bold;")
         gl.addWidget(self.lbl_high_conf)
 
-        self.lbl_med_conf = QLabel("Medium Confidence: —")
-        self.lbl_med_conf.setStyleSheet(f"color: {CONFIDENCE_MEDIUM_COLOR}; font-size: 11px; font-weight: bold;")
-        gl.addWidget(self.lbl_med_conf)
-
-        self.lbl_low_conf = QLabel("Low Confidence: —")
+        self.lbl_low_conf = QLabel("Flagged (Disputed): —")
         self.lbl_low_conf.setStyleSheet(f"color: {CONFIDENCE_LOW_COLOR}; font-size: 11px; font-weight: bold;")
         gl.addWidget(self.lbl_low_conf)
 
-        self.lbl_mean_conf = QLabel("Mean Confidence: —")
+        self.lbl_mean_conf = QLabel("Mean IoU Overlap: —")
         self.lbl_mean_conf.setStyleSheet("color: #AAA; font-size: 11px;")
         gl.addWidget(self.lbl_mean_conf)
 
@@ -270,24 +247,23 @@ class ConsensusPanelWidget(QWidget):
     def update_statistics(
         self,
         total: int = 0,
-        high: int = 0,
-        medium: int = 0,
-        low: int = 0,
+        agreed: int = 0,
+        flagged: int = 0,
         mean_conf: float = 0.0,
     ):
         """Update the agreement statistics display."""
         self.lbl_total_cells.setText(f"Total Cells: {total:,}")
-        self.lbl_high_conf.setText(f"High Confidence: {high:,} ({high/total*100:.1f}%)" if total > 0 else "High Confidence: —")
-        self.lbl_med_conf.setText(f"Medium Confidence: {medium:,} ({medium/total*100:.1f}%)" if total > 0 else "Medium Confidence: —")
-        self.lbl_low_conf.setText(f"Low Confidence: {low:,} ({low/total*100:.1f}%)" if total > 0 else "Low Confidence: —")
-        self.lbl_mean_conf.setText(f"Mean Confidence: {mean_conf:.3f}")
+        self.lbl_high_conf.setText(f"Agreed (Safe): {agreed:,} ({agreed/total*100:.1f}%)" if total > 0 else "Agreed (Safe): —")
+        self.lbl_low_conf.setText(f"Flagged (Disputed): {flagged:,} ({flagged/total*100:.1f}%)" if total > 0 else "Flagged (Disputed): —")
+        self.lbl_issue_count.setText(f"{flagged} flagged issues to review")
+        self.lbl_mean_conf.setText(f"Mean IoU Overlap: {mean_conf:.3f}")
 
     def show_cell_review(self, cell_id: int, confidence: float, method_map: dict):
         """
         Populate the review section when a user clicks on a low-confidence cell.
         """
         self.lbl_review_cell.setText(f"Cell ID: {cell_id}")
-        self.lbl_review_confidence.setText(f"Confidence: {confidence:.3f}")
+        self.lbl_review_confidence.setText(f"IoU Overlap: {confidence:.3f}")
         self.lbl_review_methods.setText(
             f"Detected by: {', '.join(method_map.keys())} ({len(method_map)} method(s))"
         )

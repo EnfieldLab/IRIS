@@ -15,8 +15,8 @@ def _extract_cell_centroids(mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray, n
     bboxes = np.column_stack([props['bbox-0'], props['bbox-1'], props['bbox-2'], props['bbox-3']])
     return cell_ids, centroids, bboxes
 
-def _compute_iou(mask_a: np.ndarray, id_a: int, mask_b: np.ndarray, id_b: int, bbox: np.ndarray) -> float:
-    """Compute Intersection over Union efficiently using bounding box slicing."""
+def _compute_directional_overlaps(mask_a: np.ndarray, id_a: int, mask_b: np.ndarray, id_b: int, bbox: np.ndarray) -> Tuple[float, float]:
+    """Compute directional overlap ratios (Intersection / Area A, Intersection / Area B)."""
     minr, minc, maxr, maxc = bbox
     minr = max(0, minr - 15)
     maxr = min(mask_a.shape[0], maxr + 15)
@@ -26,22 +26,37 @@ def _compute_iou(mask_a: np.ndarray, id_a: int, mask_b: np.ndarray, id_b: int, b
     region_a = (mask_a[minr:maxr, minc:maxc] == id_a)
     region_b = (mask_b[minr:maxr, minc:maxc] == id_b)
     
-    intersection = np.sum(region_a & region_b)
-    union = np.sum(region_a | region_b)
+    intersection = float(np.sum(region_a & region_b))
+    area_a = float(np.sum(region_a))
+    area_b = float(np.sum(region_b))
     
-    return float(intersection) / float(union) if union > 0 else 0.0
+    overlap_a_in_b = intersection / area_a if area_a > 0 else 0.0
+    overlap_b_in_a = intersection / area_b if area_b > 0 else 0.0
+    
+    return overlap_a_in_b, overlap_b_in_a
 
 def compute_consensus_mask(
-    masks: Dict[str, np.ndarray],
+    results_dict: Dict[str, Dict[str, Optional[np.ndarray]]],
     min_overlap_iou: float = 0.3,
     centroid_distance_threshold: float = 15.0,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[int, float], Dict[int, Dict]]:
     
-    method_names = list(masks.keys())
+    method_names = list(results_dict.keys())
     n_methods = len(method_names)
     
     if n_methods == 0:
-        raise ValueError("At least one segmentation mask is required.")
+        raise ValueError("At least one segmentation result is required.")
+        
+    masks = {}
+    for mname, res in results_dict.items():
+        nuc = res.get('nuclear')
+        cyto = res.get('cytoplasm')
+        if nuc is not None and cyto is not None:
+            masks[mname] = np.maximum(nuc, cyto)
+        elif nuc is not None:
+            masks[mname] = nuc
+        elif cyto is not None:
+            masks[mname] = cyto
         
     if n_methods == 1:
         single_mask = masks[method_names[0]].astype(np.uint32)
@@ -88,7 +103,8 @@ def compute_consensus_mask(
         ref_centroid = ref_centroids[ref_idx]
         ref_bbox = ref_bboxes[ref_idx]
         agreements = {reference_method: int(ref_cid)}
-        agree_count = 1
+        
+        score_sum = 0.0
         
         for mname in other_trees:
             dist = queries[mname][0][ref_idx]
@@ -101,20 +117,35 @@ def compute_consensus_mask(
             if other_cid in matched_other[mname]: 
                 continue
                 
-            iou = _compute_iou(masks[reference_method], ref_cid, masks[mname], other_cid, ref_bbox)
-            if iou >= min_overlap_iou:
+            overlap_ref_in_other, overlap_other_in_ref = _compute_directional_overlaps(
+                masks[reference_method], ref_cid, masks[mname], other_cid, ref_bbox
+            )
+            
+            # Bidirectional/Unidirectional Logic
+            # High overlap threshold (e.g., 70% inclusion)
+            T = 0.7 
+            if overlap_ref_in_other >= T and overlap_other_in_ref >= T:
+                score = 1.0  # Bidirectional match (Green)
+            elif overlap_ref_in_other >= 0.1 or overlap_other_in_ref >= 0.1:
+                score = 0.5  # Unidirectional match (Yellow)
+            else:
+                score = 0.0  # No Match (Red)
+                
+            score_sum += score
+            
+            if score > 0: # Keep track of it if there's any meaningful overlap
                 agreements[mname] = other_cid
-                agree_count += 1
                 matched_other[mname].add(other_cid)
                 
-        confidence = agree_count / n_methods
+        # Confidence score based on Bidirectional classification
+        confidence = score_sum / (n_methods - 1)
         
         # SLICED ASSIGNMENT (Lightning Fast)
         minr, minc, maxr, maxc = ref_bbox
         cell_pixels = (masks[reference_method][minr:maxr, minc:maxc] == ref_cid)
         consensus_mask[minr:maxr, minc:maxc][cell_pixels] = next_consensus_id
         
-        per_cell_confidence[next_consensus_id] = confidence
+        per_cell_confidence[next_consensus_id] = float(confidence)
         cell_method_map[next_consensus_id] = agreements
         next_consensus_id += 1
 
@@ -125,7 +156,7 @@ def compute_consensus_mask(
             cid_int = int(cid)
             if cid_int in matched_other.get(mname, set()): continue
             
-            confidence = 1.0 / n_methods
+            confidence = 0.0 # Unmatched cell has 0% IoU with reference
             minr, minc, maxr, maxc = method_data[mname]['bboxes'][idx]
             
             m_slice = masks[mname][minr:maxr, minc:maxc]
@@ -136,14 +167,16 @@ def compute_consensus_mask(
             
             if np.sum(available_pixels) > 0:
                 cons_slice[available_pixels] = next_consensus_id
-                per_cell_confidence[next_consensus_id] = confidence
+                per_cell_confidence[next_consensus_id] = float(confidence)
                 cell_method_map[next_consensus_id] = {mname: cid_int}
                 next_consensus_id += 1
 
-    # Step 5: Build pixel-level confidence map
+    # Step 5: Build cell-level agreement heatmap
     confidence_map = np.zeros((h, w), dtype=np.float32)
     for cid, conf in per_cell_confidence.items():
-        confidence_map[consensus_mask == cid] = conf
+        # Ensure 0 confidence (No match) gets colored red (0.01) instead of transparent
+        display_conf = max(0.01, float(conf))
+        confidence_map[consensus_mask == cid] = display_conf
         
     return consensus_mask, confidence_map, per_cell_confidence, cell_method_map
 

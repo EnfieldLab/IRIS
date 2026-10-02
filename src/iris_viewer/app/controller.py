@@ -61,6 +61,8 @@ class ViewerController:
         self._completed_seg_count = 0
         self.added_legend_entries = set()
         self.pipeline_service = PipelineService()
+        self.flagged_cells = []
+        self.current_issue_idx = -1
         
         self.viewer = napari.Viewer(title="IRIS-Viewer")
         try:
@@ -131,12 +133,20 @@ class ViewerController:
         self.consensus_panel.generateConsensusRequested.connect(self._generate_consensus)
         self.consensus_panel.thresholdChanged.connect(self._update_confidence_overlay)
         self.consensus_panel.cellOverrideRequested.connect(self._apply_manual_override)
-        self.consensus_panel.showConsensusToggled.connect(self._toggle_consensus_visibility)
-        self.consensus_panel.showIndividualToggled.connect(self._toggle_method_mask_visibility)
-        self.consensus_panel.reviewModeToggled.connect(self._toggle_review_mode)
+        self.consensus_panel.btn_next_issue.clicked.connect(self._next_issue)
+        self.consensus_panel.btn_prev_issue.clicked.connect(self._prev_issue)
+        self.consensus_panel.chk_enable_review.toggled.connect(self._toggle_interactive_review)
         
         self.legend_widget.layerSelected.connect(self._select_layer)
         self.control_widget.scaleFactorChanged.connect(self._update_scale)
+        
+    def _toggle_interactive_review(self, enabled: bool):
+        if enabled:
+            if self._on_mouse_click not in self.viewer.mouse_drag_callbacks:
+                self.viewer.mouse_drag_callbacks.append(self._on_mouse_click)
+        else:
+            if self._on_mouse_click in self.viewer.mouse_drag_callbacks:
+                self.viewer.mouse_drag_callbacks.remove(self._on_mouse_click)
 
     def _select_layer(self, layer_name: str):
         self.viewer.layers.selection.clear()
@@ -161,7 +171,7 @@ class ViewerController:
         self.feature_panel.exportTriggered.connect(self._export_features)
 
     def _bind_viewer_events(self):
-        self.viewer.mouse_drag_callbacks.append(self._on_mouse_click)
+        pass
 
     def _toggle_view_lock(self, is_locked: bool):
         self.viewer.camera.mouse_pan = not is_locked
@@ -359,7 +369,7 @@ class ViewerController:
         n_cells = len(np.unique(mask_data)) - 1
         self.control_widget.update_dashboard(seg_status="Loaded from file", total_cells=f"{n_cells:,}")
 
-    def _run_segmentation_pipeline(self, steps: list):
+    def _run_segmentation_pipeline(self, groups: dict):
         if self.state.raw_image is None:
             QMessageBox.warning(self.control_widget, "No Image", "Load an image before running segmentation.")
             return
@@ -367,39 +377,45 @@ class ViewerController:
         self.state.segmentation_results.clear()
         self.state.segmentation_status.clear()
         
-        for idx, step in enumerate(steps):
-            step_key = f"{step.method_name}_{idx}"
-            self.state.segmentation_status[step_key] = "Queued"
-            self.segmentation_panel.update_step_status(idx, "Queued")
+        for group_name, steps in groups.items():
+            for idx, step in enumerate(steps):
+                step_key = f"{group_name}_{idx}"
+                self.state.segmentation_status[step_key] = "Queued"
+                self.segmentation_panel.update_step_status(group_name, idx, "Queued")
             
         self.segmentation_panel.set_running_state(True)
         
-        sequence = SegmentationSequence(steps=steps)
-        self.pipeline_service.execute_sequence(
-            sequence=sequence,
+        from iris_viewer.engine.pipeline import SegmentationSequence
+        seq_dict = {g: SegmentationSequence(steps=s) for g, s in groups.items()}
+        
+        self.pipeline_service.execute_pipeline_groups(
+            groups=seq_dict,
             image=self.state.raw_image,
             on_step_complete=self._on_single_segmentation_done,
-            on_sequence_complete=self._on_all_segmentations_complete,
+            on_group_complete=self._on_group_complete,
+            on_all_complete=self._on_all_segmentations_complete,
             on_error=self._on_segmentation_error
         )
 
-    def _on_segmentation_error(self, step_idx: int, method_name: str, error_msg: str):
-        step_key = f"{method_name}_{step_idx}"
+    def _on_segmentation_error(self, group_name: str, step_idx: int, method_name: str, error_msg: str):
+        step_key = f"{group_name}_{step_idx}"
         self.state.segmentation_status[step_key] = "Failed"
-        self.segmentation_panel.update_step_status(step_idx, "Failed")
-        print(f"[Pipeline Error] {method_name} (Step {step_idx}): {error_msg}")
+        self.segmentation_panel.update_step_status(group_name, step_idx, "Failed")
+        print(f"[Pipeline Error] {group_name} - {method_name} (Step {step_idx}): {error_msg}")
 
-    def _on_single_segmentation_done(self, step_idx: int, method_name: str, seg_result: dict):
-        step_key = f"{method_name}_{step_idx}"
-        self.state.segmentation_results[step_key] = seg_result
+    def _on_single_segmentation_done(self, group_name: str, step_idx: int, method_name: str, seg_result: dict):
+        step_key = f"{group_name}_{step_idx}"
         self.state.segmentation_status[step_key] = "Done"
-        self.segmentation_panel.update_step_status(step_idx, "Done")
+        self.segmentation_panel.update_step_status(group_name, step_idx, "Done")
+
+    def _on_group_complete(self, group_name: str, seg_result: dict):
+        self.state.segmentation_results[group_name] = seg_result
         
         scale_val = self.control_widget.spin_scale.value()
         
         def _add_mask_layer(mask_data, name_suffix):
             if mask_data is None: return
-            layer_name = f"{method_name} (S{step_idx}) {name_suffix}"
+            layer_name = f"{group_name} {name_suffix}"
             try:
                 seg_layer = self.viewer.add_labels(
                     mask_data, name=layer_name, opacity=0.3,
@@ -419,15 +435,15 @@ class ViewerController:
 
     def _on_all_segmentations_complete(self):
         self.segmentation_panel.set_running_state(False)
-        masks = {m: res.get('nuclear') for m, res in self.state.segmentation_results.items() if res.get('nuclear') is not None}
+        masks = {m: res for m, res in self.state.segmentation_results.items() if res.get('nuclear') is not None or res.get('cytoplasm') is not None}
         
         if not masks:
-            QMessageBox.warning(self.control_widget, "No Results", "All segmentation methods failed. Check dependencies and parameters.")
+            QMessageBox.warning(self.control_widget, "No Results", "All segmentation groups failed. Check dependencies and parameters.")
             return
             
         n_methods = len(masks)
-        self.control_widget.update_dashboard(seg_status=f"{n_methods} method(s) applied")
-        self.segmentation_panel.lbl_consensus_status.setText(f"Ready for consensus: {n_methods} method(s)")
+        self.control_widget.update_dashboard(seg_status=f"{n_methods} pipeline(s) applied")
+        self.segmentation_panel.lbl_consensus_status.setText(f"Ready for consensus: {n_methods} pipeline(s)")
         
         QMessageBox.information(
             self.control_widget, "Segmentation Complete", 
@@ -435,19 +451,31 @@ class ViewerController:
         )
 
     def _generate_consensus(self):
-        masks = {m: res.get('nuclear') for m, res in self.state.segmentation_results.items() if res.get('nuclear') is not None}
+        compare_mode = self.consensus_panel.combo_compare.currentText()
         
-        if not masks:
+        seg_results = {}
+        for m, res in self.state.segmentation_results.items():
+            if compare_mode == "Nuclear Masks":
+                if res.get('nuclear') is not None:
+                    seg_results[m] = {'nuclear': res['nuclear'], 'cytoplasm': None}
+            elif compare_mode == "Cytoplasm Masks":
+                if res.get('cytoplasm') is not None:
+                    seg_results[m] = {'nuclear': None, 'cytoplasm': res['cytoplasm']}
+            else: # Both
+                if res.get('nuclear') is not None or res.get('cytoplasm') is not None:
+                    seg_results[m] = res
+        
+        if not seg_results:
             QMessageBox.warning(self.control_widget, "No Masks", "Run segmentation methods first before generating consensus.")
             return
             
         self.consensus_panel.set_generating_state(True)
         
         @thread_worker
-        def _run_consensus(masks_dict=masks):
-            return compute_consensus_mask(masks_dict)
+        def _run_consensus(results_dict=seg_results):
+            return compute_consensus_mask(results_dict)
             
-        worker = _run_consensus(masks)
+        worker = _run_consensus(seg_results)
         worker.returned.connect(self._on_consensus_complete)
         worker.start()
 
@@ -557,7 +585,7 @@ class ViewerController:
             contour_layer = self.viewer.add_image(
                 contour_rgb, name=layer_name,
                 rgb=True, blending='additive',
-                visible=self.consensus_panel.chk_show_confidence.isChecked(),
+                visible=True,
                 scale=(scale_val, scale_val),
             )
             if layer_name not in self.added_legend_entries:
@@ -570,33 +598,143 @@ class ViewerController:
         if not self.state.per_cell_confidence: return
         
         threshold = self.consensus_panel.get_threshold()
-        half_thresh = threshold * 0.5
-        confs = list(self.state.per_cell_confidence.values())
+        confs = self.state.per_cell_confidence
+        
+        self.flagged_cells = [cid for cid, c in confs.items() if c < threshold]
+        self.current_issue_idx = -1
         
         total = len(confs)
-        high = sum(1 for c in confs if c >= threshold)
-        low = sum(1 for c in confs if c < half_thresh)
-        medium = total - high - low
-        mean_conf = float(np.mean(confs)) if confs else 0.0
+        flagged = len(self.flagged_cells)
+        agreed = total - flagged
+        mean_conf = float(np.mean(list(confs.values()))) if confs else 0.0
         
-        self.consensus_panel.update_statistics(total, high, medium, low, mean_conf)
+        self.consensus_panel.update_statistics(total, agreed, flagged, mean_conf)
         self.control_widget.update_dashboard(confidence=f"{mean_conf:.3f} (mean)")
+        
+        # Reset bounding box layer
+        if "Active Review Isolation" in self.viewer.layers:
+            self.viewer.layers["Active Review Isolation"].visible = False
+        if "Review BBox" in self.viewer.layers:
+            self.viewer.layers["Review BBox"].data = []
 
-    def _toggle_consensus_visibility(self, visible: bool):
-        if "Consensus Mask" in [l.name for l in self.viewer.layers]:
-            self.viewer.layers["Consensus Mask"].visible = visible
+    def _jump_to_issue(self, idx: int):
+        if not self.flagged_cells: return
+        self.current_issue_idx = idx % len(self.flagged_cells)
+        cell_id = self.flagged_cells[self.current_issue_idx]
+        
+        self.consensus_panel.lbl_issue_count.setText(f"Issue: {self.current_issue_idx + 1} / {len(self.flagged_cells)}")
+        
+        method_map = self.state._cell_method_map.get(cell_id, {})
+        
+        # Encompass all involved cells for the bounding box
+        min_r, min_c = float('inf'), float('inf')
+        max_r, max_c = 0, 0
+        
+        for m_name, orig_id in method_map.items():
+            if m_name in self.state.segmentation_results:
+                nuc = self.state.segmentation_results[m_name].get('nuclear')
+                cyto = self.state.segmentation_results[m_name].get('cytoplasm')
+                if nuc is not None:
+                    full_m = np.maximum(nuc, cyto) if cyto is not None else nuc
+                    cell_pixels = np.where(full_m == orig_id)
+                    if len(cell_pixels[0]) > 0:
+                        min_r = min(min_r, cell_pixels[0].min())
+                        min_c = min(min_c, cell_pixels[1].min())
+                        max_r = max(max_r, cell_pixels[0].max())
+                        max_c = max(max_c, cell_pixels[1].max())
 
-    def _toggle_method_mask_visibility(self, method_name: str, visible: bool):
-        for suffix in ["Nuclear Mask", "Cyto Mask"]:
-            layer_name = f"{method_name} {suffix}"
-            if layer_name in [l.name for l in self.viewer.layers]:
-                self.viewer.layers[layer_name].visible = visible
+        # Fallback to consensus footprint if methods not found
+        if min_r == float('inf'):
+            from skimage.measure import regionprops
+            props = regionprops((self.state.consensus_mask == cell_id).astype(int))
+            if not props: return
+            min_r, min_c, max_r, max_c = props[0].bbox
+            
+        # Add 15px padding
+        min_r, min_c = max(0, min_r - 15), max(0, min_c - 15)
+        max_r, max_c = min(self.state.consensus_mask.shape[0], max_r + 15), min(self.state.consensus_mask.shape[1], max_c + 15)
+        cy, cx = (min_r + max_r) / 2.0, (min_c + max_c) / 2.0
+        
+        # Move Camera
+        self.viewer.camera.center = (cy, cx)
+        self.viewer.camera.zoom = max(5.0, 300.0 / max(max_r - min_r, 1)) 
+        
+        # Draw Red Bounding Box
+        bbox_corners = np.array([
+            [min_r, min_c],
+            [min_r, max_c],
+            [max_r, max_c],
+            [max_r, min_c]
+        ])
+        
+        if "Review BBox" in self.viewer.layers:
+            self.viewer.layers["Review BBox"].data = [bbox_corners]
+        else:
+            scale_val = self.control_widget.spin_scale.value()
+            self.viewer.add_shapes([bbox_corners], shape_type='polygon', edge_color='red', face_color='transparent', edge_width=3, name="Review BBox", scale=(scale_val, scale_val))
+            
+        # Trigger review panel and isolation visualizer for this cell
+        conf = self.state.per_cell_confidence.get(cell_id, 0.0)
+        self.consensus_panel.show_cell_review(cell_id, conf, method_map)
+        self.consensus_panel.lbl_issue_count.setText(f"Issue {self.current_issue_idx + 1} of {len(self.flagged_cells)}")
+        self._show_competing_masks(method_map)
+
+    def _show_competing_masks(self, method_map: dict):
+        h, w = self.state.consensus_mask.shape
+        isolation_rgba = np.zeros((h, w, 4), dtype=np.float32)
+        
+        palette = [
+            (1.0, 0.2, 0.2), 
+            (0.2, 1.0, 0.2), 
+            (0.2, 0.5, 1.0), 
+            (1.0, 0.2, 1.0),
+        ]
+        
+        from skimage.segmentation import find_boundaries
+        
+        for i, m_name in enumerate(sorted(method_map.keys())):
+            orig_id = method_map[m_name]
+            if m_name in self.state.segmentation_results:
+                nuc = self.state.segmentation_results[m_name].get('nuclear')
+                cyto = self.state.segmentation_results[m_name].get('cytoplasm')
+                if nuc is not None:
+                    m_mask = np.maximum(nuc, cyto) if cyto is not None else nuc
+                    color = palette[i % len(palette)]
+                    cell_pixels = (m_mask == orig_id)
+                    
+                    isolation_rgba[cell_pixels, 0] = np.clip(isolation_rgba[cell_pixels, 0] + color[0], 0, 1)
+                    isolation_rgba[cell_pixels, 1] = np.clip(isolation_rgba[cell_pixels, 1] + color[1], 0, 1)
+                    isolation_rgba[cell_pixels, 2] = np.clip(isolation_rgba[cell_pixels, 2] + color[2], 0, 1)
+                    isolation_rgba[cell_pixels, 3] = np.maximum(isolation_rgba[cell_pixels, 3], 0.3)
+                    
+                    boundary = find_boundaries(cell_pixels, mode='inner')
+                    isolation_rgba[boundary, 0] = color[0]
+                    isolation_rgba[boundary, 1] = color[1]
+                    isolation_rgba[boundary, 2] = color[2]
+                    isolation_rgba[boundary, 3] = 0.8
+                    
+        layer_name = "Active Review Isolation"
+        if layer_name in self.viewer.layers:
+            self.viewer.layers[layer_name].data = isolation_rgba
+            self.viewer.layers[layer_name].visible = True
+        else:
+            scale_val = self.control_widget.spin_scale.value()
+            iso_layer = self.viewer.add_image(
+                isolation_rgba, name=layer_name, rgb=True, opacity=1.0, 
+                blending='translucent', visible=True, scale=(scale_val, scale_val)
+            )
+            if layer_name not in self.added_legend_entries:
+                self.legend_widget.add_consensus_row(iso_layer, layer_name, "#FFFFFF")
+                self.added_legend_entries.add(layer_name)
+
+    def _next_issue(self):
+        self._jump_to_issue(self.current_issue_idx + 1)
+        
+    def _prev_issue(self):
+        self._jump_to_issue(self.current_issue_idx - 1 if self.current_issue_idx > 0 else len(self.flagged_cells) - 1)
 
     def _toggle_review_mode(self, enabled: bool):
-        if not enabled: 
-            self.consensus_panel.clear_cell_review()
-            if "Active Review Isolation" in self.viewer.layers:
-                self.viewer.layers["Active Review Isolation"].visible = False
+        pass # Obsolete
 
     def _apply_manual_override(self, cell_id: int, preferred_method: str):
         if self.state.consensus_mask is None or not hasattr(self.state, '_cell_method_map'): return
@@ -604,7 +742,9 @@ class ViewerController:
         masks = {}
         for method_name, seg_result in self.state.segmentation_results.items():
             nuc = seg_result.get('nuclear')
-            if nuc is not None: masks[method_name] = nuc
+            cyto = seg_result.get('cytoplasm')
+            if nuc is not None:
+                masks[method_name] = np.maximum(nuc, cyto) if cyto is not None else nuc
             
         self.state.consensus_mask, self.state.confidence_map, self.state.per_cell_confidence = \
             apply_manual_override(
@@ -628,7 +768,6 @@ class ViewerController:
             self.viewer.layers["Active Review Isolation"].visible = False
 
     def _on_mouse_click(self, viewer, event):
-        if not self.consensus_panel.chk_review_mode.isChecked(): return
         if self.state.consensus_mask is None: return
         
         consensus_layer = next((l for l in self.viewer.layers if l.name == "Consensus Mask"), None)
@@ -645,57 +784,7 @@ class ViewerController:
                     conf = self.state.per_cell_confidence.get(cell_id, 0.0)
                     method_map = self.state._cell_method_map.get(cell_id, {})
                     self.consensus_panel.show_cell_review(cell_id, conf, method_map)
-                    
-                    # Create an isolated, RGBA blending view of the competing masks to prevent "squishing"
-                    h, w = self.state.consensus_mask.shape
-                    isolation_rgba = np.zeros((h, w, 4), dtype=np.float32)
-                    
-                    # Same color order as the UI buttons (Red, Green, Blue, Magenta)
-                    palette = [
-                        (1.0, 0.2, 0.2), 
-                        (0.2, 1.0, 0.2), 
-                        (0.2, 0.5, 1.0), 
-                        (1.0, 0.2, 1.0),
-                    ]
-                    
-                    from skimage.segmentation import find_boundaries
-                    
-                    # Sort keys to match the UI button assignment identically
-                    for i, m_name in enumerate(sorted(method_map.keys())):
-                        orig_id = method_map[m_name]
-                        if m_name in self.state.segmentation_results:
-                            m_mask = self.state.segmentation_results[m_name].get('nuclear')
-                            if m_mask is not None:
-                                color = palette[i % len(palette)]
-                                cell_pixels = (m_mask == orig_id)
-                                
-                                # Additive blending for translucent fills (30% opacity)
-                                isolation_rgba[cell_pixels, 0] = np.clip(isolation_rgba[cell_pixels, 0] + color[0], 0, 1)
-                                isolation_rgba[cell_pixels, 1] = np.clip(isolation_rgba[cell_pixels, 1] + color[1], 0, 1)
-                                isolation_rgba[cell_pixels, 2] = np.clip(isolation_rgba[cell_pixels, 2] + color[2], 0, 1)
-                                isolation_rgba[cell_pixels, 3] = np.maximum(isolation_rgba[cell_pixels, 3], 0.3)
-                                
-                                # Solid boundaries (80% opacity)
-                                boundary = find_boundaries(cell_pixels, mode='inner')
-                                isolation_rgba[boundary, 0] = color[0]
-                                isolation_rgba[boundary, 1] = color[1]
-                                isolation_rgba[boundary, 2] = color[2]
-                                isolation_rgba[boundary, 3] = 0.8
-                                
-                    layer_name = "Active Review Isolation"
-                    if layer_name in self.viewer.layers:
-                        self.viewer.layers[layer_name].data = isolation_rgba
-                        self.viewer.layers[layer_name].visible = True
-                    else:
-                        scale_val = self.control_widget.spin_scale.value()
-                        # Added as an RGBA Image layer to avoid the contour TypeError and natively support alpha blending
-                        iso_layer = self.viewer.add_image(
-                            isolation_rgba, name=layer_name, rgb=True, opacity=1.0, 
-                            blending='translucent', visible=True, scale=(scale_val, scale_val)
-                        )
-                        if layer_name not in self.added_legend_entries:
-                            self.legend_widget.add_consensus_row(iso_layer, layer_name, "#FFFFFF")
-                            self.added_legend_entries.add(layer_name)
+                    self._show_competing_masks(method_map)
 
     def _run_feature_extraction(self, selected_morphology: list, selected_intensity: list):
         if self.state.consensus_mask is None:

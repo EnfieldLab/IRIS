@@ -1,8 +1,9 @@
 """ IRIS-Viewer Segmentation Sequence Builder Panel """
+import json
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QDoubleSpinBox, QPushButton, QGroupBox, QFrame, QScrollArea, QLineEdit, QStackedWidget,
-    QMenu, QAction
+    QMenu, QAction, QFileDialog
 )
 from qtpy.QtCore import Qt, Signal
 from iris_viewer.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
@@ -284,16 +285,11 @@ class StepWidget(QFrame):
             
         return SegmentationStep(method_name=method, params=params, rule=step_type)
 
-class SegmentationPanelWidget(QWidget):
-    runSequence = Signal(list)
-    cancelSequence = Signal()
-
-    def __init__(self, parent=None):
+class PipelineGroupWidget(QWidget):
+    def __init__(self, available_methods, markers, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(SHARED_DARK_THEME)
-        
-        self.available_methods = ["Cellpose", "StarDist", "InstanSeg", "CellSAM"]
-        self.markers = []
+        self.available_methods = available_methods
+        self.markers = markers
         self.step_widgets = []
         
         self.scroll_area = QScrollArea()
@@ -310,11 +306,14 @@ class SegmentationPanelWidget(QWidget):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(self.scroll_area)
         
-        title = QLabel("Sequential Workflow Builder")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        self.main_layout.addWidget(title)
+        # Pipeline Name
+        row_name = QHBoxLayout()
+        row_name.addWidget(QLabel("Pipeline Name:"))
+        self.txt_name = QLineEdit()
+        row_name.addWidget(self.txt_name)
+        self.main_layout.addLayout(row_name)
         
-        info = QLabel("Steps execute top-to-bottom. Use Base Nuclear first, then add Sequential Cytoplasm for specific cell types.")
+        info = QLabel("Steps execute top-to-bottom. Build this pipeline to yield one final Nuclear & Cytoplasm mask.")
         info.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
         info.setWordWrap(True)
         self.main_layout.addWidget(info)
@@ -328,22 +327,6 @@ class SegmentationPanelWidget(QWidget):
         self.main_layout.addWidget(self.btn_add)
         self.main_layout.addStretch()
         
-        self.btn_run = QPushButton("Run Sequence")
-        self.btn_run.setStyleSheet("QPushButton { background-color: #3A6A9A; color: white; font-weight: bold; padding: 8px; font-size: 13px; } QPushButton:hover { background-color: #4A7FBA; }")
-        self.btn_run.clicked.connect(self._emit_run_signal)
-        self.main_layout.addWidget(self.btn_run)
-        
-        self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setStyleSheet("QPushButton { background-color: #CC4444; color: white; font-weight: bold; padding: 6px; } QPushButton:hover { background-color: #DD5555; }")
-        self.btn_cancel.clicked.connect(lambda: self.cancelSequence.emit())
-        self.btn_cancel.hide()
-        self.main_layout.addWidget(self.btn_cancel)
-        
-        self.lbl_consensus_status = QLabel("Consensus: Ready")
-        self.lbl_consensus_status.setStyleSheet("color: #AAA; font-size: 11px; margin-top: 4px;")
-        self.main_layout.addWidget(self.lbl_consensus_status)
-
-        # Add initial Base step automatically
         self._add_step()
 
     def _add_step(self):
@@ -356,33 +339,128 @@ class SegmentationPanelWidget(QWidget):
             
         self.step_widgets.append(step)
         self.steps_layout.addWidget(step)
+        return step
 
     def _remove_step(self, step_widget):
         self.step_widgets.remove(step_widget)
         self.steps_layout.removeWidget(step_widget)
         step_widget.deleteLater()
 
-    def update_channel_dropdowns(self, markers: list):
+    def update_markers(self, markers):
         self.markers = markers
         for sw in self.step_widgets:
             sw.update_markers(markers)
 
+    def set_running_state(self, is_running: bool):
+        self.btn_add.setEnabled(not is_running)
+        for sw in self.step_widgets:
+            sw.setEnabled(not is_running)
+            
+    def get_steps(self):
+        return [sw.get_step_config(self.markers) for sw in self.step_widgets]
+
+
+class SegmentationPanelWidget(QWidget):
+    runSequence = Signal(dict)
+    cancelSequence = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(SHARED_DARK_THEME)
+        
+        self.available_methods = ["Cellpose", "StarDist", "InstanSeg", "CellSAM"]
+        self.markers = []
+        self.groups = {}
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Header controls
+        row_header = QHBoxLayout()
+        title = QLabel("Method Groups (Pipelines)")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
+        row_header.addWidget(title)
+        
+        self.btn_add_group = QPushButton("+ New Group")
+        self.btn_add_group.setStyleSheet("background-color: #444; color: white; font-weight: bold;")
+        self.btn_add_group.clicked.connect(self._add_group)
+        row_header.addStretch()
+        row_header.addWidget(self.btn_add_group)
+        main_layout.addLayout(row_header)
+        
+        from qtpy.QtWidgets import QTabWidget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self._close_tab)
+        main_layout.addWidget(self.tab_widget)
+        
+        # Add initial group
+        self._add_group()
+        
+        self.btn_run = QPushButton("Run All Groups")
+        self.btn_run.setStyleSheet("QPushButton { background-color: #3A6A9A; color: white; font-weight: bold; padding: 8px; font-size: 13px; } QPushButton:hover { background-color: #4A7FBA; }")
+        self.btn_run.clicked.connect(self._emit_run_signal)
+        main_layout.addWidget(self.btn_run)
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setStyleSheet("QPushButton { background-color: #CC4444; color: white; font-weight: bold; padding: 6px; } QPushButton:hover { background-color: #DD5555; }")
+        self.btn_cancel.clicked.connect(lambda: self.cancelSequence.emit())
+        self.btn_cancel.hide()
+        main_layout.addWidget(self.btn_cancel)
+        
+        self.lbl_consensus_status = QLabel("Consensus: Ready")
+        self.lbl_consensus_status.setStyleSheet("color: #AAA; font-size: 11px; margin-top: 4px;")
+        main_layout.addWidget(self.lbl_consensus_status)
+
+    def _add_group(self):
+        idx = self.tab_widget.count() + 1
+        name = f"Pipeline {idx}"
+        group_widget = PipelineGroupWidget(self.available_methods, self.markers)
+        group_widget.txt_name.setText(name)
+        
+        # Update tab name when text changes
+        def _on_name_changed(text):
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.widget(i) == group_widget:
+                    self.tab_widget.setTabText(i, text)
+                    break
+        group_widget.txt_name.textChanged.connect(_on_name_changed)
+        
+        self.tab_widget.addTab(group_widget, name)
+        
+    def _close_tab(self, index):
+        if self.tab_widget.count() > 1:
+            self.tab_widget.removeTab(index)
+
+    def update_channel_dropdowns(self, markers: list):
+        self.markers = markers
+        for i in range(self.tab_widget.count()):
+            self.tab_widget.widget(i).update_markers(markers)
+
     def update_available_methods(self, methods: list):
         self.available_methods = methods
 
-    def update_step_status(self, step_idx: int, status: str):
-        if 0 <= step_idx < len(self.step_widgets):
-            self.step_widgets[step_idx].set_status(status)
+    def update_step_status(self, group_name: str, step_idx: int, status: str):
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabText(i) == group_name:
+                group_widget = self.tab_widget.widget(i)
+                if 0 <= step_idx < len(group_widget.step_widgets):
+                    group_widget.step_widgets[step_idx].set_status(status)
 
     def set_running_state(self, is_running: bool):
         self.btn_run.setVisible(not is_running)
         self.btn_cancel.setVisible(is_running)
-        self.btn_add.setEnabled(not is_running)
-        for sw in self.step_widgets:
-            sw.setEnabled(not is_running)
+        self.btn_add_group.setEnabled(not is_running)
+        for i in range(self.tab_widget.count()):
+            self.tab_widget.widget(i).set_running_state(is_running)
 
     def _emit_run_signal(self):
-        if not self.step_widgets:
-            return
-        steps = [sw.get_step_config(self.markers) for sw in self.step_widgets]
-        self.runSequence.emit(steps)
+        groups = {}
+        for i in range(self.tab_widget.count()):
+            name = self.tab_widget.tabText(i)
+            steps = self.tab_widget.widget(i).get_steps()
+            if steps:
+                groups[name] = steps
+                
+        if groups:
+            self.runSequence.emit(groups)
