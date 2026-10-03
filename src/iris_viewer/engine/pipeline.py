@@ -217,3 +217,151 @@ class PipelineService:
         for worker in self._active_workers:
             worker.quit()
         self._active_workers.clear()
+
+
+# ── Synchronous Group Execution ──────────────────────────────────────────────
+
+def execute_group_sync(
+    group_name: str,
+    sequence: SegmentationSequence,
+    image: np.ndarray,
+    backends: Dict,
+    device: str,
+    gpu_lock: Optional[threading.Lock] = None,
+) -> Dict[str, Optional[np.ndarray]]:
+    """
+    Execute a ``SegmentationSequence`` synchronously (blocking).
+
+    This is the non-generator equivalent of ``PipelineService._run_sequence``
+    and is used by ``BatchService``, which cannot call ``thread_worker`` from
+    inside another ``thread_worker`` context.
+
+    Parameters
+    ----------
+    group_name : str
+        Human-readable label (used only for log messages).
+    sequence : SegmentationSequence
+        The ordered list of ``SegmentationStep`` objects to execute.
+    image : np.ndarray
+        Full multi-channel image ``(C, H, W)``.
+    backends : dict
+        Mapping of ``method_name -> SegmentationBackend`` (already filtered
+        to available backends only).
+    device : str
+        ``'cpu'``, ``'cuda'``, or ``'mps'``.
+    gpu_lock : threading.Lock, optional
+        Shared lock to serialise GPU access across concurrent batch workers.
+
+    Returns
+    -------
+    dict with keys ``'nuclear'`` and ``'cytoplasm'``, each an ``np.ndarray``
+    or ``None``.
+    """
+    global_nuc: Optional[np.ndarray] = None
+    global_cyto: Optional[np.ndarray] = None
+
+    for step_idx, step in enumerate(sequence.steps):
+        try:
+            # ── Nuclear (Base) ──────────────────────────────────────────
+            if step.rule == "Nuclear (Base)":
+                backend = backends.get(step.method_name)
+                if not backend:
+                    print(f"[Batch/{group_name}] Backend '{step.method_name}' not available — skipping step {step_idx}")
+                    continue
+
+                kw = step.params.copy()
+                kw.setdefault('diameter', None)
+                kw.pop('membrane_channels', None)
+                kw['membrane_channel'] = None
+
+                if gpu_lock:
+                    with gpu_lock:
+                        res = backend.segment(image=image, device=device, **kw)
+                else:
+                    res = backend.segment(image=image, device=device, **kw)
+
+                n_new = res.get('nuclear')
+                if n_new is not None:
+                    if global_nuc is None:
+                        global_nuc = n_new
+                    else:
+                        # Merge by adding new labels above the current max
+                        shifted = n_new.copy()
+                        shifted[shifted > 0] += int(global_nuc.max())
+                        fill = (global_nuc == 0) & (shifted > 0)
+                        global_nuc[fill] = shifted[fill]
+
+            # ── Cytoplasm (Sequential) ──────────────────────────────────
+            elif step.rule == "Cytoplasm (Sequential)":
+                backend = backends.get(step.method_name)
+                if not backend or global_nuc is None:
+                    print(f"[Batch/{group_name}] Skipping sequential cytoplasm step {step_idx} "
+                          f"(backend={backend is not None}, nuc_ready={global_nuc is not None})")
+                    continue
+
+                nuc_c = step.params.get('nuclear_channel', 0)
+                mem_cs = step.params.get('membrane_channels', [])
+                mem_img = image[mem_cs, :, :].max(axis=0) if mem_cs else np.zeros_like(image[0])
+                synth_img = np.stack([image[nuc_c, :, :], mem_img], axis=0)
+
+                kw = step.params.copy()
+                kw.setdefault('diameter', None)
+                kw.pop('membrane_channels', None)
+                kw['nuclear_channel'] = 0
+                kw['membrane_channel'] = 1
+
+                if gpu_lock:
+                    with gpu_lock:
+                        res = backend.segment(image=synth_img, device=device, **kw)
+                else:
+                    res = backend.segment(image=synth_img, device=device, **kw)
+
+                new_cyto = res.get('cytoplasm') or res.get('nuclear')
+                if new_cyto is None:
+                    continue
+
+                if global_cyto is None:
+                    global_cyto = np.zeros_like(global_nuc)
+
+                new_labels = np.unique(new_cyto)
+                new_labels = new_labels[new_labels > 0]
+                for L in new_labels:
+                    px = new_cyto == L
+                    overlaps = global_nuc[px]
+                    overlaps = overlaps[overlaps > 0]
+                    if len(overlaps) > 0:
+                        nuc_L = int(np.bincount(overlaps).argmax())
+                        if nuc_L > 0 and not np.any(global_cyto[global_nuc == nuc_L] > 0):
+                            global_cyto[px] = nuc_L
+
+            # ── Cytoplasm (Dilate Remaining) ────────────────────────────
+            elif step.rule == "Cytoplasm (Dilate Remaining)":
+                if global_nuc is None:
+                    print(f"[Batch/{group_name}] Skipping dilation step {step_idx} — no nuclear mask")
+                    continue
+
+                if global_cyto is None:
+                    global_cyto = np.zeros_like(global_nuc)
+
+                radius = step.params.get('dilation_radius', 5)
+                unseg = np.zeros_like(global_nuc)
+                for nL in np.unique(global_nuc)[1:]:
+                    if not np.any(global_cyto[global_nuc == nL] > 0):
+                        unseg[global_nuc == nL] = nL
+
+                if np.any(unseg > 0):
+                    from scipy.ndimage import distance_transform_edt
+                    dists, (ny, nx) = distance_transform_edt(unseg == 0, return_indices=True)
+                    exp = (dists > 0) & (dists <= radius)
+                    nearest = unseg[ny[exp], nx[exp]]
+                    new_cyto = unseg.copy()
+                    new_cyto[exp] = nearest
+                    fill = (global_cyto == 0) & (new_cyto > 0)
+                    global_cyto[fill] = new_cyto[fill]
+
+        except Exception as exc:
+            import traceback
+            print(f"[Batch/{group_name}] Step {step_idx} ({step.method_name}) raised: {exc}")
+            traceback.print_exc()
+
+    return {'nuclear': global_nuc, 'cytoplasm': global_cyto}

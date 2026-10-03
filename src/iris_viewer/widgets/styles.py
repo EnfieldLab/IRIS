@@ -199,3 +199,29 @@ BUTTON_SUCCESS = """
     }
     QPushButton:hover { background-color: #55BB77; }
 """
+
+# ── Default Channel Colour Suggestions ─────────────────────────────────────────
+# Maps common marker names (upper-cased for matching) to napari-compatible
+# colourmap names or hex strings.  Used to auto-assign colours on image load.
+
+DEFAULT_MARKER_COLORS: dict = {
+    'DAPI':  'blue',
+    'HOECHST': 'blue',
+    'ASMA': 'green',
+    'SMA':  'green',
+    'ACTA2': 'green',
+    'CD45': 'purple',
+    'PTPRC': 'purple',
+    'CK':   'red',
+    'PANCK': 'red',
+    'KRT':  'red',
+    'CD3':  'cyan',
+    'CD4':  'magenta',
+    'CD8':  'yellow',
+    'CD20': 'orange',
+    'CD68': 'bop orange',
+    'CD163': 'bop purple',
+    'PDL1': 'bop blue',
+    'KI67': 'gray',
+    'MKI67': 'gray',
+}
