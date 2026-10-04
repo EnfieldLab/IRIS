@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iris-viewer"
-version = "0.1.0"
-description = "A production-quality Python application for multiplexed immunofluorescence imaging"
+version = "0.2.0"
+description = "A production-quality viewer for multiplexed immunofluorescence imaging"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -13,6 +13,7 @@ authors = [
   {name = "Willie Wu"}
 ]
 dependencies = [
+    "iris-common",               # workspace sibling — resolved locally by uv
     "napari[all]>=0.4.18",
     "numpy",
     "scipy",
@@ -21,18 +22,46 @@ dependencies = [
     "matplotlib",
     "tifffile",
     "qtpy",
+    "dask[array]",
 ]
 
 [project.optional-dependencies]
-cellpose = ["cellpose>=3.0"]
-stardist = ["stardist", "csbdeep"]
-instanseg = ["instanseg"]
-cellsam = ["cellSAM"] # Place-holder for custom or real CellSAM
-all = ["cellpose", "stardist", "instanseg", "cellSAM"]
-dev = [
-    "pytest",
-    "pytest-qt"
-]
+cellpose   = ["cellpose>=3.0"]
+stardist   = ["stardist", "csbdeep"]
+instanseg  = ["instanseg"]
+cellsam    = ["cellSAM"]
+all        = ["cellpose>=3.0", "stardist", "csbdeep", "instanseg", "cellSAM"]
+dev        = ["pytest>=7.0", "pytest-qt>=4.0"]
 
 [project.scripts]
 iris-viewer = "iris_viewer.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ── uv workspace declaration ──────────────────────────────────────────────────
+# The iris-viewer directory IS the workspace root (uv workspace members are
+# relative to this file's location).
+[tool.uv.workspace]
+members = [
+    "iris-common",
+    "packages/iris-phenotyper",
+]
+
+# ── Shared dev dependencies ───────────────────────────────────────────────────
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-qt>=4.0",
+    "mypy>=1.0",
+    "ruff>=0.4",
+    "coverage[toml]>=7.0",
+]
+
+# ── Tool config ───────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/iris-phenotyper/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

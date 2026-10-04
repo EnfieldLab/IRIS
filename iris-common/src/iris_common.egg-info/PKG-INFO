@@ -1,0 +1,20 @@
+Metadata-Version: 2.4
+Name: iris-common
+Version: 0.1.0
+Summary: Shared IO, types, and backend ABCs for the IRIS-Suite
+Author: Willie Wu
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: scikit-image
+Requires-Dist: tifffile
+Requires-Dist: dask[array]
+Provides-Extra: phenotyper
+Requires-Dist: anndata>=0.9; extra == "phenotyper"
+Requires-Dist: scanpy>=1.9; extra == "phenotyper"
+Requires-Dist: umap-learn>=0.5; extra == "phenotyper"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"

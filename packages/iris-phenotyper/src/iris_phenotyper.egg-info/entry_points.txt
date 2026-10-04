@@ -1,0 +1,2 @@
+[console_scripts]
+iris-phenotyper = iris_phenotyper.main:main

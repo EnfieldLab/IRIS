@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iris-common"
+version = "0.1.0"
+description = "Shared IO, types, and backend ABCs for the IRIS-Suite"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Willie Wu"}
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "scikit-image",
+    "tifffile",
+    "dask[array]",
+]
+
+[project.optional-dependencies]
+phenotyper = [
+    "anndata>=0.9",
+    "scanpy>=1.9",
+    "umap-learn>=0.5",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
