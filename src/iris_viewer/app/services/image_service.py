@@ -72,6 +72,9 @@ class ImageService:
             ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
 
         ctx.control_widget.update_sample_list(sample_names)
+        if hasattr(ctx, 'comparison_widget'):
+            ctx.comparison_widget.update_sample_list(sample_names)
+        
         if sample_names:
             ctx.control_widget.combo_sample.setCurrentIndex(0)
             self.on_sample_selected(sample_names[0])

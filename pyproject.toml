@@ -28,9 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 cellpose   = ["cellpose>=3.0"]
 stardist   = ["stardist", "csbdeep"]
-instanseg  = ["instanseg"]
-cellsam    = ["cellSAM"]
-all        = ["cellpose>=3.0", "stardist", "csbdeep", "instanseg", "cellSAM"]
+all        = ["cellpose>=3.0", "stardist", "csbdeep"]
 dev        = ["pytest>=7.0", "pytest-qt>=4.0"]
 
 [project.scripts]
@@ -38,6 +36,10 @@ iris-viewer = "iris_viewer.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv.sources]
+iris-common = { workspace = true }
+iris-phenotyper = { workspace = true }
 
 # ── uv workspace declaration ──────────────────────────────────────────────────
 # The iris-viewer directory IS the workspace root (uv workspace members are

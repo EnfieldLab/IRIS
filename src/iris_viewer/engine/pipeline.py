@@ -316,7 +316,7 @@ def execute_group_sync(
                 else:
                     res = backend.segment(image=synth_img, device=device, **kw)
 
-                new_cyto = res.get('cytoplasm') or res.get('nuclear')
+                new_cyto = res.get('cytoplasm') if res.get('cytoplasm') is not None else res.get('nuclear')
                 if new_cyto is None:
                     continue
 

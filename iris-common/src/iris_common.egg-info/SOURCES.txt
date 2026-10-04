@@ -10,5 +10,6 @@ src/iris_common/engine/__init__.py
 src/iris_common/engine/phenotyping/__init__.py
 src/iris_common/engine/segmentation/__init__.py
 src/iris_common/io/__init__.py
+src/iris_common/io/data_adapter.py
 src/iris_common/io/exporters.py
 src/iris_common/io/loaders.py

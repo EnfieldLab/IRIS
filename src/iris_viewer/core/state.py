@@ -47,8 +47,22 @@ class ViewerAppState:
 
         # ── Multi-sample Layer Tracking ─────────────────────────────────
         self.masks_map: Dict[str, np.ndarray] = {}          # sample -> nuclear mask
+        self.cytoplasm_mask: Optional[np.ndarray] = None    # last loaded cytoplasm mask
+        self.current_mask: Optional[np.ndarray] = None      # active nuclear mask
         self.sample_layers_map: Dict[str, List[Any]] = {}
         self.persistent_settings: Dict[str, Any] = {}
+
+        # ── Multi-sample Annotation Data ────────────────────────────────
+        # master_df   : full normalised DataFrame loaded from xlsx/csv
+        # resolved_dfs: per-sample slice after mask ID resolution
+        # areas_map   : sample -> tissue area (in µm² or px²)
+        # current_mapped_df : concat of all currently displayed samples
+        self.master_df: Optional[pd.DataFrame] = None
+        self.resolved_dfs: Dict[str, pd.DataFrame] = {}
+        self.areas_map: Dict[str, float] = {}
+        self.current_mapped_df: Optional[pd.DataFrame] = None
+        # stash for IrisDataAdapter (set by MultiSampleService)
+        self._data_adapter = None
 
         # ── Batch Processing ────────────────────────────────────────────
         self.batch_queue: List[str] = []
@@ -91,6 +105,12 @@ class ViewerAppState:
         self.manual_overrides.clear()
         self.override_history.clear()
         self.features_df = None
+        self.current_mask = None
+        self.cytoplasm_mask = None
+        self.masks_map.clear()
+        self.resolved_dfs.clear()
+        self.areas_map.clear()
+        self.current_mapped_df = None
 
     def reset_all(self) -> None:
         """Full state reset — clears everything including directory and markers."""

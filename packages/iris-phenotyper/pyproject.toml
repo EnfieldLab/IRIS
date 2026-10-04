@@ -40,3 +40,6 @@ iris-phenotyper = "iris_phenotyper.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv.sources]
+iris-common = { workspace = true }

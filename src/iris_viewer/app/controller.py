@@ -35,8 +35,10 @@ from iris_viewer.widgets.segmentation_panel import SegmentationPanelWidget
 from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
 from iris_viewer.widgets.feature_panel import FeaturePanelWidget
 from iris_viewer.widgets.legend import ViewerLegendWidget
+from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
+from iris_viewer.widgets.training_panel import TrainingDataWidget
 
-from iris_viewer.app.services import BatchService, ImageService, ReviewService
+from iris_viewer.app.services import BatchService, ImageService, ReviewService, MultiSampleService, TrainingService
 
 
 class ViewerController:
@@ -74,22 +76,28 @@ class ViewerController:
         self.consensus_panel    = ConsensusPanelWidget()
         self.feature_panel      = FeaturePanelWidget()
         self.legend_widget      = ViewerLegendWidget(self.viewer)
+        self.comparison_widget  = MultiSampleComparisonWidget()
+        self.training_panel     = TrainingDataWidget()
 
         for widget, name in [
             (self.control_widget,     "Control"),
             (self.segmentation_panel, "Segmentation"),
             (self.consensus_panel,    "Consensus"),
             (self.feature_panel,      "Features"),
+            (self.comparison_widget,  "Multi-Sample"),
+            (self.training_panel,     "Training"),
             (self.legend_widget,      "Legend"),
         ]:
             self.viewer.window.add_dock_widget(widget, name=name, area="right")
 
         dw = self.viewer.window.dock_widgets
         qt = self.viewer.window._qt_window
-        qt.tabifyDockWidget(dw["Control"].parent(),     dw["Segmentation"].parent())
-        qt.tabifyDockWidget(dw["Segmentation"].parent(), dw["Consensus"].parent())
-        qt.tabifyDockWidget(dw["Consensus"].parent(),   dw["Features"].parent())
-        qt.tabifyDockWidget(dw["Features"].parent(),    dw["Legend"].parent())
+        qt.tabifyDockWidget(dw["Control"].parent(),       dw["Segmentation"].parent())
+        qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
+        qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
+        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Multi-Sample"].parent())
+        qt.tabifyDockWidget(dw["Multi-Sample"].parent(),  dw["Training"].parent())
+        qt.tabifyDockWidget(dw["Training"].parent(),      dw["Legend"].parent())
         dw["Control"].parent().raise_()
 
         # ── Shared Context namespace ───────────────────────────────────────
@@ -104,6 +112,8 @@ class ViewerController:
             consensus_panel=self.consensus_panel,
             feature_panel=self.feature_panel,
             legend_widget=self.legend_widget,
+            comparison_widget=self.comparison_widget,
+            training_panel=self.training_panel,
             added_legend_entries=self.added_legend_entries,  # same set object
             active_workers=self._active_workers,             # same list object
             flagged_cells=[],
@@ -111,9 +121,11 @@ class ViewerController:
         )
 
         # ── Services ──────────────────────────────────────────────────────
-        self.image_svc  = ImageService(self._ctx)
-        self.batch_svc  = BatchService(self._ctx)
-        self.review_svc = ReviewService(self._ctx)
+        self.image_svc        = ImageService(self._ctx)
+        self.batch_svc        = BatchService(self._ctx)
+        self.review_svc       = ReviewService(self._ctx)
+        self.multi_sample_svc = MultiSampleService(self._ctx)
+        self.training_svc     = TrainingService(self._ctx)
 
         # ── Init ──────────────────────────────────────────────────────────
         self._configure_backend_availability()
@@ -121,6 +133,8 @@ class ViewerController:
         self._bind_segmentation_signals()
         self._bind_consensus_signals()
         self._bind_feature_signals()
+        self._bind_multi_sample_signals()
+        self._bind_training_signals()
 
     # ── Configuration ──────────────────────────────────────────────────────
 
@@ -166,6 +180,24 @@ class ViewerController:
     def _bind_feature_signals(self) -> None:
         self.feature_panel.extractTriggered.connect(self._run_feature_extraction)
         self.feature_panel.exportTriggered.connect(self._export_features)
+
+    def _bind_multi_sample_signals(self) -> None:
+        """Wire the MultiSampleComparisonWidget signals to MultiSampleService."""
+        cw = self.comparison_widget
+        cw.masterFileTriggered.connect(self.multi_sample_svc.set_master_file)
+        cw.addSamplesTriggered.connect(self.multi_sample_svc.add_samples_to_canvas)
+        cw.clearCanvasTriggered.connect(self.multi_sample_svc.clear_canvas)
+        # Channel colour loading can also come from the viewer control widget:
+        if hasattr(self.control_widget, 'loadCelltypeColorTriggered'):
+            self.control_widget.loadCelltypeColorTriggered.connect(
+                self.multi_sample_svc.load_celltype_colors
+            )
+
+    def _bind_training_signals(self) -> None:
+        """Wire the TrainingDataWidget to TrainingService."""
+        tp = self.training_panel
+        tp.autoSelectTriggered.connect(self.training_svc.auto_select)
+        tp.exportTriggered.connect(self.training_svc.export)
 
     # ── Misc Controls ──────────────────────────────────────────────────────
 

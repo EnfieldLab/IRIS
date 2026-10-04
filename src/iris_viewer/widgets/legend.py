@@ -219,6 +219,16 @@ class ViewerLegendWidget(QWidget):
     def add_consensus_row(self, layer, name: str, initial_color: str):
         self._add_layer_row(layer, name, initial_color, self.consensus_group, self.consensus_layout, self.consensus_rows, layer_type='labels')
 
+    # ── Aliases for Services ─────────────────────────────────────────
+    def add_grouped_channel_row(self, layer, name: str, initial_color: str, group_name: str="Channels"):
+        self.add_channel_row(layer, name, initial_color)
+        
+    def add_ref_row(self, layer, name: str, initial_color: str, layer_type: str="labels"):
+        self._add_layer_row(layer, name, initial_color, self.seg_group, self.seg_layout, self.seg_rows, layer_type=layer_type)
+        
+    def add_ref_ct_row(self, layer, name: str, initial_color: str):
+        self.add_segmentation_row(layer, name, initial_color)
+
     def clear(self):
         """Remove all rows from all groups."""
         for group, layout, row_list in [

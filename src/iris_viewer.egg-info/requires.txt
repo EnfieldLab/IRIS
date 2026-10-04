@@ -1,3 +1,4 @@
+iris-common
 napari[all]>=0.4.18
 numpy
 scipy
@@ -6,25 +7,19 @@ scikit-image
 matplotlib
 tifffile
 qtpy
+dask[array]
 
 [all]
-cellpose
+cellpose>=3.0
 stardist
-instanseg
-cellSAM
+csbdeep
 
 [cellpose]
 cellpose>=3.0
 
-[cellsam]
-cellSAM
-
 [dev]
-pytest
-pytest-qt
-
-[instanseg]
-instanseg
+pytest>=7.0
+pytest-qt>=4.0
 
 [stardist]
 stardist
