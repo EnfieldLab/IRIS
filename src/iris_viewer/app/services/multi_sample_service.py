@@ -126,6 +126,12 @@ class MultiSampleService:
         add them to the napari canvas.  Runs pixel I/O in a thread worker.
         """
         ctx = self.ctx
+        
+        # 1. Do not reload samples that are already loaded
+        sample_names = [sn for sn in sample_names if sn not in ctx.state.sample_layers_map]
+        if not sample_names:
+            return
+            
         scale_val = ctx.control_widget.spin_scale.value()
 
         # Snapshot everything the worker needs to avoid Qt calls in the thread
@@ -498,7 +504,8 @@ class MultiSampleService:
 
     def _finalize_canvas(self, sample_names: List[str]) -> None:
         ctx = self.ctx
-        self.align_samples_on_canvas(sample_names)
+        all_loaded = list(ctx.state.sample_layers_map.keys())
+        self.align_samples_on_canvas(all_loaded)
 
         all_dfs = []
         for sn in sample_names:

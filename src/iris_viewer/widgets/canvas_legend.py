@@ -103,12 +103,15 @@ class CanvasLegendOverlay(QWidget):
         clear_layout(self.layout)
                 
         title = QLabel("Active Legend")
-        title.setStyleSheet("color: white; font-weight: bold; font-size: 13px;")
+        title.setStyleSheet("color: white; font-weight: bold; font-size: 16px;")
         self.layout.addWidget(title)
         
         has_items = False
         
         # Add visible layers
+        added_channels = set()
+        import re
+        
         for layer in self.viewer.layers:
             if not layer.visible:
                 continue
@@ -116,6 +119,8 @@ class CanvasLegendOverlay(QWidget):
             # Skip bounding boxes or utility layers if desired, but we can just show them
             if "Bounds" in layer.name:
                 continue
+                
+            base_name = re.sub(r' \[\d+\]$', '', layer.name)
                 
             color_hex = "#FFFFFF"
             if hasattr(layer, 'colormap'):
@@ -139,6 +144,10 @@ class CanvasLegendOverlay(QWidget):
                 except Exception:
                     pass
                     
+            if (base_name, color_hex) in added_channels:
+                continue
+            added_channels.add((base_name, color_hex))
+                    
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(8)
@@ -147,7 +156,7 @@ class CanvasLegendOverlay(QWidget):
             color_box.setFixedSize(12, 12)
             color_box.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #AAA; border-radius: 2px;")
             
-            name_lbl = QLabel(layer.name)
+            name_lbl = QLabel(base_name)
             name_lbl.setStyleSheet(f"color: {color_hex}; font-size: {self._font_size}px; font-weight: bold;")
             
             row.addWidget(color_box)

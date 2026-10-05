@@ -133,6 +133,36 @@ class ViewerControlWidget(QWidget):
             self.combo_sb_pos.currentTextChanged.connect(self.custom_scale_bar.set_position)
             self.spin_sb_size.valueChanged.connect(self.custom_scale_bar.set_font_size)
             self.spin_sb_thick.valueChanged.connect(self.custom_scale_bar.set_thickness)
+            
+            # Canvas Legend Overlay
+            self.canvas_legend = CanvasLegendOverlay(self.viewer)
+            
+            # Canvas Legend Toggle
+            self.chk_canvas_legend = QCheckBox("Show On-Canvas Legend")
+            self.chk_canvas_legend.toggled.connect(self.canvas_legend.set_visible)
+            self.chk_canvas_legend.setChecked(True)
+            gl.addWidget(self.chk_canvas_legend)
+            
+            # Canvas Legend Opacity
+            row_opacity = QHBoxLayout()
+            row_opacity.addWidget(QLabel("Legend Opacity:"))
+            self.spin_legend_opacity = QDoubleSpinBox()
+            self.spin_legend_opacity.setRange(0.1, 1.0)
+            self.spin_legend_opacity.setValue(0.1)
+            self.spin_legend_opacity.setSingleStep(0.1)
+            self.spin_legend_opacity.valueChanged.connect(self.canvas_legend.set_opacity)
+            row_opacity.addWidget(self.spin_legend_opacity)
+            gl.addLayout(row_opacity)
+            
+            # Canvas Legend Font Size
+            row_font = QHBoxLayout()
+            row_font.addWidget(QLabel("Legend Font Size:"))
+            self.spin_legend_font = QSpinBox()
+            self.spin_legend_font.setRange(8, 36)
+            self.spin_legend_font.setValue(16)
+            self.spin_legend_font.valueChanged.connect(self.canvas_legend.set_font_size)
+            row_font.addWidget(self.spin_legend_font)
+            gl.addLayout(row_font)
 
         self.main_layout.addWidget(group)
 
@@ -173,35 +203,7 @@ class ViewerControlWidget(QWidget):
         lbl_gpu.setStyleSheet("color: #AAFFAA;" if "Enabled" in gpu_stat else "color: #FFAAAA;")
         cl.addWidget(lbl_gpu)
 
-        if self.viewer:
-            self.canvas_legend = CanvasLegendOverlay(self.viewer)
-            
-            # Canvas Legend Toggle
-            self.chk_canvas_legend = QCheckBox("Show On-Canvas Legend")
-            self.chk_canvas_legend.toggled.connect(self.canvas_legend.set_visible)
-            self.chk_canvas_legend.setChecked(True)
-            cl.addWidget(self.chk_canvas_legend)
-            
-            # Canvas Legend Opacity
-            row_opacity = QHBoxLayout()
-            row_opacity.addWidget(QLabel("Legend Opacity:"))
-            self.spin_legend_opacity = QDoubleSpinBox()
-            self.spin_legend_opacity.setRange(0.1, 1.0)
-            self.spin_legend_opacity.setValue(0.1)
-            self.spin_legend_opacity.setSingleStep(0.1)
-            self.spin_legend_opacity.valueChanged.connect(self.canvas_legend.set_opacity)
-            row_opacity.addWidget(self.spin_legend_opacity)
-            cl.addLayout(row_opacity)
-            
-            # Canvas Legend Font Size
-            row_font = QHBoxLayout()
-            row_font.addWidget(QLabel("Legend Font Size:"))
-            self.spin_legend_font = QSpinBox()
-            self.spin_legend_font.setRange(8, 36)
-            self.spin_legend_font.setValue(16)
-            self.spin_legend_font.valueChanged.connect(self.canvas_legend.set_font_size)
-            row_font.addWidget(self.spin_legend_font)
-            cl.addLayout(row_font)
+
 
         self.main_layout.addWidget(group)
 
