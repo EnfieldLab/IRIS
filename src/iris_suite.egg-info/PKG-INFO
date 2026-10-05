@@ -1,12 +1,11 @@
 Metadata-Version: 2.4
-Name: iris-phenotyper
-Version: 0.1.0
-Summary: Cell phenotyping with ensemble voting for multiplexed immunofluorescence data
+Name: iris-suite
+Version: 0.2.0
+Summary: IRIS Suite: Viewer, Phenotyper, and Analyzer for multiplexed immunofluorescence imaging
 Author: Willie Wu
 License: MIT
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
-Requires-Dist: iris-common
 Requires-Dist: napari[all]>=0.4.18
 Requires-Dist: numpy
 Requires-Dist: scipy
@@ -20,12 +19,24 @@ Requires-Dist: anndata>=0.9
 Requires-Dist: scanpy>=1.9
 Requires-Dist: umap-learn>=0.5
 Requires-Dist: pyqtgraph>=0.13
+Provides-Extra: cellpose
+Requires-Dist: cellpose>=3.0; extra == "cellpose"
+Provides-Extra: stardist
+Requires-Dist: stardist; extra == "stardist"
+Requires-Dist: csbdeep; extra == "stardist"
 Provides-Extra: astir
 Requires-Dist: astir; extra == "astir"
 Provides-Extra: celesta
 Provides-Extra: stellar
 Requires-Dist: torch>=2.0; extra == "stellar"
 Requires-Dist: torch-geometric; extra == "stellar"
+Provides-Extra: all
+Requires-Dist: cellpose>=3.0; extra == "all"
+Requires-Dist: stardist; extra == "all"
+Requires-Dist: csbdeep; extra == "all"
+Requires-Dist: astir; extra == "all"
+Requires-Dist: torch>=2.0; extra == "all"
+Requires-Dist: torch-geometric; extra == "all"
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0; extra == "dev"
 Requires-Dist: pytest-qt>=4.0; extra == "dev"

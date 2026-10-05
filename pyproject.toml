@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "iris-viewer"
+name = "iris-suite"
 version = "0.2.0"
-description = "A production-quality viewer for multiplexed immunofluorescence imaging"
+description = "IRIS Suite: Viewer, Phenotyper, and Analyzer for multiplexed immunofluorescence imaging"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -13,7 +13,7 @@ authors = [
   {name = "Willie Wu"}
 ]
 dependencies = [
-    "iris-common",               # workspace sibling — resolved locally by uv
+    # Core
     "napari[all]>=0.4.18",
     "numpy",
     "scipy",
@@ -23,32 +23,34 @@ dependencies = [
     "tifffile",
     "qtpy",
     "dask[array]",
+    
+    # Phenotyper specific
+    "anndata>=0.9",
+    "scanpy>=1.9",
+    "umap-learn>=0.5",
+    "pyqtgraph>=0.13",
 ]
 
 [project.optional-dependencies]
+# Viewer Extras
 cellpose   = ["cellpose>=3.0"]
 stardist   = ["stardist", "csbdeep"]
-all        = ["cellpose>=3.0", "stardist", "csbdeep"]
+
+# Phenotyper Extras
+astir      = ["astir"]
+celesta    = [] # GitHub-only: pip install git+https://github.com/plevritis-lab/CELESTA.git
+stellar    = ["torch>=2.0", "torch-geometric"]
+
+# Master Extras
+all        = ["cellpose>=3.0", "stardist", "csbdeep", "astir", "torch>=2.0", "torch-geometric"]
 dev        = ["pytest>=7.0", "pytest-qt>=4.0"]
 
 [project.scripts]
 iris-viewer = "iris_viewer.main:main"
+iris-phenotyper = "iris_phenotyper.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.uv.sources]
-iris-common = { workspace = true }
-iris-phenotyper = { workspace = true }
-
-# ── uv workspace declaration ──────────────────────────────────────────────────
-# The iris-viewer directory IS the workspace root (uv workspace members are
-# relative to this file's location).
-[tool.uv.workspace]
-members = [
-    "iris-common",
-    "packages/iris-phenotyper",
-]
 
 # ── Shared dev dependencies ───────────────────────────────────────────────────
 [dependency-groups]
@@ -62,7 +64,7 @@ dev = [
 
 # ── Tool config ───────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/iris-phenotyper/tests"]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

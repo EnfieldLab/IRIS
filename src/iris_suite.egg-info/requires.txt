@@ -1,4 +1,3 @@
-iris-common
 napari[all]>=0.4.18
 numpy
 scipy
@@ -13,14 +12,29 @@ scanpy>=1.9
 umap-learn>=0.5
 pyqtgraph>=0.13
 
+[all]
+cellpose>=3.0
+stardist
+csbdeep
+astir
+torch>=2.0
+torch-geometric
+
 [astir]
 astir
 
 [celesta]
 
+[cellpose]
+cellpose>=3.0
+
 [dev]
 pytest>=7.0
 pytest-qt>=4.0
+
+[stardist]
+stardist
+csbdeep
 
 [stellar]
 torch>=2.0

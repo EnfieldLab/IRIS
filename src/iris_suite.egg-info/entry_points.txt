@@ -1,2 +1,3 @@
 [console_scripts]
 iris-phenotyper = iris_phenotyper.main:main
+iris-viewer = iris_viewer.main:main
