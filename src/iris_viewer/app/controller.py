@@ -76,7 +76,7 @@ class ViewerController:
         self.consensus_panel    = ConsensusPanelWidget()
         self.feature_panel      = FeaturePanelWidget()
         self.legend_widget      = ViewerLegendWidget(self.viewer)
-        self.comparison_widget  = MultiSampleComparisonWidget()
+        self.comparison_widget  = self.control_widget.comparison_widget
         self.training_panel     = TrainingDataWidget()
 
         for widget, name in [
@@ -84,7 +84,6 @@ class ViewerController:
             (self.segmentation_panel, "Segmentation"),
             (self.consensus_panel,    "Consensus"),
             (self.feature_panel,      "Features"),
-            (self.comparison_widget,  "Multi-Sample"),
             (self.training_panel,     "Training"),
             (self.legend_widget,      "Legend"),
         ]:
@@ -95,8 +94,7 @@ class ViewerController:
         qt.tabifyDockWidget(dw["Control"].parent(),       dw["Segmentation"].parent())
         qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
         qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
-        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Multi-Sample"].parent())
-        qt.tabifyDockWidget(dw["Multi-Sample"].parent(),  dw["Training"].parent())
+        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Training"].parent())
         qt.tabifyDockWidget(dw["Training"].parent(),      dw["Legend"].parent())
         dw["Control"].parent().raise_()
 
@@ -222,10 +220,11 @@ class ViewerController:
     # ── Segmentation Pipeline ───────────────────────────────────────────────
 
     def _run_segmentation_pipeline(self, groups: dict) -> None:
-        if self.state.raw_image is None:
+        is_multi = len(self.state.multi_sample_images) > 0
+        if self.state.raw_image is None and not is_multi:
             QMessageBox.warning(
                 self.control_widget, "No Image",
-                "Load an image before running segmentation."
+                "Load an image or multiple samples before running segmentation."
             )
             return
 
@@ -240,14 +239,78 @@ class ViewerController:
 
         self.segmentation_panel.set_running_state(True)
 
-        self.pipeline_service.execute_pipeline_groups(
-            groups={g: SegmentationSequence(steps=s) for g, s in groups.items()},
-            image=self.state.raw_image,
-            on_step_complete=self._on_single_segmentation_done,
-            on_group_complete=self._on_group_complete,
-            on_all_complete=self._on_all_segmentations_complete,
-            on_error=self._on_segmentation_error,
-        )
+        if is_multi:
+            self._run_multi_segmentation_pipeline(groups)
+        else:
+            self.pipeline_service.execute_pipeline_groups(
+                groups={g: SegmentationSequence(steps=s) for g, s in groups.items()},
+                image=self.state.raw_image,
+                on_step_complete=self._on_single_segmentation_done,
+                on_group_complete=self._on_group_complete,
+                on_all_complete=self._on_all_segmentations_complete,
+                on_error=self._on_segmentation_error,
+            )
+
+    def _run_multi_segmentation_pipeline(self, groups: dict) -> None:
+        from iris_viewer.engine.pipeline import execute_group_sync, SegmentationSequence
+        from napari.qt.threading import thread_worker
+        
+        backends = self.pipeline_service.backends
+        device = "cpu"
+        try:
+            device = self.pipeline_service._get_device()
+        except Exception:
+            pass
+        scale_val = self.control_widget.spin_scale.value()
+        
+        @thread_worker
+        def _process_all():
+            results = {}
+            for sample_name, image in self.state.multi_sample_images.items():
+                results[sample_name] = {}
+                for group_name, steps in groups.items():
+                    seq = SegmentationSequence(steps=steps)
+                    res = execute_group_sync(group_name, seq, image, backends, device=device)
+                    results[sample_name][group_name] = res
+            return results
+            
+        def _on_done(results):
+            self.segmentation_panel.set_running_state(False)
+            has_results = False
+            for sample_name, group_res in results.items():
+                for group_name, res in group_res.items():
+                    nuc = res.get('nuclear')
+                    cyto = res.get('cytoplasm')
+                    if nuc is not None or cyto is not None:
+                        has_results = True
+                    
+                    bbox_lyr = next((l for l in self.viewer.layers if l.name == f"Bounds - {sample_name}"), None)
+                    t = bbox_lyr.translate if bbox_lyr else (0, 0)
+                    
+                    if nuc is not None:
+                        lname = f"{sample_name}_nuclear_mask"
+                        lyr = self.viewer.add_labels(
+                            nuc, name=lname, translate=t, 
+                            scale=(scale_val, scale_val), visible=True, opacity=0.3
+                        )
+                        self.legend_widget.add_segmentation_row(lyr, lname, "#888888")
+                        self.added_legend_entries.add(lname)
+                    if cyto is not None:
+                        lname = f"{sample_name}_cyto_mask"
+                        lyr = self.viewer.add_labels(
+                            cyto, name=lname, translate=t, 
+                            scale=(scale_val, scale_val), visible=True, opacity=0.3
+                        )
+                        self.legend_widget.add_segmentation_row(lyr, lname, "#888888")
+                        self.added_legend_entries.add(lname)
+                            
+            if not has_results:
+                QMessageBox.warning(self.control_widget, "No Results", "Multi-sample segmentation failed.")
+
+        worker = _process_all()
+        worker.returned.connect(_on_done)
+        self._active_workers.append(worker)
+        worker.start()
 
     def _on_segmentation_error(
         self, group_name: str, step_idx: int, method_name: str, error_msg: str

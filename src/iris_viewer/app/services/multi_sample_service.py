@@ -144,12 +144,40 @@ class MultiSampleService:
                     continue
                 mask_path = img_path.parent / f"{sample_name}_mask.tiff"
 
+                # ── Sub-DataFrame ─────────────────────────────────────────────
+                sub_df = pd.DataFrame()
+                if master_df_snap is not None and "Image" in master_df_snap.columns:
+                    sub_df = master_df_snap[
+                        master_df_snap["Image"] == sample_name
+                    ].copy()
+
+                # Determine crop bounds from sub_df
+                crop_y_min, crop_y_max = None, None
+                crop_x_min, crop_x_max = None, None
+                pad = 20
+                if not sub_df.empty:
+                    crop_y_min = max(0, int(sub_df["Pos_Y"].min()) - pad)
+                    crop_y_max = int(sub_df["Pos_Y"].max()) + pad
+                    crop_x_min = max(0, int(sub_df["Pos_X"].min()) - pad)
+                    crop_x_max = int(sub_df["Pos_X"].max()) + pad
+
                 # ── Image ────────────────────────────────────────────────────
                 img_data = []
                 if img_path.exists():
                     raw = tifffile.imread(str(img_path))
                     if raw.ndim == 2:
                         raw = raw[np.newaxis]
+                    
+                    if crop_y_min is None:
+                        crop_y_min, crop_x_min = 0, 0
+                        crop_y_max, crop_x_max = raw.shape[-2], raw.shape[-1]
+                    else:
+                        crop_y_max = min(raw.shape[-2], crop_y_max)
+                        crop_x_max = min(raw.shape[-1], crop_x_max)
+
+                    # Crop
+                    raw = raw[..., crop_y_min:crop_y_max, crop_x_min:crop_x_max]
+
                     for i, m in enumerate(markers_snap):
                         if i >= raw.shape[0]:
                             break
@@ -165,18 +193,19 @@ class MultiSampleService:
                 if mask_path.exists():
                     mask_raw = tifffile.imread(str(mask_path)).astype(np.uint32)
                     if mask_raw.ndim == 2:
-                        mask_channels = [mask_raw]
-                    else:
-                        mask_channels = [mask_raw[i] for i in range(mask_raw.shape[0])]
+                        mask_raw = mask_raw[np.newaxis]
+                    
+                    if crop_y_min is not None and crop_y_max is not None:
+                        mask_raw = mask_raw[..., crop_y_min:crop_y_max, crop_x_min:crop_x_max]
+                        
+                    mask_channels = [mask_raw[i] for i in range(mask_raw.shape[0])]
 
-                # ── Sub-DataFrame ─────────────────────────────────────────────
-                sub_df = pd.DataFrame()
-                if master_df_snap is not None and "Image" in master_df_snap.columns:
-                    sub_df = master_df_snap[
-                        master_df_snap["Image"] == sample_name
-                    ].copy()
+                # ── Shift Coordinates ─────────────────────────────────────────
+                if not sub_df.empty and crop_y_min is not None:
+                    sub_df["Pos_Y"] -= crop_y_min
+                    sub_df["Pos_X"] -= crop_x_min
 
-                results.append((sample_name, img_data, mask_channels, sub_df, ref_col_text))
+                results.append((sample_name, img_data, mask_channels, sub_df, ref_col_text, raw))
             return results
 
         def _on_loaded(results):
@@ -199,8 +228,9 @@ class MultiSampleService:
     ) -> None:
         ctx = self.ctx
 
-        for (sample_name, img_data, mask_channels, sub_df, ref_col_text) in loaded_results:
+        for (sample_name, img_data, mask_channels, sub_df, ref_col_text, raw) in loaded_results:
             ctx.state.resolved_dfs[sample_name] = sub_df
+            ctx.state.multi_sample_images[sample_name] = raw
             sample_layers = []
             sample_h, sample_w = 2000, 2000
 
@@ -396,8 +426,13 @@ class MultiSampleService:
             sy, sx = bbox_lyr.scale
             h = (max_y - min_y) * sy
             w = (max_x - min_x) * sx
-            native_cy = (min_y + max_y) / 2.0
-            native_cx = (min_x + max_x) / 2.0
+            if s_name in ctx.state.resolved_dfs and not ctx.state.resolved_dfs[s_name].empty:
+                df = ctx.state.resolved_dfs[s_name]
+                native_cy = df["Pos_Y"].mean()
+                native_cx = df["Pos_X"].mean()
+            else:
+                native_cy = (min_y + max_y) / 2.0
+                native_cx = (min_x + max_x) / 2.0
 
             match = re.search(r"_r(\d+)c(\d+)", s_name, re.IGNORECASE)
             if match:
@@ -452,6 +487,8 @@ class MultiSampleService:
         ctx.state.reset_sample_state()
         if hasattr(ctx.state, "resolved_dfs"):
             ctx.state.resolved_dfs.clear()
+        if hasattr(ctx.state, "multi_sample_images"):
+            ctx.state.multi_sample_images.clear()
         if hasattr(ctx.state, "areas_map"):
             ctx.state.areas_map.clear()
         if hasattr(ctx.state, "current_mapped_df"):

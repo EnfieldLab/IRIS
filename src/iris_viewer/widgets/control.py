@@ -10,6 +10,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, Signal
 from iris_viewer.widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
 import os
 
 class ViewerControlWidget(QWidget):
@@ -53,7 +54,11 @@ class ViewerControlWidget(QWidget):
         self._build_settings_group()
         self._build_compute_group()
         self._build_input_group()
-        self._build_dashboard_group()
+        
+        # Replace dashboard with MultiSampleComparisonWidget
+        self.comparison_widget = MultiSampleComparisonWidget()
+        self.main_layout.addWidget(self.comparison_widget)
+
         self._build_output_group()
         self.main_layout.addStretch()
 
@@ -223,41 +228,7 @@ class ViewerControlWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Dashboard ────────────────────────────────────────────────────
-    def _build_dashboard_group(self):
-        group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(5, 5, 5, 5)
-        gl.setSpacing(4)
-        group.setLayout(gl)
 
-        title = QLabel("Dashboard")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
-
-        self._add_separator(gl)
-
-        self.lbl_image_dims = QLabel("Image: —")
-        self.lbl_image_dims.setStyleSheet("color: #AAA; font-size: 11px;")
-        gl.addWidget(self.lbl_image_dims)
-
-        self.lbl_num_channels = QLabel("Channels: —")
-        self.lbl_num_channels.setStyleSheet("color: #AAA; font-size: 11px;")
-        gl.addWidget(self.lbl_num_channels)
-
-        self.lbl_seg_status = QLabel("Segmentation: Not run")
-        self.lbl_seg_status.setStyleSheet("color: #AAA; font-size: 11px;")
-        gl.addWidget(self.lbl_seg_status)
-
-        self.lbl_total_cells = QLabel("Total Cells: —")
-        self.lbl_total_cells.setStyleSheet("color: #AAA; font-size: 11px;")
-        gl.addWidget(self.lbl_total_cells)
-
-        self.lbl_confidence = QLabel("Confidence: —")
-        self.lbl_confidence.setStyleSheet("color: #AAA; font-size: 11px;")
-        gl.addWidget(self.lbl_confidence)
-
-        self.main_layout.addWidget(group)
 
     # ── Output ───────────────────────────────────────────────────────
     def _build_output_group(self):
@@ -338,14 +309,5 @@ class ViewerControlWidget(QWidget):
         total_cells: str = None, 
         confidence: str = None
     ):
-        """Update dashboard labels with current state."""
-        if image_dims is not None:
-            self.lbl_image_dims.setText(f"Image: {image_dims}")
-        if num_channels is not None:
-            self.lbl_num_channels.setText(f"Channels: {num_channels}")
-        if seg_status is not None:
-            self.lbl_seg_status.setText(f"Segmentation: {seg_status}")
-        if total_cells is not None:
-            self.lbl_total_cells.setText(f"Total Cells: {total_cells}")
-        if confidence is not None:
-            self.lbl_confidence.setText(f"Confidence: {confidence}")
+        """Update dashboard labels with current state. (Deprecated)"""
+        pass

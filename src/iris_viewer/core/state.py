@@ -43,6 +43,13 @@ class ViewerAppState:
         self.override_history: Deque[Tuple] = deque(maxlen=50)
 
         # ── Feature Extraction ──────────────────────────────────────────
+        self.feature_df: Optional[pd.DataFrame] = None
+        
+        # ── Multi-Sample Cache ──────────────────────────────────────────
+        self.multi_sample_images: Dict[str, np.ndarray] = {}
+        self.resolved_dfs: Dict[str, pd.DataFrame] = {}
+        self.masks_map: Dict[str, np.ndarray] = {}
+        self.sample_layers_map: Dict[str, List] = {}
         self.features_df: Optional[pd.DataFrame] = None
 
         # ── Multi-sample Layer Tracking ─────────────────────────────────

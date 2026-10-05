@@ -159,7 +159,7 @@ class MultiSampleComparisonWidget(QWidget):
         row_gap.addWidget(QLabel("Grid gap (px):"))
         self.spin_gap = QSpinBox()
         self.spin_gap.setRange(0, 2000)
-        self.spin_gap.setValue(50)
+        self.spin_gap.setValue(200)
         self.spin_gap.setToolTip(
             "Spacing in image pixels between samples on the canvas.\n"
             "TMA grids are laid out using the _rxcx_ pattern in sample names."
