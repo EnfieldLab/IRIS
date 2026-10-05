@@ -59,10 +59,7 @@ class TrainingDataWidget(QWidget):
         self._main_layout.addStretch()
 
     def _add_sep(self, layout: QVBoxLayout) -> None:
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #444; background: #444; max-height: 1px;")
-        layout.addWidget(line)
+        pass
         
     def _build_morphology_group(self) -> None:
         box = QGroupBox()

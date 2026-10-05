@@ -162,10 +162,7 @@ class FeaturePanelWidget(QWidget):
 
     # ── Utility ──────────────────────────────────────────────────────
     def _add_separator(self, layout):
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #555555; background-color: #555555; max-height: 1px; margin-bottom: 4px;")
-        layout.addWidget(line)
+        pass
 
     def _toggle_morph_checks(self, state: bool):
         for chk in self.morph_checkboxes.values():

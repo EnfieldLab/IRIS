@@ -62,7 +62,8 @@ class ViewerController:
         # ── napari Viewer ─────────────────────────────────────────────────
         self.viewer = napari.Viewer(title="IRIS-Viewer")
         try:
-            self.viewer.scale_bar.visible = True
+            self.viewer.scale_bar.visible = False
+            self.viewer.scale_bar.unit = "px"
             self.viewer.scale_bar.ticks = False
             self.viewer.scale_bar.box = False
             self.viewer.scale_bar.font_size = 26.0

@@ -276,8 +276,8 @@ class ImageService:
         """Apply a new physical scale (µm/px) to all existing viewer layers."""
         ctx = self.ctx
         try:
-            ctx.viewer.scale_bar.visible = True
-            ctx.viewer.scale_bar.unit = "um" if scale_val != 1.0 else "px"
+            ctx.viewer.scale_bar.visible = False
+            ctx.viewer.scale_bar.unit = "µm" if scale_val != 1.0 else "px"
         except AttributeError:
             pass
 

@@ -180,10 +180,7 @@ class MultiSampleComparisonWidget(QWidget):
     # ── Internals ─────────────────────────────────────────────────────────────
 
     def _add_sep(self, layout: QVBoxLayout) -> None:
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #444; background: #444; max-height: 1px;")
-        layout.addWidget(line)
+        pass
 
     def _browse_master_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

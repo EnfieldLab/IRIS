@@ -11,6 +11,8 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt, Signal
 from iris_viewer.widgets.styles import SHARED_DARK_THEME
 from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
+from iris_viewer.widgets.canvas_legend import CanvasLegendOverlay
+from iris_viewer.widgets.canvas_scalebar import CanvasScaleBarOverlay
 import os
 
 class ViewerControlWidget(QWidget):
@@ -92,60 +94,49 @@ class ViewerControlWidget(QWidget):
         sb_pos_layout = QHBoxLayout()
         sb_pos_layout.addWidget(QLabel("Scale Bar Position:"))
         self.combo_sb_pos = QComboBox()
-        self.combo_sb_pos.addItems(["bottom_left", "bottom_right", "top_right", "top_left"])
-        self.combo_sb_pos.currentTextChanged.connect(self._change_scale_bar_position)
-        self.combo_sb_pos.setCurrentText("bottom_left")
+        self.combo_sb_pos.addItems(["bottom_right", "bottom_left", "top_right", "top_left"])
+        self.combo_sb_pos.setCurrentText("bottom_right")
         sb_pos_layout.addWidget(self.combo_sb_pos)
         gl.addLayout(sb_pos_layout)
 
         # Scale Bar Size
         sb_size_layout = QHBoxLayout()
-        sb_size_layout.addWidget(QLabel("Scale Bar Size:"))
+        sb_size_layout.addWidget(QLabel("Scale Bar Font Size:"))
         self.spin_sb_size = QSpinBox()
         self.spin_sb_size.setRange(8, 48)
         self.spin_sb_size.setValue(26)
-        self.spin_sb_size.valueChanged.connect(self._change_scale_bar_size)
         sb_size_layout.addWidget(self.spin_sb_size)
         gl.addLayout(sb_size_layout)
+
+        # Scale Bar Thickness
+        sb_thick_layout = QHBoxLayout()
+        sb_thick_layout.addWidget(QLabel("Scale Bar Thickness:"))
+        self.spin_sb_thick = QSpinBox()
+        self.spin_sb_thick.setRange(1, 40)
+        self.spin_sb_thick.setValue(10)
+        sb_thick_layout.addWidget(self.spin_sb_thick)
+        gl.addLayout(sb_thick_layout)
 
         # Lock Camera
         self.chk_lock_camera = QCheckBox("Lock Camera Position")
         self.chk_lock_camera.toggled.connect(self.viewLockToggled.emit)
         gl.addWidget(self.chk_lock_camera)
 
-        self.main_layout.addWidget(group)
+        if self.viewer:
+            try:
+                self.viewer.scale_bar.visible = False
+            except AttributeError:
+                pass
+                
+            self.custom_scale_bar = CanvasScaleBarOverlay(self.viewer)
+            self.spin_scale.valueChanged.connect(self.custom_scale_bar.set_physical_scale)
+            self.combo_sb_pos.currentTextChanged.connect(self.custom_scale_bar.set_position)
+            self.spin_sb_size.valueChanged.connect(self.custom_scale_bar.set_font_size)
+            self.spin_sb_thick.valueChanged.connect(self.custom_scale_bar.set_thickness)
 
         self.main_layout.addWidget(group)
 
-    def _change_scale_bar_position(self, pos):
-        if not hasattr(self, 'viewer') or not self.viewer: return
-        try:
-            self.viewer.scale_bar.position = pos
-        except AttributeError:
-            pass
 
-    # def _change_scale_bar_size(self, size):
-    #     if not hasattr(self, 'viewer') or not self.viewer: return
-    #     try:
-    #         self.viewer.scale_bar.font_size = float(size)
-    #         qt_viewer = getattr(self.viewer.window, '_qt_viewer', None)
-    #         if qt_viewer:
-    #             target_thickness = max(2, int(size) // 4)
-    #             if hasattr(qt_viewer, 'overlays') and 'scale_bar' in qt_viewer.overlays:
-    #                 node = qt_viewer.overlays['scale_bar'].node
-    #                 if hasattr(node, 'bar_height'): node.bar_height = target_thickness
-    #                 elif hasattr(node, 'line_width'): node.line_width = target_thickness
-    #     except Exception:
-    #         pass
-
-    def _change_scale_bar_size(self, size):
-        """Adjust the font size of the scale bar using public API."""
-        if not getattr(self, 'viewer', None): 
-            return
-        try:
-            self.viewer.scale_bar.font_size = float(size)
-        except AttributeError:
-            pass
 
 
     def _build_compute_group(self):
@@ -181,6 +172,36 @@ class ViewerControlWidget(QWidget):
         lbl_gpu.setWordWrap(True)
         lbl_gpu.setStyleSheet("color: #AAFFAA;" if "Enabled" in gpu_stat else "color: #FFAAAA;")
         cl.addWidget(lbl_gpu)
+
+        if self.viewer:
+            self.canvas_legend = CanvasLegendOverlay(self.viewer)
+            
+            # Canvas Legend Toggle
+            self.chk_canvas_legend = QCheckBox("Show On-Canvas Legend")
+            self.chk_canvas_legend.toggled.connect(self.canvas_legend.set_visible)
+            self.chk_canvas_legend.setChecked(True)
+            cl.addWidget(self.chk_canvas_legend)
+            
+            # Canvas Legend Opacity
+            row_opacity = QHBoxLayout()
+            row_opacity.addWidget(QLabel("Legend Opacity:"))
+            self.spin_legend_opacity = QDoubleSpinBox()
+            self.spin_legend_opacity.setRange(0.1, 1.0)
+            self.spin_legend_opacity.setValue(0.1)
+            self.spin_legend_opacity.setSingleStep(0.1)
+            self.spin_legend_opacity.valueChanged.connect(self.canvas_legend.set_opacity)
+            row_opacity.addWidget(self.spin_legend_opacity)
+            cl.addLayout(row_opacity)
+            
+            # Canvas Legend Font Size
+            row_font = QHBoxLayout()
+            row_font.addWidget(QLabel("Legend Font Size:"))
+            self.spin_legend_font = QSpinBox()
+            self.spin_legend_font.setRange(8, 36)
+            self.spin_legend_font.setValue(16)
+            self.spin_legend_font.valueChanged.connect(self.canvas_legend.set_font_size)
+            row_font.addWidget(self.spin_legend_font)
+            cl.addLayout(row_font)
 
         self.main_layout.addWidget(group)
 
@@ -266,10 +287,7 @@ class ViewerControlWidget(QWidget):
 
     # ── Utility ──────────────────────────────────────────────────────
     def _add_separator(self, layout):
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #555555; background-color: #555555; max-height: 1px; margin-bottom: 4px;")
-        layout.addWidget(line)
+        pass
 
     def _detect_device(self):
         pass
