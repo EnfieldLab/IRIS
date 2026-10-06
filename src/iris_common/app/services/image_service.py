@@ -15,14 +15,14 @@ import matplotlib.colors as mcolors
 from napari.qt import thread_worker
 from qtpy.QtWidgets import QMessageBox
 
-from iris_viewer.io_utils.image_loaders import (
+from iris_common.io.loaders import (
     discover_image_files,
     load_existing_mask,
     load_multichannel_tiff,
     probe_channel_count,
 )
-from iris_viewer.widgets.config_dialogs import ViewerPanelConfigDialog
-from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
+from iris_common.widgets.config_dialogs import ViewerPanelConfigDialog
+from iris_common.widgets.styles import DEFAULT_MARKER_COLORS
 
 
 class ImageService:
@@ -69,7 +69,8 @@ class ImageService:
                 return
 
             ctx.state.markers = dialog.marker_panel
-            ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
+            if hasattr(ctx, 'segmentation_panel'):
+                ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
 
         ctx.control_widget.update_sample_list(sample_names)
         if hasattr(ctx, 'comparison_widget'):
@@ -236,10 +237,6 @@ class ImageService:
             df.columns = [str(c).lower().strip() for c in df.columns]
 
             if 'markers' not in df.columns or 'colors' not in df.columns:
-                QMessageBox.warning(
-                    ctx.control_widget, "Invalid Format",
-                    "The file must contain 'markers' and 'colors' columns."
-                )
                 return
 
             color_map: dict = {}

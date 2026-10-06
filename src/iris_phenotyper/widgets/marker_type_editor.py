@@ -6,7 +6,7 @@ A Qt table widget where the user defines the marker-to-cell-type mapping:
   - Left column = cell type name
   - Right column = comma-separated positive markers
 
-Used to configure ASTIR and CELESTA backends.
+Used to configure ASTIR and MAPS backends.
 Also supports:
   - Adding / removing cell type rows
   - Saving and loading the panel to/from YAML / CSV
@@ -26,12 +26,13 @@ from qtpy.QtWidgets import (
 )
 
 from iris_common.types import CellTypePanel, CellTypeRule, MarkerPanel
+from iris_common.widgets.styles import SHARED_DARK_THEME
 
 
 class MarkerTypeEditorWidget(QWidget):
     """
     Editable table for defining the marker → cell type mapping used by
-    ASTIR and CELESTA.
+    ASTIR and MAPS.
 
     Signals
     -------
@@ -43,6 +44,7 @@ class MarkerTypeEditorWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._available_markers: List[str] = []
+        self.setStyleSheet(SHARED_DARK_THEME)
         self._setup_ui()
 
     # ── UI Setup ──────────────────────────────────────────────────────────────
@@ -54,16 +56,14 @@ class MarkerTypeEditorWidget(QWidget):
 
         # Header
         hdr = QLabel("Marker → Cell Type Panel")
-        hdr.setStyleSheet("font-size: 13px; font-weight: bold; color: #DDD;")
         layout.addWidget(hdr)
 
         info = QLabel(
             "Define positive markers for each cell type.\n"
             "Separate multiple markers with commas.  "
-            "Optional: add negative markers prefixed with '-' (CELESTA only)."
+            "Optional: add negative markers prefixed with '-' (MAPS only)."
         )
         info.setWordWrap(True)
-        info.setStyleSheet("color: #AAA; font-size: 11px; font-style: italic;")
         layout.addWidget(info)
 
         # Table
@@ -74,10 +74,6 @@ class MarkerTypeEditorWidget(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.setStyleSheet("""
-            QTableWidget { background: #1E1E1E; color: #DDD; gridline-color: #444; }
-            QHeaderView::section { background: #2A2A2A; color: #AAA; font-weight: bold; padding: 4px; }
-        """)
         self.table.itemChanged.connect(lambda _: self.panelChanged.emit())
         layout.addWidget(self.table)
 
@@ -90,10 +86,6 @@ class MarkerTypeEditorWidget(QWidget):
             ("Load Panel", self._load_panel),
         ]:
             btn = QPushButton(label)
-            btn.setStyleSheet(
-                "QPushButton { background: #333; color: #DDD; padding: 4px 8px; border-radius: 3px; }"
-                "QPushButton:hover { background: #444; }"
-            )
             btn.clicked.connect(slot)
             btn_row.addWidget(btn)
         layout.addLayout(btn_row)

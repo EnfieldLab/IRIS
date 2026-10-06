@@ -23,6 +23,7 @@ dependencies = [
     "tifffile",
     "qtpy",
     "dask[array]",
+    "openpyxl",
     
     # Phenotyper specific
     "anndata>=0.9",
@@ -39,7 +40,7 @@ stardist   = ["stardist", "csbdeep"]
 # Phenotyper Extras
 astir      = ["astir"]
 celesta    = [] # GitHub-only: pip install git+https://github.com/plevritis-lab/CELESTA.git
-stellar    = ["torch>=2.0", "torch-geometric"]
+
 
 # Master Extras
 all        = ["cellpose>=3.0", "stardist", "csbdeep", "astir", "torch>=2.0", "torch-geometric"]

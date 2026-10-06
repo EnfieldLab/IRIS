@@ -21,12 +21,12 @@ from qtpy.QtWidgets import QMessageBox
 from iris_viewer.engine.consensus import compute_consensus_mask
 from iris_viewer.engine.feature_extraction import extract_cell_features
 from iris_viewer.engine.pipeline import SegmentationSequence, execute_group_sync
-from iris_viewer.io_utils.exporters import (
+from iris_common.io.exporters import (
     export_batch_summary,
     export_consensus_mask,
     export_features_csv,
 )
-from iris_viewer.io_utils.image_loaders import load_multichannel_tiff
+from iris_common.io.loaders import load_multichannel_tiff
 
 
 def _detect_device() -> str:

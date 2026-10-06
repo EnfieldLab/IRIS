@@ -24,21 +24,22 @@ from iris_viewer.core.state import ViewerAppState
 from iris_viewer.engine.pipeline import PipelineService, SegmentationSequence
 from iris_viewer.engine.consensus import compute_consensus_mask
 from iris_viewer.engine.feature_extraction import extract_cell_features
-from iris_viewer.io_utils.exporters import (
+from iris_common.io.exporters import (
     export_confidence_map,
     export_consensus_mask,
     export_features_csv,
 )
 
-from iris_viewer.widgets.control import ViewerControlWidget
+from iris_common.widgets.image_control import ImageControlWidget
 from iris_viewer.widgets.segmentation_panel import SegmentationPanelWidget
 from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
 from iris_viewer.widgets.feature_panel import FeaturePanelWidget
-from iris_viewer.widgets.legend import ViewerLegendWidget
-from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
-from iris_viewer.widgets.training_panel import TrainingDataWidget
+from iris_common.widgets.legend import ViewerLegendWidget
+from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
 
-from iris_viewer.app.services import BatchService, ImageService, ReviewService, MultiSampleService, TrainingService
+from iris_viewer.app.services import BatchService, ReviewService
+from iris_common.app.services.image_service import ImageService
+from iris_common.app.services.multi_sample_service import MultiSampleService
 
 
 class ViewerController:
@@ -72,31 +73,32 @@ class ViewerController:
             pass
 
         # ── Widgets ───────────────────────────────────────────────────────
-        self.control_widget     = ViewerControlWidget(viewer=self.viewer)
+        self.control_widget     = ImageControlWidget(viewer=self.viewer)
         self.segmentation_panel = SegmentationPanelWidget()
         self.consensus_panel    = ConsensusPanelWidget()
         self.feature_panel      = FeaturePanelWidget()
         self.legend_widget      = ViewerLegendWidget(self.viewer)
         self.comparison_widget  = self.control_widget.comparison_widget
-        self.training_panel     = TrainingDataWidget()
 
         for widget, name in [
             (self.control_widget,     "Control"),
+            (self.comparison_widget,  "TMA"),
             (self.segmentation_panel, "Segmentation"),
             (self.consensus_panel,    "Consensus"),
             (self.feature_panel,      "Features"),
-            (self.training_panel,     "Training"),
             (self.legend_widget,      "Legend"),
         ]:
             self.viewer.window.add_dock_widget(widget, name=name, area="right")
+        
+        self.comparison_widget.show()
 
         dw = self.viewer.window.dock_widgets
         qt = self.viewer.window._qt_window
-        qt.tabifyDockWidget(dw["Control"].parent(),       dw["Segmentation"].parent())
+        qt.tabifyDockWidget(dw["Control"].parent(),       dw["TMA"].parent())
+        qt.tabifyDockWidget(dw["TMA"].parent(),           dw["Segmentation"].parent())
         qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
         qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
-        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Training"].parent())
-        qt.tabifyDockWidget(dw["Training"].parent(),      dw["Legend"].parent())
+        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Legend"].parent())
         dw["Control"].parent().raise_()
 
         # ── Shared Context namespace ───────────────────────────────────────
@@ -112,7 +114,6 @@ class ViewerController:
             feature_panel=self.feature_panel,
             legend_widget=self.legend_widget,
             comparison_widget=self.comparison_widget,
-            training_panel=self.training_panel,
             added_legend_entries=self.added_legend_entries,  # same set object
             active_workers=self._active_workers,             # same list object
             flagged_cells=[],
@@ -124,7 +125,6 @@ class ViewerController:
         self.batch_svc        = BatchService(self._ctx)
         self.review_svc       = ReviewService(self._ctx)
         self.multi_sample_svc = MultiSampleService(self._ctx)
-        self.training_svc     = TrainingService(self._ctx)
 
         # ── Init ──────────────────────────────────────────────────────────
         self._configure_backend_availability()
@@ -133,7 +133,6 @@ class ViewerController:
         self._bind_consensus_signals()
         self._bind_feature_signals()
         self._bind_multi_sample_signals()
-        self._bind_training_signals()
 
     # ── Configuration ──────────────────────────────────────────────────────
 
@@ -149,9 +148,10 @@ class ViewerController:
         cw.loadDirectoryTriggered.connect(self.image_svc.on_load_directory)
         cw.sampleSelected.connect(self.image_svc.on_sample_selected)
         cw.loadExistingMaskTriggered.connect(self.image_svc.on_load_existing_mask)
-        cw.loadChannelColorTriggered.connect(self.image_svc.load_channel_colors)
+        cw.loadChannelColorTriggered.connect(self._load_colors_smart)
         cw.scaleFactorChanged.connect(self.image_svc.update_scale)
         cw.viewLockToggled.connect(self._toggle_view_lock)
+        cw.loadAnnotationDataTriggered.connect(self.multi_sample_svc.set_master_file)
         cw.exportMaskTriggered.connect(self._export_mask)
         cw.exportFeaturesTriggered.connect(self._export_features)
         cw.exportConfidenceTriggered.connect(self._export_confidence)
@@ -183,20 +183,35 @@ class ViewerController:
     def _bind_multi_sample_signals(self) -> None:
         """Wire the MultiSampleComparisonWidget signals to MultiSampleService."""
         cw = self.comparison_widget
-        cw.masterFileTriggered.connect(self.multi_sample_svc.set_master_file)
         cw.addSamplesTriggered.connect(self.multi_sample_svc.add_samples_to_canvas)
         cw.clearCanvasTriggered.connect(self.multi_sample_svc.clear_canvas)
-        # Channel colour loading can also come from the viewer control widget:
-        if hasattr(self.control_widget, 'loadCelltypeColorTriggered'):
-            self.control_widget.loadCelltypeColorTriggered.connect(
-                self.multi_sample_svc.load_celltype_colors
-            )
+        # (Removed unused loadCelltypeColorTriggered)
 
-    def _bind_training_signals(self) -> None:
-        """Wire the TrainingDataWidget to TrainingService."""
-        tp = self.training_panel
-        tp.autoSelectTriggered.connect(self.training_svc.auto_select)
-        tp.exportTriggered.connect(self.training_svc.export)
+
+    def _load_colors_smart(self, filepath: str) -> None:
+        import pandas as pd
+        from pathlib import Path
+        path_obj = Path(filepath)
+        try:
+            df = pd.read_excel(filepath) if path_obj.suffix.lower() in ('.xlsx', '.xls') else pd.read_csv(filepath)
+            cols = [str(c).lower().strip() for c in df.columns]
+        except Exception as e:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.critical(self.control_widget, "Error", f"Failed to read file:\n{e}")
+            return
+            
+        has_markers = 'markers' in cols and 'colors' in cols
+        has_celltypes = 'celltypes' in cols and 'colors' in cols
+        
+        if not has_markers and not has_celltypes:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.warning(self.control_widget, "Invalid Format", "File must contain 'colors' and either 'markers' or 'celltypes'.")
+            return
+            
+        if has_markers:
+            self.image_svc.load_channel_colors(filepath)
+        if has_celltypes:
+            self.multi_sample_svc.load_celltype_colors(filepath)
 
     # ── Misc Controls ──────────────────────────────────────────────────────
 

@@ -22,10 +22,10 @@ from qtpy.QtCore import Qt, Signal
 from qtpy.QtWidgets import (
     QCheckBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
     QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-    QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QScrollArea, QSpinBox, QVBoxLayout, QWidget, QComboBox
 )
 
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
+from iris_common.widgets.styles import SHARED_DARK_THEME
 
 
 class MultiSampleComparisonWidget(QWidget):
@@ -44,7 +44,6 @@ class MultiSampleComparisonWidget(QWidget):
 
     addSamplesTriggered  = Signal(list)
     clearCanvasTriggered = Signal()
-    masterFileTriggered  = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -65,44 +64,49 @@ class MultiSampleComparisonWidget(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll)
 
-        self._build_master_file_group()
         self._build_comparison_group()
         self._build_layout_group()
         self._main_layout.addStretch()
 
     # ── Groups ────────────────────────────────────────────────────────────────
 
-    def _build_master_file_group(self) -> None:
+    def _build_comparison_group(self) -> None:
         box = QGroupBox()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(4)
 
-        title = QLabel("Annotation Data")
+        title = QLabel("Load Selected Samples")
         title.setStyleSheet("color: #DDD; font-size: 13px; font-weight: bold;")
         layout.addWidget(title)
         self._add_sep(layout)
 
         info = QLabel(
-            "Load an xlsx/csv with voron_x, voron_y, GROUP (cell type),\n"
-            "and marker expression columns (DAPI – Ki67, etc.)."
+            "Select specific samples to compare."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #999; font-size: 11px; font-style: italic;")
         layout.addWidget(info)
 
-        self.lbl_master_file = QLabel("No annotation file loaded")
-        self.lbl_master_file.setStyleSheet("color: #888; font-size: 11px;")
-        self.lbl_master_file.setWordWrap(True)
-        layout.addWidget(self.lbl_master_file)
+        self.chk_select_all = QCheckBox("Select All")
+        self.chk_select_all.toggled.connect(self._on_select_all_toggled)
+        layout.addWidget(self.chk_select_all)
 
-        self.btn_load_master = QPushButton("Load Annotation File…")
-        self.btn_load_master.clicked.connect(self._browse_master_file)
-        layout.addWidget(self.btn_load_master)
+        self.list_samples = QListWidget()
+        self.list_samples.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.list_samples)
+
+        self.btn_add = QPushButton("Add Selected Samples to Canvas")
+        self.btn_add.clicked.connect(self._on_add_clicked)
+        layout.addWidget(self.btn_add)
+
+        self.btn_clear = QPushButton("Clear Canvas")
+        self.btn_clear.clicked.connect(self.clearCanvasTriggered.emit)
+        layout.addWidget(self.btn_clear)
 
         self._main_layout.addWidget(box)
 
-    def _build_comparison_group(self) -> None:
+    def _build_layout_group(self) -> None:
         box = QGroupBox()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -182,14 +186,7 @@ class MultiSampleComparisonWidget(QWidget):
     def _add_sep(self, layout: QVBoxLayout) -> None:
         pass
 
-    def _browse_master_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Load Annotation File", "",
-            "Annotation files (*.xlsx *.xls *.csv);;All files (*)"
-        )
-        if path:
-            self.lbl_master_file.setText(path.split("/")[-1])
-            self.masterFileTriggered.emit(path)
+
 
     def _on_select_all_toggled(self, checked: bool) -> None:
         self.list_samples.blockSignals(True)

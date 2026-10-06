@@ -10,7 +10,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, Signal
 import pandas as pd
-from iris_viewer.widgets.styles import SHARED_DARK_THEME, BUTTON_SUCCESS
+from iris_common.widgets.styles import SHARED_DARK_THEME, BUTTON_SUCCESS
 from iris_viewer.engine.feature_extraction import MORPHOLOGY_FEATURES, INTENSITY_FEATURES
 
 

@@ -230,7 +230,7 @@ class PhenotypingEnsemble:
         the highest total Borda points wins.
 
         Robust to probability miscalibration — useful when mixing ASTIR
-        (which produces calibrated Bayesian posteriors) with CELESTA
+        (which produces calibrated Bayesian posteriors) with MAPS
         (which produces stub 0/1 probabilities).
         """
         all_cell_ids = self._all_cell_ids(predictions)

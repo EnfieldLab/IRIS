@@ -6,7 +6,7 @@ from qtpy.QtWidgets import (
     QMenu, QAction, QFileDialog
 )
 from qtpy.QtCore import Qt, Signal
-from iris_viewer.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
+from iris_common.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
 from iris_viewer.engine.pipeline import SegmentationStep
 
 class MultiSelectButton(QPushButton):

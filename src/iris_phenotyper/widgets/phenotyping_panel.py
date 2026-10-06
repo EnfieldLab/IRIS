@@ -14,18 +14,8 @@ from qtpy.QtWidgets import (
     QWidget, QFrame, QComboBox,
 )
 
-
-_DARK = """
-QWidget { background: #1A1A2E; color: #E0E0E0; font-family: 'Inter', sans-serif; }
-QGroupBox { border: 1px solid #3A3A5A; border-radius: 6px; margin-top: 8px; padding-top: 8px; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; color: #8888FF; font-weight: bold; }
-QPushButton { background: #2D2D4E; color: #DDD; border: 1px solid #444; border-radius: 4px; padding: 5px 10px; }
-QPushButton:hover { background: #3D3D6E; }
-QLabel { color: #CCC; }
-QSpinBox, QDoubleSpinBox, QComboBox { background: #252540; border: 1px solid #444; border-radius: 3px; padding: 2px; }
-"""
-
-_AVAIL_METHODS = ["ASTIR", "CELESTA", "STELLAR", "CellSighter"]
+from iris_common.widgets.styles import SHARED_DARK_THEME
+_AVAIL_METHODS = ["ASTIR", "MAPS"]
 
 
 class MethodConfigWidget(QFrame):
@@ -35,7 +25,7 @@ class MethodConfigWidget(QFrame):
         super().__init__(parent)
         self.method_name = method_name
         self.setFrameShape(QFrame.StyledPanel)
-        self.setStyleSheet("QFrame { background: #1E1E3A; border-radius: 5px; }")
+        self.setStyleSheet(SHARED_DARK_THEME)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -62,47 +52,19 @@ class MethodConfigWidget(QFrame):
             self._params["learning_rate"].setSingleStep(1e-4)
             layout.addWidget(self._params["learning_rate"])
 
-        elif self.method_name == "CELESTA":
-            layout.addWidget(QLabel("EM Iterations:"))
-            self._params["n_iter"] = QSpinBox()
-            self._params["n_iter"].setRange(1, 50)
-            self._params["n_iter"].setValue(10)
-            layout.addWidget(self._params["n_iter"])
-
-            layout.addWidget(QLabel("High Expression Threshold:"))
-            self._params["high_thresh"] = QDoubleSpinBox()
-            self._params["high_thresh"].setRange(0.5, 0.99)
-            self._params["high_thresh"].setValue(0.9)
-            self._params["high_thresh"].setSingleStep(0.05)
-            layout.addWidget(self._params["high_thresh"])
-
-            layout.addWidget(QLabel("Low Expression Threshold:"))
-            self._params["low_thresh"] = QDoubleSpinBox()
-            self._params["low_thresh"].setRange(0.01, 0.5)
-            self._params["low_thresh"].setValue(0.4)
-            self._params["low_thresh"].setSingleStep(0.05)
-            layout.addWidget(self._params["low_thresh"])
-
-            # Fallback notice
-            note = QLabel(
-                "⚠ CELESTA requires: pip install git+https://github.com/plevritis-lab/CELESTA.git\n"
-                "If unavailable, a rule-based fallback is used."
-            )
+        elif self.method_name == "MAPS":
+            layout.addWidget(QLabel("Epochs:"))
+            self._params["epochs"] = QSpinBox()
+            self._params["epochs"].setRange(10, 500)
+            self._params["epochs"].setValue(50)
+            layout.addWidget(self._params["epochs"])
+            
+            note = QLabel("Requires MAPS setup. See: github.com/mahmoodlab/MAPS")
             note.setWordWrap(True)
-            note.setStyleSheet("color: #FFAA44; font-size: 10px;")
+            note.setStyleSheet("color: #AAAAAA; font-size: 11px;")
             layout.addWidget(note)
 
-        elif self.method_name == "STELLAR":
-            note = QLabel("STELLAR is implemented in Phase 4.\nRequires a reference AnnData file.")
-            note.setWordWrap(True)
-            note.setStyleSheet("color: #AAAAFF; font-size: 11px;")
-            layout.addWidget(note)
 
-        elif self.method_name == "CellSighter":
-            note = QLabel("CellSighter is implemented in Phase 4.\nRequires manual cell annotations for training.")
-            note.setWordWrap(True)
-            note.setStyleSheet("color: #AAAAFF; font-size: 11px;")
-            layout.addWidget(note)
 
         layout.addStretch()
 
@@ -137,7 +99,7 @@ class PhenotypingPanelWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(_DARK)
+        self.setStyleSheet(SHARED_DARK_THEME)
         self._method_widgets: Dict[str, MethodConfigWidget] = {}
         self._setup_ui()
 
@@ -148,7 +110,7 @@ class PhenotypingPanelWidget(QWidget):
 
         # Header
         hdr = QLabel("Phenotyping Methods")
-        hdr.setStyleSheet("font-size: 14px; font-weight: bold; color: #8888FF;")
+        hdr.setStyleSheet("font-size: 14px; font-weight: bold; color: #DDD;")
         layout.addWidget(hdr)
 
         info = QLabel(
@@ -162,8 +124,8 @@ class PhenotypingPanelWidget(QWidget):
         # Method tabs
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet(
-            "QTabBar::tab { background: #1E1E3A; color: #AAA; padding: 5px 12px; }"
-            "QTabBar::tab:selected { background: #2D2D6E; color: #FFF; }"
+            "QTabBar::tab { background: #2A2A2A; color: #AAA; padding: 5px 12px; }"
+            "QTabBar::tab:selected { background: #444; color: #FFF; }"
         )
 
         for method in _AVAIL_METHODS:
@@ -198,9 +160,9 @@ class PhenotypingPanelWidget(QWidget):
         # ── Run / Cancel ──────────────────────────────────────────────────────
         self.btn_run = QPushButton("▶  Run Phenotyping")
         self.btn_run.setStyleSheet(
-            "QPushButton { background: #3A5A9A; color: white; font-weight: bold;"
+            "QPushButton { background: #444; color: white; font-weight: bold;"
             "padding: 8px; font-size: 13px; border-radius: 5px; }"
-            "QPushButton:hover { background: #4A7FBA; }"
+            "QPushButton:hover { background: #555; }"
         )
         self.btn_run.clicked.connect(self._emit_run)
         layout.addWidget(self.btn_run)
@@ -222,8 +184,7 @@ class PhenotypingPanelWidget(QWidget):
     def _emit_run(self) -> None:
         configs: Dict = {}
         for method, w in self._method_widgets.items():
-            if method not in ("STELLAR", "CellSighter"):  # Phase 4
-                configs[method] = w.get_params()
+            configs[method] = w.get_params()
         configs["_ensemble"] = {
             "strategy": self.combo_strategy.currentText(),
             "min_probability_threshold": self.spin_min_conf.value(),

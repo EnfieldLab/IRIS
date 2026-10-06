@@ -14,7 +14,7 @@ from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries
 
 from iris_viewer.engine.consensus import apply_manual_override
-from iris_viewer.widgets.styles import (
+from iris_common.widgets.styles import (
     CONFIDENCE_HIGH_COLOR,
     CONFIDENCE_LOW_COLOR,
     CONFIDENCE_MEDIUM_COLOR,

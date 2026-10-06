@@ -9,13 +9,13 @@ from qtpy.QtWidgets import (
     QFileDialog, QMessageBox, QSizePolicy, QScrollArea
 )
 from qtpy.QtCore import Qt, Signal
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
-from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
-from iris_viewer.widgets.canvas_legend import CanvasLegendOverlay
-from iris_viewer.widgets.canvas_scalebar import CanvasScaleBarOverlay
+from iris_common.widgets.styles import SHARED_DARK_THEME
+from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
+from iris_common.widgets.canvas_legend import CanvasLegendOverlay
+from iris_common.widgets.canvas_scalebar import CanvasScaleBarOverlay
 import os
 
-class ViewerControlWidget(QWidget):
+class ImageControlWidget(QWidget):
     """Dock widget for global Viewer settings, compute config, and image I/O."""
 
     # Signals
@@ -29,6 +29,7 @@ class ViewerControlWidget(QWidget):
     exportConfidenceTriggered = Signal()
     loadExistingMaskTriggered = Signal(str)
     loadChannelColorTriggered = Signal(str)
+    loadAnnotationDataTriggered = Signal(str)
     viewLockToggled = Signal(bool)
 
     def __init__(self, viewer=None, parent=None):
@@ -56,6 +57,7 @@ class ViewerControlWidget(QWidget):
         self._build_settings_group()
         self._build_compute_group()
         self._build_input_group()
+        self._build_annotation_group()
         
         # Replace dashboard with MultiSampleComparisonWidget
         self.comparison_widget = MultiSampleComparisonWidget()
@@ -251,15 +253,43 @@ class ViewerControlWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
+    def _build_annotation_group(self):
+        box = QGroupBox()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(4)
+        
+        title = QLabel("Annotation Data")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
+        layout.addWidget(title)
+
+        self.lbl_annotation = QLabel("No file loaded")
+        self.lbl_annotation.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.lbl_annotation)
+
+        self.btn_load_anno = QPushButton("Load Annotation File…")
+        self.btn_load_anno.clicked.connect(self._on_load_anno_clicked)
+        layout.addWidget(self.btn_load_anno)
+        
+        self.main_layout.addWidget(box)
+
+    def _on_load_anno_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Annotation File", "", "Table files (*.csv *.xlsx *.h5ad);;All files (*)"
+        )
+        if path:
+            self.lbl_annotation.setText(path.split("/")[-1])
+            self.loadAnnotationDataTriggered.emit(path)
+
 
 
     # ── Output ───────────────────────────────────────────────────────
     def _build_output_group(self):
-        group = QGroupBox()
+        self.output_group = QGroupBox()
         gl = QVBoxLayout()
         gl.setContentsMargins(5, 5, 5, 5)
         gl.setSpacing(4)
-        group.setLayout(gl)
+        self.output_group.setLayout(gl)
 
         title = QLabel("Export")
         title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
@@ -285,7 +315,7 @@ class ViewerControlWidget(QWidget):
         self.btn_batch.clicked.connect(lambda: self.batchProcessTriggered.emit())
         gl.addWidget(self.btn_batch)
 
-        self.main_layout.addWidget(group)
+        self.main_layout.addWidget(self.output_group)
 
     # ── Utility ──────────────────────────────────────────────────────
     def _add_separator(self, layout):

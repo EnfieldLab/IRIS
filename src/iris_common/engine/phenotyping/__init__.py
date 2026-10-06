@@ -23,17 +23,17 @@ class PhenotypeBackend(ABC):
         Human-readable method identifier shown in the UI.
     ``requires_training``
         True if ``fit()`` must be called before ``predict()``.
-        (STELLAR, CellSighter = True; ASTIR, CELESTA = False)
+        (ASTIR, MAPS = False)
     ``requires_raw_image``
         True if the backend needs raw pixel patches in addition to
-        the feature table (CellSighter, MAPS = True).
+        the feature table.
     ``requires_spatial``
-        True if the backend uses cell–cell spatial context (STELLAR = True).
+        True if the backend uses cell–cell spatial context (MAPS = True).
 
     ``is_available()``
         Runtime dependency check — import-guarded.
     ``fit()``
-        Train the model.  Must be a no-op for ASTIR / CELESTA.
+        Train the model.  Must be a no-op for ASTIR.
     ``predict()``
         Return per-cell probabilities over all cell types.
 
@@ -125,12 +125,23 @@ class PhenotypeBackend(ABC):
         """
         suffix = f"_{stat}"
         cols = [c for c in features.columns if c.endswith(suffix)]
+        
+        # If no suffix found, assume the user provided raw marker columns without suffixes
+        if not cols:
+            # We filter out typical non-marker numeric columns or metadata
+            exclude = {"file", "cell_id", "objectnumber", "pos_x", "pos_y", "x", "y", "centroid-0", "centroid-1", "area", "perimeter", "eccentricity", "voron_x", "voron_y", "group"}
+            import pandas.api.types as ptypes
+            cols = [c for c in features.columns if c.lower() not in exclude and ptypes.is_numeric_dtype(features[c])]
+            markers = cols
+        else:
+            markers = [c.replace(suffix, '') for c in cols]
+            
         if not cols:
             raise ValueError(
-                f"No '{stat}' intensity columns found in features DataFrame. "
+                f"No suitable intensity columns found in features DataFrame. "
                 f"Available columns: {list(features.columns)[:20]}"
             )
-        markers = [c.replace(suffix, '') for c in cols]
+            
         idx = features['ObjectNumber'].values if 'ObjectNumber' in features.columns else features.index
         df = features[cols].copy()
         df.index = idx

@@ -43,8 +43,6 @@ class PhenotyperAppState:
         # ── UMAP ─────────────────────────────────────────────────────────────
         self.umap_embedding: Optional[np.ndarray] = None    # (N, 2) UMAP coords
 
-        # ── Cell Annotations (for CellSighter training) ──────────────────────
-        self.cell_annotations: Dict[int, str] = {}          # cell_id → cell_type label
 
         # ── Override History ─────────────────────────────────────────────────
         self.override_history: Deque[Tuple] = deque(maxlen=50)
@@ -52,6 +50,24 @@ class PhenotyperAppState:
         # ── Batch ────────────────────────────────────────────────────────────
         self.batch_queue: List[str] = []
         self.batch_results: Dict[str, Dict] = {}
+
+        # ── ImageService / MultiSampleService requirements ──────────────────
+        self.image_dir: Optional[Path] = None
+        self.file_map: Dict[str, Path] = {}
+        self.markers: List[str] = []
+        self.current_sample_name: Optional[str] = None
+        self.raw_image: Optional[np.ndarray] = None
+        self.channel_contrast_limits: Dict[str, list] = {}
+        
+        self.multi_sample_images: Dict[str, np.ndarray] = {}
+        self.resolved_dfs: Dict[str, pd.DataFrame] = {}
+        self.masks_map: Dict[str, np.ndarray] = {}
+        self.sample_layers_map: Dict[str, List] = {}
+        
+        self.segmentation_results: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
+        self.cytoplasm_mask: Optional[np.ndarray] = None
+        self.current_mask: Optional[np.ndarray] = None
+        self.persistent_settings: Dict[str, Any] = {}
 
     def reset_sample_state(self) -> None:
         self.features_df = None

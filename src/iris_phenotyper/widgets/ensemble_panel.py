@@ -22,17 +22,7 @@ from qtpy.QtWidgets import (
 )
 
 
-_DARK = """
-QWidget { background: #1A1A2E; color: #E0E0E0; }
-QGroupBox { border: 1px solid #3A3A5A; border-radius: 6px; margin-top: 8px; padding-top: 8px; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; color: #8888FF; font-weight: bold; }
-QPushButton { background: #2D2D4E; border: 1px solid #444; border-radius: 4px; padding: 4px 10px; }
-QPushButton:hover { background: #3D3D6E; }
-QListWidget { background: #1E1E3A; border: 1px solid #444; }
-QSlider::groove:horizontal { height: 6px; background: #333; border-radius: 3px; }
-QSlider::handle:horizontal { background: #5A5AFF; width: 14px; height: 14px;
-    border-radius: 7px; margin: -4px 0; }
-"""
+from iris_common.widgets.styles import SHARED_DARK_THEME
 
 # Default color palette for up to 20 cell types
 _TYPE_PALETTE = [
@@ -66,7 +56,7 @@ class EnsemblePanelWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(_DARK)
+        self.setStyleSheet(SHARED_DARK_THEME)
         self._cell_type_colors: Dict[str, str] = {}
         self._flagged_cells: List[int] = []
         self._setup_ui()
@@ -79,7 +69,7 @@ class EnsemblePanelWidget(QWidget):
         layout.setSpacing(8)
 
         hdr = QLabel("Ensemble Results")
-        hdr.setStyleSheet("font-size: 14px; font-weight: bold; color: #8888FF;")
+        hdr.setStyleSheet("font-size: 14px; font-weight: bold; color: #DDD;")
         layout.addWidget(hdr)
 
         # ── Cell Type Summary ─────────────────────────────────────────────────

@@ -31,7 +31,7 @@ from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 
 from iris_common.io.data_adapter import IrisDataAdapter, IrisPhenotypeMapper
-from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
+from iris_common.widgets.styles import DEFAULT_MARKER_COLORS
 
 
 class MultiSampleService:
@@ -105,8 +105,8 @@ class MultiSampleService:
                 cw.combo_quick_type.addItems(unique_types)
                 cw.combo_quick_type.blockSignals(False)
 
-        if hasattr(ctx, "comparison_widget"):
-            ctx.comparison_widget.lbl_master_file.setText(
+        if hasattr(ctx, "control_widget") and hasattr(ctx.control_widget, "lbl_annotation"):
+            ctx.control_widget.lbl_annotation.setText(
                 Path(file_path).name
             )
 
@@ -722,8 +722,6 @@ class MultiSampleService:
             )
             df.columns = [str(c).lower().strip() for c in df.columns]
             if "celltypes" not in df.columns or "colors" not in df.columns:
-                QMessageBox.warning(ctx.control_widget, "Invalid Format",
-                                    "File must contain 'celltypes' and 'colors' columns.")
                 return
             for _, row in df.iterrows():
                 ct = str(row["celltypes"]).strip().lower()

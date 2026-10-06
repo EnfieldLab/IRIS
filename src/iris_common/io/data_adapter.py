@@ -261,11 +261,11 @@ class IrisDataAdapter:
             return self.normalised.set_index("ObjectNumber")["cell_type"]
         return None
 
-    # ── STELLAR / AnnData bridge ───────────────────────────────────────────────
+    # ── AnnData bridge ───────────────────────────────────────────────
 
     def to_anndata(self, sample_name: Optional[str] = None):
         """
-        Convert to an AnnData object for STELLAR / scanpy workflows.
+        Convert to an AnnData object for scanpy workflows.
 
         Parameters
         ----------
