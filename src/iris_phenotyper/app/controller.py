@@ -220,6 +220,12 @@ class PhenotyperController:
     def _toggle_view_lock(self, is_locked: bool) -> None:
         self.viewer.camera.mouse_pan  = not is_locked
         self.viewer.camera.mouse_zoom = not is_locked
+        if is_locked:
+            self._old_double_clicks = list(self.viewer.mouse_double_click_callbacks)
+            self.viewer.mouse_double_click_callbacks.clear()
+        elif hasattr(self, "_old_double_clicks"):
+            self.viewer.mouse_double_click_callbacks.extend(self._old_double_clicks)
+            del self._old_double_clicks
 
     def _select_layer(self, layer_name: str) -> None:
         self.viewer.layers.selection.clear()
@@ -227,6 +233,7 @@ class PhenotyperController:
             base = layer.name.split(" [")[0] if " [" in layer.name else layer.name
             if base == layer_name:
                 self.viewer.layers.selection.add(layer)
+                break
 
     # ── Outputs & Exports (From ImageControlWidget) ──────────────────────────
 
