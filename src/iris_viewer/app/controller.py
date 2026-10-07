@@ -110,6 +110,20 @@ class ViewerController:
                 d.raise_()
                 break
 
+        # ── Adjust Main Window Size ───────────────────────────────────────
+        from qtpy.QtCore import QTimer
+        def enforce_window_size():
+            screen = qt.screen()
+            if screen:
+                geom = screen.availableGeometry()
+                # Enforce a reasonable default size (e.g., 85% of screen)
+                qt.resize(int(geom.width() * 0.85), int(geom.height() * 0.85))
+                qt.move(geom.center() - qt.rect().center())
+            qt.showMaximized()
+            
+        # Delay the resize slightly so it overrides napari's internal settings restoration
+        QTimer.singleShot(200, enforce_window_size)
+
         # ── Shared Context namespace ───────────────────────────────────────
         # Both the controller and all services read/write the same objects.
         # Mutable containers (lists, sets, dicts) are shared by reference.
