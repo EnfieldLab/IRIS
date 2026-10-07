@@ -80,15 +80,18 @@ class ViewerController:
         self.legend_widget      = ViewerLegendWidget(self.viewer)
         self.comparison_widget  = self.control_widget.comparison_widget
 
+        from qtpy.QtWidgets import QDockWidget
+
         for widget, name in [
             (self.control_widget,     "Control"),
             (self.comparison_widget,  "TMA"),
             (self.segmentation_panel, "Segmentation"),
             (self.consensus_panel,    "Consensus"),
             (self.feature_panel,      "Features"),
-            (self.legend_widget,      "Legend"),
         ]:
             self.viewer.window.add_dock_widget(widget, name=name, area="right")
+            
+        self.viewer.window.add_dock_widget(self.legend_widget, name="Legend", area="left")
         
         self.comparison_widget.show()
 
@@ -98,8 +101,14 @@ class ViewerController:
         qt.tabifyDockWidget(dw["TMA"].parent(),           dw["Segmentation"].parent())
         qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
         qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
-        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Legend"].parent())
         dw["Control"].parent().raise_()
+
+        # Tabify Legend with napari's layer list
+        for d in qt.findChildren(QDockWidget):
+            if d.windowTitle().lower() == "layer list":
+                qt.tabifyDockWidget(d, dw["Legend"].parent())
+                d.raise_()
+                break
 
         # ── Shared Context namespace ───────────────────────────────────────
         # Both the controller and all services read/write the same objects.
@@ -125,6 +134,68 @@ class ViewerController:
         self.batch_svc        = BatchService(self._ctx)
         self.review_svc       = ReviewService(self._ctx)
         self.multi_sample_svc = MultiSampleService(self._ctx)
+
+        # ── Replace Napari Welcome Text ───────────────────────────────────────
+        from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
+        from qtpy.QtCore import Qt
+        
+        # 1. Forcefully hide napari's Qt welcome widget(s) across the entire app
+        try:
+            for top_widget in QApplication.instance().topLevelWidgets():
+                for child in top_widget.findChildren(QWidget):
+                    if "Welcome" in type(child).__name__ or type(child).__name__ == "QtWelcomeWidget":
+                        child.hide()
+                        child.setVisible = lambda x: None
+                    elif isinstance(child, QLabel):
+                        text = child.text().lower()
+                        if "napari" in text or "drag" in text or "shortcuts" in text:
+                            child.hide()
+                            child.setVisible = lambda x: None
+        except Exception:
+            pass
+
+        # 2. Try to hide Vispy TextVisuals (older napari versions)
+        try:
+            if hasattr(self.viewer.window._qt_viewer, "canvas"):
+                scene = self.viewer.window._qt_viewer.canvas.scene
+                def hide_vispy_text(node):
+                    if type(node).__name__ == "TextVisual":
+                        text = getattr(node, "text", "").lower()
+                        if "napari" in text or "drag" in text:
+                            node.visible = False
+                    if hasattr(node, "children"):
+                        for c in node.children:
+                            hide_vispy_text(c)
+                hide_vispy_text(scene)
+        except Exception:
+            pass
+
+        # 3. Create our own centered IRIS label on the canvas
+        canvas_native = self.viewer.window._qt_viewer.canvas.native
+        
+        self.iris_welcome = QLabel("IRIS")
+        # Use an opaque black background and large white text
+        self.iris_welcome.setStyleSheet("font-size: 80px; color: white; font-weight: bold; background-color: black;")
+        self.iris_welcome.setAlignment(Qt.AlignCenter)
+        self.iris_welcome.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+        # Place it in a layout so it centers automatically and covers the canvas
+        layout = canvas_native.layout()
+        if not layout:
+            layout = QVBoxLayout(canvas_native)
+            layout.setContentsMargins(0, 0, 0, 0)
+        
+        layout.addWidget(self.iris_welcome) # No alignment flag makes it expand
+
+        # Hide it when a layer is added
+        @self.viewer.layers.events.inserted.connect
+        def _hide_iris_text(*args):
+            self.iris_welcome.hide()
+            
+        @self.viewer.layers.events.removed.connect
+        def _show_iris_text(*args):
+            if len(self.viewer.layers) == 0:
+                self.iris_welcome.show()
 
         # ── Init ──────────────────────────────────────────────────────────
         self._configure_backend_availability()
