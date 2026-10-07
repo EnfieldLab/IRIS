@@ -173,11 +173,29 @@ class ViewerController:
         # 3. Create our own centered IRIS label on the canvas
         canvas_native = self.viewer.window._qt_viewer.canvas.native
         
-        self.iris_welcome = QLabel("IRIS")
-        # Use an opaque black background and large white text
-        self.iris_welcome.setStyleSheet("font-size: 80px; color: white; font-weight: bold; background-color: black;")
+        self.iris_welcome = QLabel()
+        # Use an opaque black background
+        self.iris_welcome.setStyleSheet("background-color: black;")
         self.iris_welcome.setAlignment(Qt.AlignCenter)
         self.iris_welcome.setAttribute(Qt.WA_TransparentForMouseEvents)
+        
+        from qtpy.QtGui import QMovie
+        import os
+        gif_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../image/iris_blink.gif"))
+        movie = QMovie(gif_path)
+        
+        # Start and jump to frame 0 to read the original size synchronously
+        movie.start()
+        movie.jumpToFrame(0)
+        orig_size = movie.currentImage().size()
+        if not orig_size.isEmpty():
+            from qtpy.QtCore import QSize
+            scale_factor = 0.5
+            movie.setScaledSize(QSize(int(orig_size.width() * scale_factor), int(orig_size.height() * scale_factor)))
+            
+        self.iris_welcome.setMovie(movie)
+        # Keep a reference to prevent garbage collection
+        self.iris_welcome._movie = movie
 
         # Place it in a layout so it centers automatically and covers the canvas
         layout = canvas_native.layout()
