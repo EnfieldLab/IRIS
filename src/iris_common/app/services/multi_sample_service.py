@@ -171,12 +171,12 @@ class MultiSampleService:
             if sub_df.empty and len(ctx.state.sample_layers_map) == 1:
                 sub_df = ctx.state.master_df.copy()
 
-            print(f"DEBUG: sample_name={sample_name}, mask is {'None' if mask is None else 'Present'}, sub_df.shape={sub_df.shape}")
+            print(f"[IRIS-Viewer] sample_name={sample_name}, mask is {'None' if mask is None else 'Present'}, sub_df.shape={sub_df.shape}")
 
             if sub_df.empty:
-                print(f"DEBUG: sub_df is empty! master_df cols: {ctx.state.master_df.columns.tolist() if ctx.state.master_df is not None else 'None'}")
+                print(f"[IRIS-Viewer] sub_df is empty! master_df cols: {ctx.state.master_df.columns.tolist() if ctx.state.master_df is not None else 'None'}")
                 if ctx.state.master_df is not None and "Image" in ctx.state.master_df.columns:
-                    print(f"DEBUG: Unique images in master_df: {ctx.state.master_df['Image'].unique()}")
+                    print(f"[IRIS-Viewer] Unique images in master_df: {ctx.state.master_df['Image'].unique()}")
                 continue
                 
             # If a bounding box exists, get its translation to align overlays perfectly
@@ -212,12 +212,20 @@ class MultiSampleService:
                     ctx.viewer.layers.remove(l)
                 if l in sample_layers:
                     sample_layers.remove(l)
+                
+                l_base = l.name.split(" [")[0]
+                if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "remove_row"):
+                    ctx.legend_widget.remove_row(l_base)
+                if hasattr(self, "_added_master_legends") and l_base in self._added_master_legends:
+                    self._added_master_legends.remove(l_base)
+                if hasattr(ctx, "added_legend_entries") and l_base in ctx.added_legend_entries:
+                    ctx.added_legend_entries.remove(l_base)
 
             # Check and add Cell Phenotypes via IrisPhenotypeMapper
             mapper = IrisPhenotypeMapper(mask, sub_df, target_col=ref_col)
             layer_data_ref = mapper.get_masks_by_type()
             
-            print(f"DEBUG: mapper returned layer_data_ref with keys: {list(layer_data_ref.keys())}")
+            print(f"[IRIS-Viewer] mapper returned layer_data_ref with keys: {list(layer_data_ref.keys())}")
 
             for type_name in sorted(layer_data_ref.keys()):
                 # Skip if a layer with this phenotype name already exists in this sample's group
@@ -253,7 +261,7 @@ class MultiSampleService:
                     self._added_master_legends.add(type_name)
                     
             # Update the resolved dataframes cache for analytics/export
-            ctx.state.resolved_dfs[sample_name] = sub_df
+            ctx.state.resolved_dfs[sample_name] = mapper.df if 'mapper' in locals() else sub_df
             
         # Rebuild the unified mapped DataFrame
         all_dfs = [ctx.state.resolved_dfs[sn] for sn in ctx.state.sample_layers_map.keys() if sn in ctx.state.resolved_dfs]
@@ -873,12 +881,24 @@ class MultiSampleService:
                 if mcolors.is_color_like(cv):
                     self.CELLTYPE_COLORS[ct] = mcolors.to_hex(cv)
             updated = 0
-            for row in getattr(ctx.legend_widget, "ref_ct_rows", []):
+            for row in getattr(ctx.legend_widget, "seg_rows", []):
                 if row.name.lower() in self.CELLTYPE_COLORS:
                     c = self.CELLTYPE_COLORS[row.name.lower()]
                     row.update_swatch_display(c)
                     row.colorChanged.emit(row.name, c)
                     updated += 1
+                    
+                    # Also directly update any matching layers in the viewer
+                    for l in ctx.viewer.layers:
+                        l_base = l.name.split(" [")[0]
+                        if l_base.lower() == row.name.lower():
+                            if hasattr(l, "colormap"):
+                                from napari.utils.colormaps import Colormap
+                                try:
+                                    colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(c)) + [1]])
+                                    l.colormap = Colormap(colors, name=f'custom_{l.name}')
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to set colormap for {l.name}: {e}")
             QMessageBox.information(ctx.control_widget, "Success",
                                     f"Updated {updated} cell type colors.")
         except Exception as exc:

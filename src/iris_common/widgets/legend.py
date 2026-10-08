@@ -227,7 +227,22 @@ class ViewerLegendWidget(QWidget):
         self._add_layer_row(layer, name, initial_color, self.seg_group, self.seg_layout, self.seg_rows, layer_type=layer_type)
         
     def add_ref_ct_row(self, layer, name: str, initial_color: str):
-        self.add_segmentation_row(layer, name, initial_color)
+        self._add_layer_row(layer, name, initial_color, self.seg_group, self.seg_layout, self.seg_rows, layer_type='image')
+
+    def remove_row(self, layer_name: str):
+        """Remove a specific row by its layer name."""
+        for group, layout, row_list in [
+            (self.channel_group, self.channel_layout, self.channel_rows),
+            (self.seg_group, self.seg_layout, self.seg_rows),
+            (self.consensus_group, self.consensus_layout, self.consensus_rows),
+        ]:
+            for row in list(row_list):
+                if row.name == layer_name:
+                    row_list.remove(row)
+                    layout.removeWidget(row)
+                    row.deleteLater()
+            if not row_list:
+                group.hide()
 
     def clear(self):
         """Remove all rows from all groups."""

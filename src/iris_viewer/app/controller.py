@@ -255,12 +255,14 @@ class ViewerController:
         cw.sampleSelected.connect(self.image_svc.on_sample_selected)
         cw.loadExistingMaskTriggered.connect(self.image_svc.on_load_existing_mask)
         cw.loadChannelColorTriggered.connect(self._load_colors_smart)
+        cw.loadCellTypeColorTriggered.connect(self.multi_sample_svc.load_celltype_colors)
         cw.scaleFactorChanged.connect(self.image_svc.update_scale)
         cw.viewLockToggled.connect(self._toggle_view_lock)
         cw.loadAnnotationDataTriggered.connect(self.multi_sample_svc.set_master_file)
         cw.exportMaskTriggered.connect(self._export_mask)
         cw.exportFeaturesTriggered.connect(self._export_features)
         cw.exportConfidenceTriggered.connect(self._export_confidence)
+        cw.exportUpdatedPhenotypesTriggered.connect(self._export_updated_phenotypes)
         cw.batchProcessTriggered.connect(self.batch_svc.run_batch_processing)
         cw.colChanged.connect(self.multi_sample_svc.update_phenotypes_on_canvas)
         # Optional session signals (added in a future control_widget update)
@@ -729,6 +731,32 @@ class ViewerController:
         if filepath:
             export_confidence_map(Path(filepath), self.state.confidence_map)
             QMessageBox.information(self.control_widget, "Export Complete", "Confidence map saved.")
+
+    def _export_updated_phenotypes(self) -> None:
+        if getattr(self.state, 'master_df', None) is None or self.state.master_df.empty:
+            QMessageBox.warning(self.control_widget, "No Annotation Data", "Load annotation data first.")
+            return
+            
+        filepath, _ = QFileDialog.getSaveFileName(
+            self.control_widget, "Export Updated Phenotypes",
+            "updated_phenotypes.csv", "CSV (*.csv)"
+        )
+        if filepath:
+            ref_col = self.control_widget.combo_ref.currentText()
+            df_export = self.state.master_df.copy()
+            updated_col_name = f"{ref_col}_updated"
+            
+            if 'Verified_CellType' in df_export.columns:
+                df_export[updated_col_name] = df_export['Verified_CellType']
+                df_export.drop(columns=['Verified_CellType'], inplace=True)
+            else:
+                df_export[updated_col_name] = df_export[ref_col]
+                
+            try:
+                df_export.to_csv(filepath, index=False)
+                QMessageBox.information(self.control_widget, "Export Complete", "Updated phenotypes saved.")
+            except Exception as e:
+                QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save CSV: {e}")
 
     # ── Session ─────────────────────────────────────────────────────────────
 

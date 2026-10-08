@@ -29,7 +29,9 @@ class ImageControlWidget(QWidget):
     exportConfidenceTriggered = Signal()
     loadExistingMaskTriggered = Signal(str)
     loadChannelColorTriggered = Signal(str)
+    loadCellTypeColorTriggered = Signal(str)
     loadAnnotationDataTriggered = Signal(str)
+    exportUpdatedPhenotypesTriggered = Signal()
     viewLockToggled = Signal(bool)
     colChanged = Signal()
 
@@ -247,10 +249,17 @@ class ImageControlWidget(QWidget):
         self.btn_load_mask = QPushButton("Load Existing Segmentation Mask")
         self.btn_load_mask.clicked.connect(self._on_load_mask_clicked)
         gl.addWidget(self.btn_load_mask)
-        # Load Marker Color
+        # Load Marker Color and Cell Type Color
+        color_row = QHBoxLayout()
         self.btn_load_marker_color = QPushButton("Load Marker Color")
         self.btn_load_marker_color.clicked.connect(self._on_load_marker_color_clicked)
-        gl.addWidget(self.btn_load_marker_color)
+        color_row.addWidget(self.btn_load_marker_color)
+        
+        self.btn_load_celltype_color = QPushButton("Load Cell Type Color")
+        self.btn_load_celltype_color.clicked.connect(self._on_load_celltype_color_clicked)
+        color_row.addWidget(self.btn_load_celltype_color)
+        
+        gl.addLayout(color_row)
 
         self.main_layout.addWidget(group)
 
@@ -282,12 +291,16 @@ class ImageControlWidget(QWidget):
 
         # Quick Curation
         q_row = QHBoxLayout()
-        self.chk_quick_curate = QCheckBox("Quick Curation (Left-Click)")
+        self.chk_quick_curate = QCheckBox("Quick Curation")
         self.chk_quick_curate.setStyleSheet("color: #FFaa00; font-weight: bold;")
         self.combo_quick_type = QComboBox()
         q_row.addWidget(self.chk_quick_curate)
         q_row.addWidget(self.combo_quick_type)
         layout.addLayout(q_row)
+        
+        self.btn_export_anno = QPushButton("Export Updated Phenotypes")
+        self.btn_export_anno.clicked.connect(lambda: self.exportUpdatedPhenotypesTriggered.emit())
+        layout.addWidget(self.btn_export_anno)
         
         self.main_layout.addWidget(box)
 
@@ -357,6 +370,11 @@ class ImageControlWidget(QWidget):
         fname, _ = QFileDialog.getOpenFileName(self, "Load Marker Color", "", "Data Tables (*.csv *.xlsx)")
         if fname:
             self.loadChannelColorTriggered.emit(fname)
+
+    def _on_load_celltype_color_clicked(self):
+        fname, _ = QFileDialog.getOpenFileName(self, "Load Cell Type Color", "", "Data Tables (*.csv *.xlsx)")
+        if fname:
+            self.loadCellTypeColorTriggered.emit(fname)
 
     def _on_load_mask_clicked(self):
         filepath, _ = QFileDialog.getOpenFileName(

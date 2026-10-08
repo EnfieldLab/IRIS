@@ -52,7 +52,7 @@ class CurationService:
         if getattr(self.ctx.state, "current_mapped_df", None) is None: return None, None
         
         for sample_name, layers in self.ctx.state.sample_layers_map.items():
-            seg_layer = next((l for l in layers if l.__class__.__name__ == 'Labels' and "Segmentation" in l.name), None)
+            seg_layer = next((l for l in layers if l.__class__.__name__ == 'Labels' and ("Segmentation" in l.name or "Mask" in l.name)), None)
             
             if seg_layer is None:
                 continue
@@ -67,6 +67,9 @@ class CurationService:
                     obj_id = mask_data[y, x]
                     if obj_id > 0:
                         df_sub = self.ctx.state.current_mapped_df
+                        if 'ObjectNumber' not in df_sub.columns:
+                            continue
+                        
                         if 'Image' in df_sub.columns:
                             matched = df_sub[(df_sub['Image'].astype(str) == str(sample_name)) & (df_sub['ObjectNumber'] == obj_id)]
                         else:
@@ -151,12 +154,18 @@ class CurationService:
         pos_y = target_row.get('Pos_Y')
         
         orig_idx = df_sub[row_mask].index[0]
-        old_type = df_sub.loc[orig_idx, ref_col]
+        old_type = str(df_sub.loc[orig_idx, ref_col])
+        new_type = str(new_type)
         if old_type == new_type: return
         
+        # Ensure Verified_CellType exists in both dataframes
+        if 'Verified_CellType' not in self.ctx.state.current_mapped_df.columns:
+            self.ctx.state.current_mapped_df['Verified_CellType'] = self.ctx.state.current_mapped_df[ref_col]
+        if self.ctx.state.master_df is not None and 'Verified_CellType' not in self.ctx.state.master_df.columns:
+            self.ctx.state.master_df['Verified_CellType'] = self.ctx.state.master_df[ref_col]
+        
         self.ctx.state.current_mapped_df.loc[orig_idx, ref_col] = new_type
-        if 'Verified_CellType' in self.ctx.state.current_mapped_df.columns:
-            self.ctx.state.current_mapped_df.loc[orig_idx, 'Verified_CellType'] = new_type
+        self.ctx.state.current_mapped_df.loc[orig_idx, 'Verified_CellType'] = new_type
         
         if self.ctx.state.master_df is not None:
             m_df = self.ctx.state.master_df
@@ -168,8 +177,7 @@ class CurationService:
             if m_mask.any():
                 m_idx = m_df[m_mask].index[0]
                 self.ctx.state.master_df.loc[m_idx, ref_col] = new_type
-                if 'Verified_CellType' in self.ctx.state.master_df.columns:
-                    self.ctx.state.master_df.loc[m_idx, 'Verified_CellType'] = new_type
+                self.ctx.state.master_df.loc[m_idx, 'Verified_CellType'] = new_type
 
         mask = self.ctx.state.masks_map.get(sample_name)
         if mask is not None:
@@ -180,12 +188,14 @@ class CurationService:
             new_layer = next((l for l in s_layers if l.name.split(" [")[0] == new_type), None)
             
             if old_layer is not None:
-                old_layer.data[mask_bool] = 0
-                old_layer.refresh()
+                new_data = old_layer.data.copy()
+                new_data[mask_bool] = 0
+                old_layer.data = new_data
                 
             if new_layer is not None:
-                new_layer.data[mask_bool] = 1 
-                new_layer.refresh()
+                new_data = new_layer.data.copy()
+                new_data[mask_bool] = 1 
+                new_layer.data = new_data
             else:
                 QMessageBox.information(
                     self.ctx.control_widget, 
