@@ -40,6 +40,7 @@ from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
 from iris_viewer.app.services import BatchService, ReviewService
 from iris_common.app.services.image_service import ImageService
 from iris_common.app.services.multi_sample_service import MultiSampleService
+from iris_viewer.app.services.curation_service import CurationService
 
 
 class ViewerController:
@@ -148,6 +149,7 @@ class ViewerController:
         self.batch_svc        = BatchService(self._ctx)
         self.review_svc       = ReviewService(self._ctx)
         self.multi_sample_svc = MultiSampleService(self._ctx)
+        self.curation_svc     = CurationService(self._ctx)
 
         # ── Replace Napari Welcome Text ───────────────────────────────────────
         from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
@@ -236,6 +238,7 @@ class ViewerController:
         self._bind_consensus_signals()
         self._bind_feature_signals()
         self._bind_multi_sample_signals()
+        self._bind_curation_signals()
 
     # ── Configuration ──────────────────────────────────────────────────────
 
@@ -259,6 +262,7 @@ class ViewerController:
         cw.exportFeaturesTriggered.connect(self._export_features)
         cw.exportConfidenceTriggered.connect(self._export_confidence)
         cw.batchProcessTriggered.connect(self.batch_svc.run_batch_processing)
+        cw.colChanged.connect(self.multi_sample_svc.update_phenotypes_on_canvas)
         # Optional session signals (added in a future control_widget update)
         if hasattr(cw, 'saveSessionTriggered'):
             cw.saveSessionTriggered.connect(self._save_session)
@@ -288,7 +292,11 @@ class ViewerController:
         cw = self.comparison_widget
         cw.addSamplesTriggered.connect(self.multi_sample_svc.add_samples_to_canvas)
         cw.clearCanvasTriggered.connect(self.multi_sample_svc.clear_canvas)
-        # (Removed unused loadCelltypeColorTriggered)
+
+    def _bind_curation_signals(self) -> None:
+        """Bind mouse drag callbacks for curation interactions."""
+        self.viewer.mouse_drag_callbacks.append(self.curation_svc.on_right_click)
+        self.viewer.mouse_drag_callbacks.append(self.curation_svc.on_quick_curate_click)
 
 
     def _load_colors_smart(self, filepath: str) -> None:

@@ -31,6 +31,7 @@ class ImageControlWidget(QWidget):
     loadChannelColorTriggered = Signal(str)
     loadAnnotationDataTriggered = Signal(str)
     viewLockToggled = Signal(bool)
+    colChanged = Signal()
 
     def __init__(self, viewer=None, parent=None):
         super().__init__(parent)
@@ -271,7 +272,28 @@ class ImageControlWidget(QWidget):
         self.btn_load_anno.clicked.connect(self._on_load_anno_clicked)
         layout.addWidget(self.btn_load_anno)
         
+        # Cell Phenotype Ref Col
+        r_row = QHBoxLayout()
+        r_row.addWidget(QLabel("Cell Phenotype:"))
+        self.combo_ref = QComboBox()
+        self.combo_ref.currentIndexChanged.connect(self.on_col_change)
+        r_row.addWidget(self.combo_ref)
+        layout.addLayout(r_row)
+
+        # Quick Curation
+        q_row = QHBoxLayout()
+        self.chk_quick_curate = QCheckBox("Quick Curation (Left-Click)")
+        self.chk_quick_curate.setStyleSheet("color: #FFaa00; font-weight: bold;")
+        self.combo_quick_type = QComboBox()
+        q_row.addWidget(self.chk_quick_curate)
+        q_row.addWidget(self.combo_quick_type)
+        layout.addLayout(q_row)
+        
         self.main_layout.addWidget(box)
+
+    def on_col_change(self):
+        """Signal handler for when the cell phenotype reference column changes."""
+        self.colChanged.emit()
 
     def _on_load_anno_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

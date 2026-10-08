@@ -109,6 +109,9 @@ class ImageService:
         ctx.state.raw_image = raw_image
         scale_val = ctx.control_widget.spin_scale.value()
 
+        if sample_name not in ctx.state.sample_layers_map:
+            ctx.state.sample_layers_map[sample_name] = []
+
         for i, marker in enumerate(ctx.state.markers):
             if i >= raw_image.shape[0]:
                 break
@@ -144,6 +147,7 @@ class ImageService:
                 contrast_limits=clims,
                 scale=(scale_val, scale_val),
             )
+            ctx.state.sample_layers_map[sample_name].append(layer)
 
             if marker not in ctx.added_legend_entries:
                 try:
@@ -194,6 +198,9 @@ class ImageService:
                     data, name=name, opacity=1.0, visible=True,
                     scale=(scale_val, scale_val),
                 )
+            if sample_name not in ctx.state.sample_layers_map:
+                ctx.state.sample_layers_map[sample_name] = []
+            ctx.state.sample_layers_map[sample_name].append(layer)
             if name not in ctx.added_legend_entries:
                 ctx.legend_widget.add_segmentation_row(layer, name, '#888888')
                 ctx.added_legend_entries.add(name)
@@ -209,11 +216,15 @@ class ImageService:
                 'nuclear': mask_data[0],
                 'cytoplasm': mask_data[1] if mask_data.shape[0] > 1 else None,
             }
+            ctx.state.current_mask = mask_data[0]
+            ctx.state.masks_map[sample_name] = mask_data[0]
         else:
             _add_labels(mask_data, "Loaded Mask")
             ctx.state.segmentation_results["Loaded"] = {
                 'nuclear': mask_data, 'cytoplasm': None,
             }
+            ctx.state.current_mask = mask_data
+            ctx.state.masks_map[sample_name] = mask_data
 
         n_cells = int(np.unique(mask_data).size) - 1
         ctx.control_widget.update_dashboard(

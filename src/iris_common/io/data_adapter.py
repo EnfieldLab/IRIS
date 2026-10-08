@@ -171,9 +171,9 @@ class IrisDataAdapter:
     # ── Normalisation ──────────────────────────────────────────────────────────
 
     def _build_normalised(self) -> pd.DataFrame:
-        """Construct the IRIS internal DataFrame."""
-        rows = len(self._raw)
-        out = pd.DataFrame()
+        """Construct the IRIS internal DataFrame while preserving all original columns."""
+        # Start with a full copy to preserve all user columns
+        out = self._raw.copy()
 
         # ── Sample identifier ─────────────────────────────────────────────────
         if self.sample_col_original:
@@ -197,27 +197,14 @@ class IrisDataAdapter:
         # ── Cell ID ──────────────────────────────────────────────────────────
         if self._id_col:
             out["ObjectNumber"] = self._raw[self._id_col].astype(int)
-        else:
-            # Generate 1-based cell IDs within each sample
-            out["ObjectNumber"] = (
-                out.groupby("Image").cumcount() + 1
-            )
 
         # ── Coordinates ───────────────────────────────────────────────────────
         out["Pos_X"] = self._raw[self._x_col].astype(float)
         out["Pos_Y"] = self._raw[self._y_col].astype(float)
 
         # ── Cell type ─────────────────────────────────────────────────────────
-        if self.celltype_col_original:
+        if self.celltype_col_original and "cell_type" not in out.columns:
             out["cell_type"] = self._raw[self.celltype_col_original].astype(str).str.strip()
-
-        # ── Marker intensities (<Marker>_mean) ────────────────────────────────
-        for marker in self.markers:
-            out[f"{marker}_{self._intensity_stat}"] = self._raw[marker].astype(float)
-
-        # ── Morphology ────────────────────────────────────────────────────────
-        for col in self.morph_cols:
-            out[col] = self._raw[col]
 
         return out
 
@@ -249,10 +236,17 @@ class IrisDataAdapter:
         s = stat or self._intensity_stat
         suffix = f"_{s}"
         cols = [c for c in self.normalised.columns if c.endswith(suffix)]
-        marker_names = [c.replace(suffix, "") for c in cols]
-        mat = self.normalised[cols].copy()
+        
+        if cols:
+            marker_names = [c.replace(suffix, "") for c in cols]
+            mat = self.normalised[cols].copy()
+            mat.columns = marker_names
+        else:
+            # Fallback to base markers if no suffix is found
+            cols = [m for m in self.markers if m in self.normalised.columns]
+            mat = self.normalised[cols].copy()
+            
         mat.index = self.normalised["ObjectNumber"].values
-        mat.columns = marker_names
         return mat
 
     def cell_type_labels(self) -> Optional[pd.Series]:
@@ -367,33 +361,39 @@ class IrisPhenotypeMapper:
         self.target_col = target_col if target_col in df.columns else self._fallback_col(df)
 
     def _fallback_col(self, df: pd.DataFrame) -> str:
-        for c in ("cell_type", "GROUP", "Phenotype", "Label"):
+        for c in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
             if c in df.columns:
                 return c
-        raise ValueError(
-            f"No cell type column found. Available: {list(df.columns)}"
-        )
+        
+        # If still not found, return the last object/string column or just the first column
+        for c in df.columns:
+            if df[c].dtype == object or df[c].dtype.name == 'category':
+                return c
+                
+        return df.columns[0] if len(df.columns) > 0 else "cell_type"
 
     def resolve_ids(self) -> pd.DataFrame:
         """
         Attempt to assign ObjectNumber from mask pixel lookup
         when the DataFrame has Pos_X / Pos_Y coordinates.
+        Always overwrites existing ObjectNumber if spatial coords are present
+        to guarantee alignment with the loaded mask.
 
         Returns the DataFrame with ObjectNumber updated (in-place copy).
         """
         df = self.df.copy()
-        if "ObjectNumber" not in df.columns:
-            if {"Pos_X", "Pos_Y"}.issubset(df.columns):
-                def _lookup(row):
-                    x = int(round(float(row["Pos_X"])))
-                    y = int(round(float(row["Pos_Y"])))
-                    h, w = self.mask.shape
-                    if 0 <= y < h and 0 <= x < w:
-                        return int(self.mask[y, x])
-                    return 0
-                df["ObjectNumber"] = df.apply(_lookup, axis=1)
-            else:
-                df["ObjectNumber"] = np.arange(1, len(df) + 1)
+        if {"Pos_X", "Pos_Y"}.issubset(df.columns):
+            def _lookup(row):
+                x = int(round(float(row["Pos_X"])))
+                y = int(round(float(row["Pos_Y"])))
+                h, w = self.mask.shape
+                if 0 <= y < h and 0 <= x < w:
+                    return int(self.mask[y, x])
+                return 0
+            df["ObjectNumber"] = df.apply(_lookup, axis=1)
+        elif "ObjectNumber" not in df.columns:
+            df["ObjectNumber"] = np.arange(1, len(df) + 1)
+            
         self.df = df
         return df
 
@@ -409,8 +409,7 @@ class IrisPhenotypeMapper:
         if self.target_col not in self.df.columns:
             return {}
 
-        if "ObjectNumber" not in self.df.columns:
-            self.resolve_ids()
+        self.resolve_ids()
 
         # Build a lookup: object_id → cell_type
         id_to_type: Dict[int, str] = dict(

@@ -79,6 +79,14 @@ class MultiSampleService:
             return
 
         ctx.state.master_df = adapter.normalised
+        if "Image" in ctx.state.master_df.columns:
+            ctx.state.master_df["Image"] = (
+                ctx.state.master_df["Image"]
+                .astype(str)
+                .str.replace(".tiff", "", regex=False)
+                .str.replace("_image", "", regex=False)
+            )
+
         ctx.state._data_adapter = adapter          # stash for phenotyper re-use
 
         # Populate marker list from detected markers (if viewer hasn't set them yet)
@@ -86,24 +94,38 @@ class MultiSampleService:
             ctx.state.markers = adapter.markers
             ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
 
-        # Populate cell type reference combo
-        if "cell_type" in adapter.normalised.columns:
+        # Populate cell type reference combo and quick curation dropdown
+        cw = ctx.control_widget
+        cols = adapter.normalised.columns.tolist()
+        
+        if hasattr(cw, "combo_ref"):
+            cw.combo_ref.blockSignals(True)
+            cw.combo_ref.clear()
+            cw.combo_ref.addItems(cols)
+            
+            # Auto-select best guess for cell type column
+            best_col = None
+            for c in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
+                if c in cols:
+                    best_col = c
+                    break
+                    
+            if best_col:
+                cw.combo_ref.setCurrentText(best_col)
+            elif cols:
+                cw.combo_ref.setCurrentText(cols[0])
+                
+            cw.combo_ref.blockSignals(False)
+
+        ref_col = cw.combo_ref.currentText() if hasattr(cw, "combo_ref") else "cell_type"
+        if ref_col in adapter.normalised.columns and hasattr(cw, "combo_quick_type"):
             unique_types = sorted(
-                adapter.normalised["cell_type"].dropna().unique().tolist()
+                [str(t) for t in adapter.normalised[ref_col].dropna().unique()]
             )
-            cw = ctx.control_widget
-            if hasattr(cw, "combo_ref"):
-                cols = adapter.normalised.columns.tolist()
-                cw.combo_ref.blockSignals(True)
-                cw.combo_ref.clear()
-                cw.combo_ref.addItems(cols)
-                cw.combo_ref.setCurrentText("cell_type")
-                cw.combo_ref.blockSignals(False)
-            if hasattr(cw, "combo_quick_type"):
-                cw.combo_quick_type.blockSignals(True)
-                cw.combo_quick_type.clear()
-                cw.combo_quick_type.addItems(unique_types)
-                cw.combo_quick_type.blockSignals(False)
+            cw.combo_quick_type.blockSignals(True)
+            cw.combo_quick_type.clear()
+            cw.combo_quick_type.addItems(unique_types)
+            cw.combo_quick_type.blockSignals(False)
 
         if hasattr(ctx, "control_widget") and hasattr(ctx.control_widget, "lbl_annotation"):
             ctx.control_widget.lbl_annotation.setText(
@@ -117,6 +139,128 @@ class MultiSampleService:
             f"Samples: {adapter.normalised['Image'].nunique():,}"
             if "Image" in adapter.normalised.columns else ""
         )
+
+        # Draw overlays for any samples that were already loaded on the canvas
+        self.update_phenotypes_on_canvas()
+
+    def update_phenotypes_on_canvas(self) -> None:
+        """
+        Scans existing canvas samples and adds phenotype overlays if missing,
+        based on the currently loaded master_df and selected reference column.
+        """
+        ctx = self.ctx
+        if ctx.state.master_df is None or ctx.state.master_df.empty:
+            return
+
+        cw = getattr(ctx, "control_widget", None)
+        ref_col = cw.combo_ref.currentText() if hasattr(cw, "combo_ref") else "cell_type"
+        scale_val = cw.spin_scale.value() if hasattr(cw, "spin_scale") else 1.0
+
+        for sample_name, sample_layers in list(ctx.state.sample_layers_map.items()):
+            mask = ctx.state.masks_map.get(sample_name)
+            if mask is None:
+                continue
+
+            sub_df = pd.DataFrame()
+            if "Image" in ctx.state.master_df.columns:
+                sub_df = ctx.state.master_df[
+                    ctx.state.master_df["Image"] == sample_name
+                ].copy()
+            
+            # Fallback: if empty but there's only one sample on canvas, assume the CSV is for this sample
+            if sub_df.empty and len(ctx.state.sample_layers_map) == 1:
+                sub_df = ctx.state.master_df.copy()
+
+            print(f"DEBUG: sample_name={sample_name}, mask is {'None' if mask is None else 'Present'}, sub_df.shape={sub_df.shape}")
+
+            if sub_df.empty:
+                print(f"DEBUG: sub_df is empty! master_df cols: {ctx.state.master_df.columns.tolist() if ctx.state.master_df is not None else 'None'}")
+                if ctx.state.master_df is not None and "Image" in ctx.state.master_df.columns:
+                    print(f"DEBUG: Unique images in master_df: {ctx.state.master_df['Image'].unique()}")
+                continue
+                
+            # If a bounding box exists, get its translation to align overlays perfectly
+            bbox_lyr = next((l for l in sample_layers if l.name == f"Bounds - {sample_name}"), None)
+            translation = bbox_lyr.translate if bbox_lyr else (0.0, 0.0)
+
+            # Check and add Centroids if they don't exist yet
+            has_centroids = any(l.name == "Centroids" for l in sample_layers)
+            if not has_centroids and {"Pos_X", "Pos_Y"}.issubset(sub_df.columns):
+                coords = sub_df[["Pos_Y", "Pos_X"]].values
+                pts = ctx.viewer.add_points(
+                    coords, name="Centroids", size=5,
+                    visible=True, scale=(scale_val, scale_val),
+                )
+                pts.face_color = "white"
+                pts.translate = translation
+                sample_layers.append(pts)
+                self._register_layer(pts, "Centroids")
+                if "Centroids" not in self._added_master_legends:
+                    ctx.legend_widget.add_ref_row(pts, "Centroids", "#FFFFFF", layer_type="points")
+                    self._added_master_legends.add("Centroids")
+
+            # Remove existing phenotype layers for this sample before adding new ones
+            base_markers = set(ctx.state.markers) if ctx.state.markers else set()
+            layers_to_remove = []
+            for l in list(sample_layers):
+                l_base = l.name.split(" [")[0]
+                if l.__class__.__name__ == 'Image' and l_base not in base_markers:
+                    layers_to_remove.append(l)
+                    
+            for l in layers_to_remove:
+                if l in ctx.viewer.layers:
+                    ctx.viewer.layers.remove(l)
+                if l in sample_layers:
+                    sample_layers.remove(l)
+
+            # Check and add Cell Phenotypes via IrisPhenotypeMapper
+            mapper = IrisPhenotypeMapper(mask, sub_df, target_col=ref_col)
+            layer_data_ref = mapper.get_masks_by_type()
+            
+            print(f"DEBUG: mapper returned layer_data_ref with keys: {list(layer_data_ref.keys())}")
+
+            for type_name in sorted(layer_data_ref.keys()):
+                # Skip if a layer with this phenotype name already exists in this sample's group
+                if any(l.name.split(" [")[0] == type_name for l in sample_layers):
+                    continue
+
+                mask_bin, hex_color = layer_data_ref[type_name]
+                if type_name.lower() in self.CELLTYPE_COLORS:
+                    hex_color = self.CELLTYPE_COLORS[type_name.lower()]
+                
+                colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]])
+                lyr = ctx.viewer.add_image(
+                    mask_bin, name=type_name, opacity=0.8, visible=True,
+                    blending="translucent", colormap=Colormap(colors),
+                    contrast_limits=[0, 1], scale=(scale_val, scale_val),
+                )
+                lyr.translate = translation
+                sample_layers.append(lyr)
+                self._register_layer(lyr, type_name)
+                
+                try:
+                    actual_rgba = (
+                        lyr.colormap.colors[-1]
+                        if hasattr(lyr.colormap, "colors") and lyr.colormap.colors is not None
+                        else lyr.colormap.map([1.0])[0]
+                    )
+                    actual_hex = mcolors.to_hex(actual_rgba)
+                except Exception:
+                    actual_hex = hex_color
+                
+                if type_name not in self._added_master_legends:
+                    ctx.legend_widget.add_ref_ct_row(lyr, type_name, actual_hex)
+                    self._added_master_legends.add(type_name)
+                    
+            # Update the resolved dataframes cache for analytics/export
+            ctx.state.resolved_dfs[sample_name] = sub_df
+            
+        # Rebuild the unified mapped DataFrame
+        all_dfs = [ctx.state.resolved_dfs[sn] for sn in ctx.state.sample_layers_map.keys() if sn in ctx.state.resolved_dfs]
+        if all_dfs:
+            ctx.state.current_mapped_df = pd.concat(all_dfs, ignore_index=True)
+            if hasattr(ctx, "expression_widget"):
+                ctx.expression_widget.set_data(ctx.state.current_mapped_df)
 
     # ── Add Samples to Canvas ─────────────────────────────────────────────────
 
