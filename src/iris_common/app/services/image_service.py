@@ -242,7 +242,12 @@ class ImageService:
 
         if mask_data.ndim == 3:
             for ch in range(mask_data.shape[0]):
-                lname = f"Loaded Mask Ch{ch}" if mask_data.shape[0] > 1 else "Loaded Mask"
+                if ch == 0:
+                    lname = "Nuclear Segmentation"
+                elif ch == 1:
+                    lname = "Cytoplasm Segmentation"
+                else:
+                    lname = f"Segmentation Ch{ch}"
                 lyr = _add_labels(mask_data[ch], lname)
                 if ch > 0:
                     lyr.visible = False
@@ -253,7 +258,7 @@ class ImageService:
             ctx.state.current_mask = mask_data[0]
             ctx.state.masks_map[sample_name] = mask_data[0]
         else:
-            _add_labels(mask_data, "Loaded Mask")
+            _add_labels(mask_data, "Nuclear Segmentation")
             ctx.state.segmentation_results["Loaded"] = {
                 'nuclear': mask_data, 'cytoplasm': None,
             }

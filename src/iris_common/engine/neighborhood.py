@@ -76,33 +76,56 @@ def identify_cellular_neighborhoods(
 
     images = df['Image'].unique() if 'Image' in df.columns else ['Sample']
 
+    row_positions = np.arange(len(df))
     all_profiles = []
-    df_indices = []
+    processed_positions = []
 
     for img in images:
         img_mask = (df['Image'] == img) if 'Image' in df.columns else np.ones(len(df), dtype=bool)
         sub_df = df[img_mask]
+        sub_pos = row_positions[img_mask]
         if sub_df.empty:
             continue
 
         sub_coords = sub_df[[x_col, y_col]].values * microns_per_pixel
+        valid_coords = ~np.isnan(sub_coords).any(axis=1) & ~np.isinf(sub_coords).any(axis=1)
 
-        if len(sub_df) <= k_neighbors:
+        if len(sub_df) <= k_neighbors or not np.any(valid_coords):
             all_profiles.append(np.zeros((len(sub_df), ntypes)))
-            df_indices.extend(sub_df.index)
+            processed_positions.extend(sub_pos)
             continue
 
-        tree = cKDTree(sub_coords)
-        _, neighbor_idxs = tree.query(sub_coords, k=k_neighbors + 1, workers=n_jobs)
-        neighbor_idxs = neighbor_idxs[:, 1:]
+        if not np.all(valid_coords):
+            valid_tree_coords = sub_coords[valid_coords]
+            if len(valid_tree_coords) <= k_neighbors:
+                all_profiles.append(np.zeros((len(sub_df), ntypes)))
+                processed_positions.extend(sub_pos)
+                continue
+            tree = cKDTree(valid_tree_coords)
+            safe_coords = np.where(np.isnan(sub_coords) | np.isinf(sub_coords), 0.0, sub_coords)
+            _, neighbor_idxs = tree.query(safe_coords, k=k_neighbors + 1, workers=n_jobs)
+            valid_pheno = sub_df.loc[sub_df.index[valid_coords], cell_type_col].astype(str).values
+            neighbor_idxs = neighbor_idxs[:, 1:]
+            sub_profiles = np.zeros((len(sub_df), ntypes))
+            for i in range(len(sub_df)):
+                if not valid_coords[i]:
+                    continue
+                n_types_local = valid_pheno[neighbor_idxs[i]]
+                for t in n_types_local:
+                    if t in type_to_idx:
+                        sub_profiles[i, type_to_idx[t]] += 1
+        else:
+            tree = cKDTree(sub_coords)
+            _, neighbor_idxs = tree.query(sub_coords, k=k_neighbors + 1, workers=n_jobs)
+            neighbor_idxs = neighbor_idxs[:, 1:]
 
-        sub_profiles = np.zeros((len(sub_df), ntypes))
-        phenotypes = sub_df[cell_type_col].astype(str).values
-        for i in range(len(sub_df)):
-            n_types_local = phenotypes[neighbor_idxs[i]]
-            for t in n_types_local:
-                if t in type_to_idx:
-                    sub_profiles[i, type_to_idx[t]] += 1
+            sub_profiles = np.zeros((len(sub_df), ntypes))
+            phenotypes = sub_df[cell_type_col].astype(str).values
+            for i in range(len(sub_df)):
+                n_types_local = phenotypes[neighbor_idxs[i]]
+                for t in n_types_local:
+                    if t in type_to_idx:
+                        sub_profiles[i, type_to_idx[t]] += 1
 
         row_sums = sub_profiles.sum(axis=1, keepdims=True)
         sub_profiles = np.divide(
@@ -110,16 +133,13 @@ def identify_cellular_neighborhoods(
         )
 
         all_profiles.append(sub_profiles)
-        df_indices.extend(sub_df.index)
+        processed_positions.extend(sub_pos)
 
     if not all_profiles:
         return df.copy(), np.zeros((1, 1)), []
 
     composition_profiles = np.vstack(all_profiles)
-
-    # Realign profiles to original DataFrame index order
-    sort_idx = np.argsort(df_indices)
-    composition_profiles = composition_profiles[sort_idx]
+    processed_positions = np.array(processed_positions)
 
     if method == "Leiden":
         try:
@@ -165,7 +185,11 @@ def identify_cellular_neighborhoods(
         niche_labels = kmeans.fit_predict(composition_profiles)
         centers = kmeans.cluster_centers_
 
+    final_labels = np.zeros(len(df), dtype=int)
+    final_labels[processed_positions] = niche_labels
+
     updated_df = df.copy()
-    updated_df['Cellular_Neighborhood'] = niche_labels
+    updated_df['Cellular_Neighborhood'] = [f"Niche {lbl}" for lbl in final_labels]
+    updated_df['Cellular_Neighborhood_ID'] = final_labels
 
     return updated_df, centers, unique_types

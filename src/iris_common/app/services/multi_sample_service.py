@@ -38,6 +38,39 @@ from iris_common.widgets.styles import DEFAULT_MARKER_COLORS
 from iris_common.app.services.annotation_service import AnnotationService
 from iris_common.app.services.color_service import ColorService
 
+def get_sample_sub_df(df: pd.DataFrame, sample_name: str) -> pd.DataFrame:
+    """Extract rows belonging to sample_name with robust name matching."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if "Image" not in df.columns:
+        return df.copy()
+
+    # 1. Exact match
+    m = df["Image"].astype(str) == str(sample_name)
+    if m.any():
+        return df[m].copy()
+
+    # 2. Stripped extension/suffix match
+    def _clean(s: str) -> str:
+        s = str(s).strip()
+        for ext in (".tiff", ".tif", "_image", "_mask"):
+            if s.endswith(ext):
+                s = s[:-len(ext)]
+        return s
+
+    target_clean = _clean(sample_name)
+    col_clean = df["Image"].astype(str).map(_clean)
+    m2 = col_clean == target_clean
+    if m2.any():
+        return df[m2].copy()
+
+    # 3. Substring match
+    m3 = col_clean.apply(lambda x: bool(x and target_clean and (x == target_clean or x in target_clean or target_clean in x)))
+    if m3.any():
+        return df[m3].copy()
+
+    return pd.DataFrame()
+
 
 class MultiSampleService:
     """
@@ -92,13 +125,7 @@ class MultiSampleService:
             if mask is None:
                 continue
 
-            sub_df = pd.DataFrame()
-            if "Image" in ctx.state.master_df.columns:
-                sub_df = ctx.state.master_df[
-                    ctx.state.master_df["Image"] == sample_name
-                ].copy()
-            
-            # Fallback: if empty but there's only one sample on canvas, assume the CSV is for this sample
+            sub_df = get_sample_sub_df(ctx.state.master_df, sample_name)
             if sub_df.empty and len(ctx.state.sample_layers_map) == 1:
                 sub_df = ctx.state.master_df.copy()
 
@@ -234,11 +261,9 @@ class MultiSampleService:
                 mask_path = img_path.parent / f"{sample_name}_mask.tiff"
 
                 # ── Sub-DataFrame ─────────────────────────────────────────────
-                sub_df = pd.DataFrame()
-                if master_df_snap is not None and "Image" in master_df_snap.columns:
-                    sub_df = master_df_snap[
-                        master_df_snap["Image"] == sample_name
-                    ].copy()
+                sub_df = get_sample_sub_df(master_df_snap, sample_name)
+                if sub_df.empty and master_df_snap is not None and len(sample_names) == 1:
+                    sub_df = master_df_snap.copy()
 
                 # ── Image ────────────────────────────────────────────────────
                 img_data = []
@@ -320,11 +345,12 @@ class MultiSampleService:
                 sample_h, sample_w = mask_channels[0].shape
                 ctx.state.masks_map[sample_name] = mask_channels[0]
                 for i, m_chan in enumerate(mask_channels):
-                    lname = (
-                        f"Segmentation Ch{i}"
-                        if len(mask_channels) > 1
-                        else "Segmentation Mask"
-                    )
+                    if i == 0:
+                        lname = "Nuclear Segmentation"
+                    elif i == 1:
+                        lname = "Cytoplasm Segmentation"
+                    else:
+                        lname = f"Segmentation Ch{i}"
                     try:
                         seg_lyr = ctx.viewer.add_labels(
                             m_chan, name=lname, opacity=1.0,
@@ -564,13 +590,11 @@ class MultiSampleService:
         self.align_samples_on_canvas(all_loaded)
 
         all_dfs = []
-        for sn in sample_names:
+        for sn in all_loaded:
             if hasattr(ctx.state, "resolved_dfs") and sn in ctx.state.resolved_dfs:
                 df = ctx.state.resolved_dfs[sn]
             elif ctx.state.master_df is not None:
-                df = ctx.state.master_df[
-                    ctx.state.master_df.get("Image", pd.Series()) == sn
-                ].copy() if "Image" in ctx.state.master_df.columns else pd.DataFrame()
+                df = get_sample_sub_df(ctx.state.master_df, sn)
             else:
                 df = pd.DataFrame()
             if not df.empty:

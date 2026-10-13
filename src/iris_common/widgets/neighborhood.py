@@ -14,6 +14,7 @@ import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from qtpy.QtCore import Qt, Signal
+from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -264,6 +265,7 @@ class IrisCellularNeighborhoodsWidget(QWidget):
             id_item = QTableWidgetItem(f"{i}")
             id_item.setFlags(id_item.flags() & ~Qt.ItemIsEditable)
             id_item.setTextAlignment(Qt.AlignCenter)
+            id_item.setForeground(QColor(hex_color))
             self.table_meta.setItem(i, 0, id_item)
 
             name_item = QTableWidgetItem(name_str)

@@ -15,6 +15,7 @@ from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
 from iris_common.engine.neighborhood import identify_cellular_neighborhoods
+from iris_common.app.services.multi_sample_service import get_sample_sub_df
 
 
 class NeighborhoodService:
@@ -29,23 +30,30 @@ class NeighborhoodService:
     def execute_niche_analysis(
         self, k_neighbors: int, n_niches: int, method: str, resolution: float
     ) -> None:
-        """Triggers asynchronous spatial neighborhood clustering."""
+        """Triggers asynchronous spatial neighborhood clustering across all cells."""
         ctx = self.ctx
-        df = ctx.state.current_mapped_df
-        if df is None or df.empty:
-            if ctx.state.master_df is not None and not ctx.state.master_df.empty:
-                df = ctx.state.master_df
-            elif hasattr(ctx.state, "features_df") and ctx.state.features_df is not None and not ctx.state.features_df.empty:
-                df = ctx.state.features_df
-            else:
-                QMessageBox.warning(
-                    ctx.control_widget,
-                    "No Data",
-                    "Load sample data and cell annotations before extracting neighborhoods.",
-                )
-                return
+        df = None
+        # Prioritize master_df so KMeans runs through all cells in the annotation file
+        if ctx.state.master_df is not None and not ctx.state.master_df.empty:
+            df = ctx.state.master_df
+        elif ctx.state.current_mapped_df is not None and not ctx.state.current_mapped_df.empty:
+            df = ctx.state.current_mapped_df
+        elif hasattr(ctx.state, "features_df") and ctx.state.features_df is not None and not ctx.state.features_df.empty:
+            df = ctx.state.features_df
+        else:
+            QMessageBox.warning(
+                ctx.control_widget,
+                "No Data",
+                "Load sample data and cell annotations before extracting neighborhoods.",
+            )
+            return
 
         ref_col = ctx.control_widget.combo_ref.currentText()
+        if not ref_col or ref_col not in df.columns:
+            for fallback in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
+                if fallback in df.columns:
+                    ref_col = fallback
+                    break
         if not ref_col or ref_col not in df.columns:
             QMessageBox.warning(
                 ctx.control_widget,
@@ -90,15 +98,31 @@ class NeighborhoodService:
         """Handles completion of neighborhood computation on main Qt thread."""
         ctx = self.ctx
         updated_df, centers, labels = result
-        ctx.state.current_mapped_df = updated_df
 
-        # Also store into resolved_dfs if present
+        # 1. Propagate clusters across all cells in master_df
+        ctx.state.master_df = updated_df
+
+        # 2. Update current_mapped_df for loaded canvas samples
+        loaded_samples = list(ctx.state.sample_layers_map.keys())
+        if loaded_samples and "Image" in updated_df.columns:
+            matched = []
+            for sn in loaded_samples:
+                sub = get_sample_sub_df(updated_df, sn)
+                if not sub.empty:
+                    matched.append(sub)
+            if matched:
+                ctx.state.current_mapped_df = pd.concat(matched, ignore_index=True)
+            else:
+                ctx.state.current_mapped_df = updated_df
+        else:
+            ctx.state.current_mapped_df = updated_df
+
+        # 3. Store into resolved_dfs for each loaded sample
         if hasattr(ctx.state, "resolved_dfs"):
-            for sname in ctx.state.resolved_dfs.keys():
-                if "Image" in updated_df.columns:
-                    ctx.state.resolved_dfs[sname] = updated_df[updated_df["Image"] == sname]
-                else:
-                    ctx.state.resolved_dfs[sname] = updated_df
+            for sname in list(ctx.state.sample_layers_map.keys()):
+                sub = get_sample_sub_df(updated_df, sname)
+                if not sub.empty:
+                    ctx.state.resolved_dfs[sname] = sub
 
         total_cn = centers.shape[0]
         widget = getattr(ctx, "neighborhood_widget", None)
@@ -108,6 +132,30 @@ class NeighborhoodService:
             self.update_niche_canvas_coloration(widget.niche_metadata, total_cn)
             widget.btn_niche.setText("Extract Spatial Neighborhoods")
             widget.btn_niche.setEnabled(True)
+
+            # Sync palette colors with MultiSampleService so phenotype masks match
+            if hasattr(ctx, "multi_sample_svc"):
+                for idx, item in widget.niche_metadata.items():
+                    c_name = item["name"]
+                    c_hex = item["color"]
+                    ctx.multi_sample_svc.CELLTYPE_COLORS[c_name.lower()] = c_hex
+                    ctx.multi_sample_svc.CELLTYPE_COLORS[f"niche {idx}"] = c_hex
+                    ctx.multi_sample_svc.CELLTYPE_COLORS[str(idx)] = c_hex
+
+        # 4. Reflect the cluster directly to the phenotype mask for visualization
+        cw = getattr(ctx, "control_widget", None)
+        if cw is not None and hasattr(cw, "combo_ref"):
+            items = [cw.combo_ref.itemText(i) for i in range(cw.combo_ref.count())]
+            if "Cellular_Neighborhood" not in items:
+                cw.combo_ref.addItem("Cellular_Neighborhood")
+
+            if cw.combo_ref.currentText() == "Cellular_Neighborhood":
+                if hasattr(ctx, "multi_sample_svc"):
+                    ctx.multi_sample_svc.update_phenotypes_on_canvas()
+            else:
+                cw.combo_ref.setCurrentText("Cellular_Neighborhood")
+        elif hasattr(ctx, "multi_sample_svc"):
+            ctx.multi_sample_svc.update_phenotypes_on_canvas()
 
     def _on_niche_error(self, exc: Exception) -> None:
         """Handles background calculation error."""
@@ -170,11 +218,10 @@ class NeighborhoodService:
             if mask is None:
                 continue
 
-            if 'Image' in ctx.state.current_mapped_df.columns:
-                sub_df = ctx.state.current_mapped_df[
-                    ctx.state.current_mapped_df['Image'] == sample_name
-                ]
-            else:
+            sub_df = get_sample_sub_df(ctx.state.current_mapped_df, sample_name)
+            if sub_df.empty and ctx.state.master_df is not None:
+                sub_df = get_sample_sub_df(ctx.state.master_df, sample_name)
+            if sub_df.empty and len(sample_names) == 1:
                 sub_df = ctx.state.current_mapped_df
 
             if sub_df.empty or 'Cellular_Neighborhood' not in sub_df.columns:
@@ -185,15 +232,24 @@ class NeighborhoodService:
                 hex_color = item["color"]
                 layer_title = f"{current_param_prefix}{niche_name}"
 
-                # Extract cell IDs for this niche
-                niche_cells = sub_df[sub_df['Cellular_Neighborhood'] == int(idx)]
+                # Extract cell IDs for this niche (matching by index, name, or string)
+                niche_cells = sub_df[
+                    (sub_df['Cellular_Neighborhood'] == idx) |
+                    (sub_df['Cellular_Neighborhood'] == f"Niche {idx}") |
+                    (sub_df['Cellular_Neighborhood'] == niche_name) |
+                    (sub_df['Cellular_Neighborhood'].astype(str) == str(idx))
+                ]
                 if niche_cells.empty:
                     continue
 
                 if 'ObjectNumber' in niche_cells.columns:
-                    niche_objs = niche_cells['ObjectNumber'].values
+                    niche_objs = pd.to_numeric(niche_cells['ObjectNumber'], errors='coerce').fillna(0).astype(np.int64).values
                 else:
                     niche_objs = niche_cells.index.values + 1
+
+                niche_objs = niche_objs[niche_objs > 0]
+                if len(niche_objs) == 0:
+                    continue
 
                 niche_mask = np.isin(mask, niche_objs).astype(np.uint8)
                 if not np.any(niche_mask):

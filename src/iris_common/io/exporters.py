@@ -131,8 +131,23 @@ def export_neighborhood_composition_matrix(
 
         export_df = cell_data[export_cols].copy()
         if 'Cellular_Neighborhood' in export_df.columns:
-            export_df['Neighborhood_Name'] = export_df['Cellular_Neighborhood'].map(
-                lambda x: niche_metadata.get(x, {}).get("name", f"Niche {x}")
-            )
+            def _map_name(x):
+                if x in niche_metadata:
+                    return niche_metadata[x].get("name", f"Niche {x}")
+                if isinstance(x, str) and x.startswith("Niche "):
+                    try:
+                        idx = int(x.replace("Niche ", "").strip())
+                        if idx in niche_metadata:
+                            return niche_metadata[idx].get("name", x)
+                    except ValueError:
+                        pass
+                try:
+                    idx = int(x)
+                    if idx in niche_metadata:
+                        return niche_metadata[idx].get("name", f"Niche {idx}")
+                except (ValueError, TypeError):
+                    pass
+                return str(x)
+            export_df['Neighborhood_Name'] = export_df['Cellular_Neighborhood'].map(_map_name)
         export_df.to_csv(str(cell_filepath), index=False)
 
