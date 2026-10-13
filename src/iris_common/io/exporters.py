@@ -93,3 +93,46 @@ def export_phenotyping_results(
     and optionally per-method probability columns.
     """
     export_features_csv(filepath, df, sample_name)
+
+
+def export_neighborhood_composition_matrix(
+    filepath: Path,
+    centers: np.ndarray,
+    type_labels: list,
+    niche_metadata: dict,
+    cell_data: Optional[pd.DataFrame] = None,
+) -> None:
+    """
+    Standardizes and writes a Cell-Type Proportion vs Niche Matrix to disk.
+    Optionally exports the secondary per-cell assignment CSV.
+    """
+    if centers is None or type_labels is None:
+        raise ValueError("Cannot serialize an empty or uninitialized composition matrix.")
+
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    row_names = [niche_metadata.get(i, {}).get("name", f"Niche {i}") for i in range(centers.shape[0])]
+    df_export = pd.DataFrame(centers, index=row_names, columns=type_labels)
+    df_export.index.name = "Neighborhood_Label"
+    df_export.to_csv(str(filepath))
+
+    # Save secondary per-cell mapping table if cell_data is provided
+    if cell_data is not None and not cell_data.empty:
+        cell_filepath = filepath.with_name(filepath.stem + "_cell_assignments" + filepath.suffix)
+        base_cols = ['Image', 'ObjectNumber', 'Pos_X', 'Pos_Y']
+        pheno_col = next((col for col in ['cell_type', 'Verified_CellType', 'CellType'] if col in cell_data.columns), None)
+        if pheno_col and pheno_col not in base_cols:
+            base_cols.append(pheno_col)
+
+        export_cols = [c for c in base_cols if c in cell_data.columns]
+        if 'Cellular_Neighborhood' in cell_data.columns:
+            export_cols.append('Cellular_Neighborhood')
+
+        export_df = cell_data[export_cols].copy()
+        if 'Cellular_Neighborhood' in export_df.columns:
+            export_df['Neighborhood_Name'] = export_df['Cellular_Neighborhood'].map(
+                lambda x: niche_metadata.get(x, {}).get("name", f"Niche {x}")
+            )
+        export_df.to_csv(str(cell_filepath), index=False)
+

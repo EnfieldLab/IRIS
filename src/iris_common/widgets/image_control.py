@@ -32,6 +32,8 @@ class ImageControlWidget(QWidget):
     loadCellTypeColorTriggered = Signal(str)
     loadAnnotationDataTriggered = Signal(str)
     exportUpdatedPhenotypesTriggered = Signal()
+    autoSegmentTriggered = Signal()
+    saveBoundsTriggered = Signal()
     viewLockToggled = Signal(bool)
     colChanged = Signal()
 
@@ -298,6 +300,15 @@ class ImageControlWidget(QWidget):
         q_row.addWidget(self.combo_quick_type)
         layout.addLayout(q_row)
         
+        segment_save_layout = QHBoxLayout()
+        self.btn_auto_segment = QPushButton("Auto-Segment Boundary")
+        self.btn_auto_segment.clicked.connect(lambda: self.autoSegmentTriggered.emit())
+        self.btn_save_bounds = QPushButton("Save Tissue Boundary")
+        self.btn_save_bounds.clicked.connect(lambda: self.saveBoundsTriggered.emit())
+        segment_save_layout.addWidget(self.btn_auto_segment)
+        segment_save_layout.addWidget(self.btn_save_bounds)
+        layout.addLayout(segment_save_layout)
+
         self.btn_export_anno = QPushButton("Export Updated Phenotypes")
         self.btn_export_anno.clicked.connect(lambda: self.exportUpdatedPhenotypesTriggered.emit())
         layout.addWidget(self.btn_export_anno)

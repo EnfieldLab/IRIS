@@ -356,6 +356,8 @@ class IrisPhenotypeMapper:
         df: pd.DataFrame,
         target_col: str = "cell_type",
     ) -> None:
+        if mask.ndim > 2:
+            mask = mask[0] if mask.shape[0] < mask.shape[-1] else mask[..., 0]
         self.mask = mask
         self.df = df.copy()
         self.target_col = target_col if target_col in df.columns else self._fallback_col(df)
@@ -376,24 +378,51 @@ class IrisPhenotypeMapper:
         """
         Attempt to assign ObjectNumber from mask pixel lookup
         when the DataFrame has Pos_X / Pos_Y coordinates.
-        Always overwrites existing ObjectNumber if spatial coords are present
-        to guarantee alignment with the loaded mask.
-
-        Returns the DataFrame with ObjectNumber updated (in-place copy).
+        Ensures ObjectNumber corresponds to non-zero segmented labels.
         """
         df = self.df.copy()
+        h, w = self.mask.shape[-2], self.mask.shape[-1]
+
+        # Check if df already has a valid non-zero ObjectNumber column
+        has_valid_obj = (
+            "ObjectNumber" in df.columns
+            and pd.to_numeric(df["ObjectNumber"], errors="coerce").fillna(0).gt(0).any()
+        )
+
         if {"Pos_X", "Pos_Y"}.issubset(df.columns):
             def _lookup(row):
-                x = int(round(float(row["Pos_X"])))
-                y = int(round(float(row["Pos_Y"])))
-                h, w = self.mask.shape
+                try:
+                    x = int(round(float(row["Pos_X"])))
+                    y = int(round(float(row["Pos_Y"])))
+                except (ValueError, TypeError):
+                    return 0
+
                 if 0 <= y < h and 0 <= x < w:
-                    return int(self.mask[y, x])
+                    val = int(self.mask[y, x])
+                    if val > 0:
+                        return val
+                    # Centroid may be slightly outside the boundary of the mask; search a 3x3 local window
+                    y_min, y_max = max(0, y - 1), min(h, y + 2)
+                    x_min, x_max = max(0, x - 1), min(w, x + 2)
+                    sub = self.mask[y_min:y_max, x_min:x_max]
+                    nz = sub[sub > 0]
+                    if len(nz) > 0:
+                        return int(nz[0])
                 return 0
-            df["ObjectNumber"] = df.apply(_lookup, axis=1)
+
+            lookup_ids = df.apply(_lookup, axis=1)
+
+            if has_valid_obj:
+                df["ObjectNumber"] = np.where(
+                    lookup_ids > 0,
+                    lookup_ids,
+                    pd.to_numeric(df["ObjectNumber"], errors="coerce").fillna(0).astype(int),
+                )
+            else:
+                df["ObjectNumber"] = lookup_ids
         elif "ObjectNumber" not in df.columns:
             df["ObjectNumber"] = np.arange(1, len(df) + 1)
-            
+
         self.df = df
         return df
 
@@ -404,38 +433,39 @@ class IrisPhenotypeMapper:
         Returns
         -------
         dict mapping cell_type → (binary_mask, hex_colour)
-        where binary_mask is bool array (H, W), 1 = cell of that type.
+        where binary_mask is uint8 array (H, W), 1 = cell of that type, 0 = background.
         """
         if self.target_col not in self.df.columns:
             return {}
 
         self.resolve_ids()
 
-        # Build a lookup: object_id → cell_type
-        id_to_type: Dict[int, str] = dict(
-            zip(
-                self.df["ObjectNumber"].astype(int),
-                self.df[self.target_col].astype(str),
-            )
+        unique_types = sorted(
+            [str(ct) for ct in self.df[self.target_col].dropna().unique()]
         )
-
-        unique_types = sorted(set(id_to_type.values()))
         palette = {
             ct: self.DEFAULT_COLORS[i % len(self.DEFAULT_COLORS)]
             for i, ct in enumerate(unique_types)
         }
 
-        h, w = self.mask.shape
+        # Filter strictly for cells with positive ObjectNumber (oid > 0)
+        # Background is ALWAYS 0 in segmentation masks and must NEVER be mapped as a cell!
+        valid_df = self.df[pd.to_numeric(self.df["ObjectNumber"], errors="coerce").fillna(0) > 0]
+
         result: Dict[str, Tuple[np.ndarray, str]] = {}
+        h, w = self.mask.shape[-2], self.mask.shape[-1]
 
         for cell_type in unique_types:
-            # Collect all object IDs that belong to this type
-            target_ids = np.array(
-                [oid for oid, ct in id_to_type.items() if ct == cell_type],
-                dtype=np.int64,
-            )
-            # Vectorised: isin check on the whole mask
-            binary = np.isin(self.mask, target_ids).astype(np.uint8)
+            type_rows = valid_df[valid_df[self.target_col].astype(str) == cell_type]
+            target_ids = type_rows["ObjectNumber"].astype(np.int64).unique()
+            # Ensure target_ids strictly excludes 0 (background)
+            target_ids = target_ids[target_ids > 0]
+
+            if len(target_ids) == 0:
+                binary = np.zeros((h, w), dtype=np.uint8)
+            else:
+                binary = np.isin(self.mask, target_ids).astype(np.uint8)
+
             result[cell_type] = (binary, palette[cell_type])
 
         return result

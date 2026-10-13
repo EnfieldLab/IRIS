@@ -163,6 +163,40 @@ class ImageService:
         if mask_path.exists():
             self.load_and_display_mask(mask_path, sample_name, scale_val)
 
+        # Auto-load companion tissue boundary if it exists
+        boundary_path = img_path.with_name(f"{sample_name}_boundary.json")
+        if boundary_path.exists():
+            try:
+                import json
+                with open(boundary_path, "r", encoding="utf-8") as fh:
+                    saved = json.load(fh)
+                hull_verts = np.array(saved["vertices"])
+                lname = f"Boundary - {sample_name}"
+                t_lyr = ctx.viewer.add_shapes(
+                    [hull_verts], shape_type="polygon", name=lname,
+                    edge_width=2, edge_color="white", face_color="white",
+                    opacity=0.5, scale=(scale_val, scale_val),
+                )
+                ctx.legend_widget.add_ref_row(t_lyr, lname, "#FFFFFF", layer_type="shapes")
+                if sample_name not in ctx.state.sample_layers_map:
+                    ctx.state.sample_layers_map[sample_name] = []
+                ctx.state.sample_layers_map[sample_name].append(t_lyr)
+
+                if ctx.state.current_mask is not None:
+                    m_shape = ctx.state.current_mask.shape
+                    from iris_common.engine.geometry import recompute_area_from_vertices
+                    area_val, _ = recompute_area_from_vertices(hull_verts, m_shape, scale_val)
+                    ctx.state.areas_map[sample_name] = area_val
+
+                    @t_lyr.events.data.connect
+                    def _on_single_polygon_change(event):
+                        if len(t_lyr.data) > 0:
+                            s_val = ctx.control_widget.spin_scale.value()
+                            new_a, _ = recompute_area_from_vertices(t_lyr.data[0], m_shape, s_val)
+                            ctx.state.areas_map[sample_name] = new_a
+            except Exception as exc:
+                print(f"[IRIS-Viewer] Failed to load boundary for {sample_name}: {exc}")
+
         h, w = raw_image.shape[-2], raw_image.shape[-1]
         ctx.control_widget.update_dashboard(
             image_dims=f"{w} × {h}",
@@ -235,9 +269,10 @@ class ImageService:
     # ── Channel Colours ────────────────────────────────────────────────────
 
     def load_channel_colors(self, filepath: str) -> None:
-        """Import a marker→colour mapping from a CSV/XLSX and update legend rows."""
+        """Import a marker→colour mapping from a CSV/XLSX and update legend rows and canvas layers."""
         ctx = self.ctx
         try:
+            import re
             import pandas as pd
             path_obj = Path(filepath)
             df = (
@@ -245,17 +280,26 @@ class ImageService:
                 if path_obj.suffix.lower() == '.xlsx'
                 else pd.read_csv(filepath)
             )
-            df.columns = [str(c).lower().strip() for c in df.columns]
+            col_norm = {re.sub(r'[^a-z0-9]', '', str(c).lower()): c for c in df.columns}
+            m_col = next((col_norm[k] for k in ["markers", "marker", "channel", "channels", "target", "targets", "name"] if k in col_norm), None)
+            c_col = next((col_norm[k] for k in ["colors", "color", "colours", "colour", "hex", "code"] if k in col_norm), None)
 
-            if 'markers' not in df.columns or 'colors' not in df.columns:
+            if m_col is None or c_col is None:
+                QMessageBox.warning(
+                    ctx.control_widget, "Invalid Format",
+                    f"File must contain a marker column (e.g. 'markers', 'marker') and a color column (e.g. 'colors', 'color').\nFound columns: {list(df.columns)}",
+                )
                 return
 
             color_map: dict = {}
             for _, row in df.iterrows():
-                m = str(row['markers']).strip().lower()
-                c = str(row['colors']).strip()
-                if pd.notna(row['markers']) and pd.notna(row['colors']) and mcolors.is_color_like(c):
-                    color_map[m] = mcolors.to_hex(c)
+                val_m = row[m_col]
+                val_c = row[c_col]
+                if pd.notna(val_m) and pd.notna(val_c):
+                    m = str(val_m).strip().lower()
+                    c = str(val_c).strip()
+                    if mcolors.is_color_like(c):
+                        color_map[m] = mcolors.to_hex(c)
 
             updated = 0
             for marker in ctx.state.markers:
@@ -268,9 +312,18 @@ class ImageService:
                             updated += 1
                             break
 
+            for layer in ctx.viewer.layers:
+                layer_base = layer.name.split(" [")[0]
+                if layer_base.lower() in color_map and hasattr(layer, "colormap"):
+                    hex_c = color_map[layer_base.lower()]
+                    try:
+                        layer.colormap = hex_c
+                    except Exception:
+                        pass
+
             QMessageBox.information(
                 ctx.control_widget, "Colours Updated",
-                f"Updated {updated} marker colour(s)."
+                f"Updated {len(color_map)} marker colour(s)."
             )
         except Exception as exc:
             QMessageBox.critical(

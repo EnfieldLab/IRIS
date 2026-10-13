@@ -36,8 +36,11 @@ from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
 from iris_viewer.widgets.feature_panel import FeaturePanelWidget
 from iris_common.widgets.legend import ViewerLegendWidget
 from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
+from iris_common.widgets.neighborhood import IrisCellularNeighborhoodsWidget
 
-from iris_viewer.app.services import BatchService, ReviewService
+from iris_viewer.app.services import (
+    BatchService, ReviewService, BoundaryService, NeighborhoodService
+)
 from iris_common.app.services.image_service import ImageService
 from iris_common.app.services.multi_sample_service import MultiSampleService
 from iris_viewer.app.services.curation_service import CurationService
@@ -74,21 +77,24 @@ class ViewerController:
             pass
 
         # ── Widgets ───────────────────────────────────────────────────────
-        self.control_widget     = ImageControlWidget(viewer=self.viewer)
-        self.segmentation_panel = SegmentationPanelWidget()
-        self.consensus_panel    = ConsensusPanelWidget()
-        self.feature_panel      = FeaturePanelWidget()
-        self.legend_widget      = ViewerLegendWidget(self.viewer)
-        self.comparison_widget  = self.control_widget.comparison_widget
+        self.control_widget      = ImageControlWidget(viewer=self.viewer)
+        self.segmentation_panel  = SegmentationPanelWidget()
+        self.consensus_panel     = ConsensusPanelWidget()
+        self.feature_panel       = FeaturePanelWidget()
+        self.legend_widget       = ViewerLegendWidget(self.viewer)
+        self.comparison_widget   = self.control_widget.comparison_widget
+        self.neighborhood_widget = IrisCellularNeighborhoodsWidget()
+        self.neighborhood_widget.legend_widget_ref = self.legend_widget
 
         from qtpy.QtWidgets import QDockWidget
 
         for widget, name in [
-            (self.control_widget,     "Control"),
-            (self.comparison_widget,  "TMA"),
-            (self.segmentation_panel, "Segmentation"),
-            (self.consensus_panel,    "Consensus"),
-            (self.feature_panel,      "Features"),
+            (self.control_widget,      "Control"),
+            (self.comparison_widget,   "TMA"),
+            (self.segmentation_panel,  "Segmentation"),
+            (self.consensus_panel,     "Consensus"),
+            (self.feature_panel,       "Features"),
+            (self.neighborhood_widget, "Neighborhoods"),
         ]:
             self.viewer.window.add_dock_widget(widget, name=name, area="right")
             
@@ -102,6 +108,7 @@ class ViewerController:
         qt.tabifyDockWidget(dw["TMA"].parent(),           dw["Segmentation"].parent())
         qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
         qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
+        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Neighborhoods"].parent())
         dw["Control"].parent().raise_()
 
         # Tabify Legend with napari's layer list
@@ -138,6 +145,7 @@ class ViewerController:
             feature_panel=self.feature_panel,
             legend_widget=self.legend_widget,
             comparison_widget=self.comparison_widget,
+            neighborhood_widget=self.neighborhood_widget,
             added_legend_entries=self.added_legend_entries,  # same set object
             active_workers=self._active_workers,             # same list object
             flagged_cells=[],
@@ -150,6 +158,8 @@ class ViewerController:
         self.review_svc       = ReviewService(self._ctx)
         self.multi_sample_svc = MultiSampleService(self._ctx)
         self.curation_svc     = CurationService(self._ctx)
+        self.boundary_svc     = BoundaryService(self._ctx)
+        self.neighborhood_svc = NeighborhoodService(self._ctx)
 
         # ── Replace Napari Welcome Text ───────────────────────────────────────
         from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
@@ -239,6 +249,7 @@ class ViewerController:
         self._bind_feature_signals()
         self._bind_multi_sample_signals()
         self._bind_curation_signals()
+        self._bind_neighborhood_signals()
 
     # ── Configuration ──────────────────────────────────────────────────────
 
@@ -259,6 +270,8 @@ class ViewerController:
         cw.scaleFactorChanged.connect(self.image_svc.update_scale)
         cw.viewLockToggled.connect(self._toggle_view_lock)
         cw.loadAnnotationDataTriggered.connect(self.multi_sample_svc.set_master_file)
+        cw.autoSegmentTriggered.connect(self.boundary_svc.auto_segment_boundary)
+        cw.saveBoundsTriggered.connect(self.boundary_svc.save_sample_boundaries)
         cw.exportMaskTriggered.connect(self._export_mask)
         cw.exportFeaturesTriggered.connect(self._export_features)
         cw.exportConfidenceTriggered.connect(self._export_confidence)
@@ -300,25 +313,33 @@ class ViewerController:
         self.viewer.mouse_drag_callbacks.append(self.curation_svc.on_right_click)
         self.viewer.mouse_drag_callbacks.append(self.curation_svc.on_quick_curate_click)
 
+    def _bind_neighborhood_signals(self) -> None:
+        """Wire the IrisCellularNeighborhoodsWidget signals to NeighborhoodService."""
+        nw = self.neighborhood_widget
+        nw.runNicheAnalysis.connect(self.neighborhood_svc.execute_niche_analysis)
+        nw.nicheMetadataChanged.connect(self.neighborhood_svc.update_niche_canvas_coloration)
+
 
     def _load_colors_smart(self, filepath: str) -> None:
+        import re
         import pandas as pd
         from pathlib import Path
         path_obj = Path(filepath)
         try:
             df = pd.read_excel(filepath) if path_obj.suffix.lower() in ('.xlsx', '.xls') else pd.read_csv(filepath)
-            cols = [str(c).lower().strip() for c in df.columns]
+            cols = [re.sub(r'[^a-z0-9]', '', str(c).lower()) for c in df.columns]
         except Exception as e:
             from qtpy.QtWidgets import QMessageBox
             QMessageBox.critical(self.control_widget, "Error", f"Failed to read file:\n{e}")
             return
             
-        has_markers = 'markers' in cols and 'colors' in cols
-        has_celltypes = 'celltypes' in cols and 'colors' in cols
+        has_color = any(k in cols for k in ['colors', 'color', 'colours', 'colour', 'hex', 'code'])
+        has_markers = has_color and any(k in cols for k in ['markers', 'marker', 'channel', 'channels', 'target', 'targets'])
+        has_celltypes = has_color and any(k in cols for k in ['celltypes', 'celltype', 'phenotype', 'phenotypes', 'label', 'labels', 'cluster', 'clusters'])
         
         if not has_markers and not has_celltypes:
             from qtpy.QtWidgets import QMessageBox
-            QMessageBox.warning(self.control_widget, "Invalid Format", "File must contain 'colors' and either 'markers' or 'celltypes'.")
+            QMessageBox.warning(self.control_widget, "Invalid Format", "File must contain a color column and either marker or cell type names.")
             return
             
         if has_markers:

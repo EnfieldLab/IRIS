@@ -240,32 +240,13 @@ class MultiSampleService:
                         master_df_snap["Image"] == sample_name
                     ].copy()
 
-                # Determine crop bounds from sub_df
-                crop_y_min, crop_y_max = None, None
-                crop_x_min, crop_x_max = None, None
-                pad = 20
-                if not sub_df.empty:
-                    crop_y_min = max(0, int(sub_df["Pos_Y"].min()) - pad)
-                    crop_y_max = int(sub_df["Pos_Y"].max()) + pad
-                    crop_x_min = max(0, int(sub_df["Pos_X"].min()) - pad)
-                    crop_x_max = int(sub_df["Pos_X"].max()) + pad
-
                 # ── Image ────────────────────────────────────────────────────
                 img_data = []
+                raw = None
                 if img_path.exists():
                     raw = tifffile.imread(str(img_path))
                     if raw.ndim == 2:
                         raw = raw[np.newaxis]
-                    
-                    if crop_y_min is None:
-                        crop_y_min, crop_x_min = 0, 0
-                        crop_y_max, crop_x_max = raw.shape[-2], raw.shape[-1]
-                    else:
-                        crop_y_max = min(raw.shape[-2], crop_y_max)
-                        crop_x_max = min(raw.shape[-1], crop_x_max)
-
-                    # Crop
-                    raw = raw[..., crop_y_min:crop_y_max, crop_x_min:crop_x_max]
 
                     for i, m in enumerate(markers_snap):
                         if i >= raw.shape[0]:
@@ -282,17 +263,9 @@ class MultiSampleService:
                 if mask_path.exists():
                     mask_raw = tifffile.imread(str(mask_path)).astype(np.uint32)
                     if mask_raw.ndim == 2:
-                        mask_raw = mask_raw[np.newaxis]
-                    
-                    if crop_y_min is not None and crop_y_max is not None:
-                        mask_raw = mask_raw[..., crop_y_min:crop_y_max, crop_x_min:crop_x_max]
-                        
-                    mask_channels = [mask_raw[i] for i in range(mask_raw.shape[0])]
-
-                # ── Shift Coordinates ─────────────────────────────────────────
-                if not sub_df.empty and crop_y_min is not None:
-                    sub_df["Pos_Y"] -= crop_y_min
-                    sub_df["Pos_X"] -= crop_x_min
+                        mask_channels = [mask_raw]
+                    else:
+                        mask_channels = [mask_raw[i] for i in range(mask_raw.shape[0])]
 
                 results.append((sample_name, img_data, mask_channels, sub_df, ref_col_text, raw))
             return results
@@ -472,6 +445,8 @@ class MultiSampleService:
 
             # ── Auto-load saved boundary ──────────────────────────────────────
             boundary_path = ctx.state.file_map.get(sample_name)
+            if not boundary_path and ctx.state.image_dir:
+                boundary_path = Path(ctx.state.image_dir) / f"{sample_name}_image.tiff"
             if boundary_path:
                 self._try_load_saved_boundary(
                     sample_name, boundary_path, mask_channels, scale_val, sample_layers
@@ -515,13 +490,8 @@ class MultiSampleService:
             sy, sx = bbox_lyr.scale
             h = (max_y - min_y) * sy
             w = (max_x - min_x) * sx
-            if s_name in ctx.state.resolved_dfs and not ctx.state.resolved_dfs[s_name].empty:
-                df = ctx.state.resolved_dfs[s_name]
-                native_cy = df["Pos_Y"].mean()
-                native_cx = df["Pos_X"].mean()
-            else:
-                native_cy = (min_y + max_y) / 2.0
-                native_cx = (min_x + max_x) / 2.0
+            native_cy = (min_y + max_y) / 2.0
+            native_cx = (min_x + max_x) / 2.0
 
             match = re.search(r"_r(\d+)c(\d+)", s_name, re.IGNORECASE)
             if match:
@@ -564,6 +534,12 @@ class MultiSampleService:
             ty = target_y[s["r"]] - s["native_cy"] * s["scale_y"]
             tx = target_x[s["c"]] - s["native_cx"] * s["scale_x"]
             s["bbox_lyr"].translate = (ty, tx)
+
+            # Explicitly sync all sibling layers for this sample to guarantee exact alignment
+            layers = ctx.state.sample_layers_map.get(s["name"], [])
+            for lyr in layers:
+                if lyr in ctx.viewer.layers and lyr is not s["bbox_lyr"]:
+                    lyr.translate = (ty, tx)
 
     # ── Clear Canvas ──────────────────────────────────────────────────────────
 
@@ -611,11 +587,11 @@ class MultiSampleService:
         self, sample_name, img_path, mask_channels, scale_val, sample_layers
     ) -> None:
         ctx = self.ctx
-        boundary_json = img_path.parent / f"{sample_name}_boundary.json"
+        boundary_json = Path(img_path).parent / f"{sample_name}_boundary.json"
         if not boundary_json.exists():
             return
         try:
-            with open(boundary_json) as fh:
+            with open(boundary_json, "r", encoding="utf-8") as fh:
                 saved = json.load(fh)
             hull_verts = np.array(saved["vertices"])
             lname = f"Boundary - {sample_name}"
@@ -630,9 +606,27 @@ class MultiSampleService:
             if bounds_lyr is not None:
                 t_lyr.translate = bounds_lyr.translate
             ctx.legend_widget.add_ref_row(t_lyr, lname, "#FFFFFF", layer_type="shapes")
-            sample_layers.append(t_lyr)
+            if t_lyr not in sample_layers:
+                sample_layers.append(t_lyr)
+
+            if mask_channels:
+                m_shape = (
+                    (mask_channels[0].shape[-2], mask_channels[0].shape[-1])
+                    if mask_channels[0].ndim >= 2
+                    else mask_channels[0].shape
+                )
+                from iris_common.engine.geometry import recompute_area_from_vertices
+                area_val, _ = recompute_area_from_vertices(hull_verts, m_shape, scale_val)
+                ctx.state.areas_map[sample_name] = area_val
+
+                @t_lyr.events.data.connect
+                def _on_polygon_change(event):
+                    if len(t_lyr.data) > 0:
+                        s_val = ctx.control_widget.spin_scale.value()
+                        new_a, _ = recompute_area_from_vertices(t_lyr.data[0], m_shape, s_val)
+                        ctx.state.areas_map[sample_name] = new_a
         except Exception as exc:
-            print(f"[MultiSampleService] Failed to load boundary for {sample_name}: {exc}")
+            print(f"[IRIS-Viewer] Failed to load boundary for {sample_name}: {exc}")
 
     # ── Layer registration & sync ─────────────────────────────────────────────
 

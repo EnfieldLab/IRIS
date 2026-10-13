@@ -11,6 +11,8 @@ from .exporters import (
     export_features_csv,
     export_confidence_map,
     export_batch_summary,
+    export_phenotyping_results,
+    export_neighborhood_composition_matrix,
 )
 
 __all__ = [
@@ -23,4 +25,6 @@ __all__ = [
     "export_features_csv",
     "export_confidence_map",
     "export_batch_summary",
+    "export_phenotyping_results",
+    "export_neighborhood_composition_matrix",
 ]

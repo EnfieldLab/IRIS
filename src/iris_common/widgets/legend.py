@@ -135,6 +135,8 @@ class ViewerLegendWidget(QWidget):
         self.channel_group, self.channel_layout, self.channel_rows = self._create_group("Channels")
         self.seg_group, self.seg_layout, self.seg_rows = self._create_group("Segmentation Masks")
         self.consensus_group, self.consensus_layout, self.consensus_rows = self._create_group("Consensus")
+        self.ref_ct_group, self.ref_ct_layout, self.ref_ct_rows = self._create_group("Phenotypes")
+        self.cn_group, self.cn_layout, self.cn_rows = self._create_group("Cellular Neighborhoods")
 
     def _create_group(self, title_text: str):
         """Create a collapsible group with Show/Hide All buttons."""
@@ -219,15 +221,18 @@ class ViewerLegendWidget(QWidget):
     def add_consensus_row(self, layer, name: str, initial_color: str):
         self._add_layer_row(layer, name, initial_color, self.consensus_group, self.consensus_layout, self.consensus_rows, layer_type='labels')
 
+    def add_cn_row(self, layer, name: str, initial_color: str, layer_type: str = 'image'):
+        self._add_layer_row(layer, name, initial_color, self.cn_group, self.cn_layout, self.cn_rows, layer_type=layer_type)
+
     # ── Aliases for Services ─────────────────────────────────────────
     def add_grouped_channel_row(self, layer, name: str, initial_color: str, group_name: str="Channels"):
         self.add_channel_row(layer, name, initial_color)
-        
+
     def add_ref_row(self, layer, name: str, initial_color: str, layer_type: str="labels"):
         self._add_layer_row(layer, name, initial_color, self.seg_group, self.seg_layout, self.seg_rows, layer_type=layer_type)
-        
+
     def add_ref_ct_row(self, layer, name: str, initial_color: str):
-        self._add_layer_row(layer, name, initial_color, self.seg_group, self.seg_layout, self.seg_rows, layer_type='image')
+        self._add_layer_row(layer, name, initial_color, self.ref_ct_group, self.ref_ct_layout, self.ref_ct_rows, layer_type='image')
 
     def remove_row(self, layer_name: str):
         """Remove a specific row by its layer name."""
@@ -235,6 +240,8 @@ class ViewerLegendWidget(QWidget):
             (self.channel_group, self.channel_layout, self.channel_rows),
             (self.seg_group, self.seg_layout, self.seg_rows),
             (self.consensus_group, self.consensus_layout, self.consensus_rows),
+            (self.ref_ct_group, self.ref_ct_layout, self.ref_ct_rows),
+            (self.cn_group, self.cn_layout, self.cn_rows),
         ]:
             for row in list(row_list):
                 if row.name == layer_name:
@@ -250,6 +257,8 @@ class ViewerLegendWidget(QWidget):
             (self.channel_group, self.channel_layout, self.channel_rows),
             (self.seg_group, self.seg_layout, self.seg_rows),
             (self.consensus_group, self.consensus_layout, self.consensus_rows),
+            (self.ref_ct_group, self.ref_ct_layout, self.ref_ct_rows),
+            (self.cn_group, self.cn_layout, self.cn_rows),
         ]:
             row_list.clear()
             while layout.count():

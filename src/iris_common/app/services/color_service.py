@@ -48,47 +48,72 @@ class ColorService:
 
     # ── Channel / Marker colours ────────────────────────────────────────────
 
+    # ── Channel / Marker colours ────────────────────────────────────────────
+
     def load_channel_colors(self, filepath: str) -> None:
         """
         Load a marker → colour mapping from *filepath* (CSV or XLSX).
-
-        The file must contain ``markers`` and ``colors`` columns.
-        Matching legend rows are updated in place.
+        Matching legend rows and canvas layers are updated in place.
         """
         ctx = self.ctx
         try:
+            import re
             df = self._read_color_file(filepath)
             if df is None:
                 return
-            df.columns = [str(c).lower().strip() for c in df.columns]
-            if "markers" not in df.columns or "colors" not in df.columns:
+
+            col_norm = {re.sub(r'[^a-z0-9]', '', str(c).lower()): c for c in df.columns}
+            m_col = next((col_norm[k] for k in ["markers", "marker", "channel", "channels", "target", "targets", "name"] if k in col_norm), None)
+            c_col = next((col_norm[k] for k in ["colors", "color", "colours", "colour", "hex", "code"] if k in col_norm), None)
+
+            if m_col is None or c_col is None:
                 QMessageBox.warning(
                     ctx.control_widget, "Invalid Format",
-                    "File must contain 'markers' and 'colors' columns.",
+                    f"File must contain a marker column (e.g. 'markers', 'marker') and a color column (e.g. 'colors', 'color').\nFound columns: {list(df.columns)}",
                 )
                 return
-            color_map = {
-                str(r["markers"]).strip().lower(): mcolors.to_hex(str(r["colors"]).strip())
-                for _, r in df.iterrows()
-                if pd.notna(r["markers"]) and mcolors.is_color_like(str(r["colors"]).strip())
-            }
-            for m in ctx.state.markers:
-                if m.lower() in color_map:
-                    self.default_colors[m] = color_map[m.lower()]
+
+            color_map = {}
+            for _, row in df.iterrows():
+                val_m = row[m_col]
+                val_c = row[c_col]
+                if pd.notna(val_m) and pd.notna(val_c):
+                    m = str(val_m).strip().lower()
+                    c = str(val_c).strip()
+                    if mcolors.is_color_like(c):
+                        color_map[m] = mcolors.to_hex(c)
+
+            for m_key, hex_c in color_map.items():
+                self.default_colors[m_key] = hex_c
+                for orig_m in getattr(ctx.state, "markers", []):
+                    if orig_m.lower() == m_key:
+                        self.default_colors[orig_m] = hex_c
 
             updated = 0
-            lw = ctx.legend_widget
-            if hasattr(lw, "custom_channel_groups") and "Channels" in lw.custom_channel_groups:
-                _, _, row_list = lw.custom_channel_groups["Channels"]
-                for row in row_list:
-                    if row.name.lower() in color_map:
-                        c = color_map[row.name.lower()]
-                        row.update_swatch_display(c)
-                        row.colorChanged.emit(row.name, c)
-                        updated += 1
+            lw = getattr(ctx, "legend_widget", None)
+            if lw:
+                row_lists = [getattr(lw, "channel_rows", [])]
+                if hasattr(lw, "custom_channel_groups") and "Channels" in lw.custom_channel_groups:
+                    _, _, custom_rows = lw.custom_channel_groups["Channels"]
+                    row_lists.append(custom_rows)
+
+                for r_list in row_lists:
+                    for row in r_list:
+                        if row.name.lower() in color_map:
+                            c = color_map[row.name.lower()]
+                            row.update_swatch_display(c)
+                            row.colorChanged.emit(row.name, c)
+                            updated += 1
+
+            for layer in ctx.viewer.layers:
+                layer_base = layer.name.split(" [")[0]
+                if layer_base.lower() in color_map and hasattr(layer, "colormap"):
+                    c = color_map[layer_base.lower()]
+                    self._apply_colormap_to_layer(layer, c)
+
             QMessageBox.information(
                 ctx.control_widget, "Success",
-                f"Updated {updated} marker colors.",
+                f"Updated {len(color_map)} marker color(s).",
             )
         except Exception as exc:
             QMessageBox.critical(
@@ -101,40 +126,62 @@ class ColorService:
     def load_celltype_colors(self, filepath: str) -> None:
         """
         Load a cell-type → colour mapping from *filepath* (CSV or XLSX).
-
-        The file must contain ``celltypes`` and ``colors`` columns.
         Matching legend rows and canvas layers are updated in place.
         """
         ctx = self.ctx
         try:
+            import re
             df = self._read_color_file(filepath)
             if df is None:
                 return
-            df.columns = [str(c).lower().strip() for c in df.columns]
-            if "celltypes" not in df.columns or "colors" not in df.columns:
+
+            col_norm = {re.sub(r'[^a-z0-9]', '', str(c).lower()): c for c in df.columns}
+            ct_col = next((col_norm[k] for k in ["celltypes", "celltype", "celltype", "celltypes", "phenotype", "phenotypes", "label", "labels", "cluster", "clusters"] if k in col_norm), None)
+            c_col = next((col_norm[k] for k in ["colors", "color", "colours", "colour", "hex", "code"] if k in col_norm), None)
+
+            if ct_col is None or c_col is None:
                 QMessageBox.warning(
                     ctx.control_widget, "Invalid Format",
-                    "File must contain 'celltypes' and 'colors' columns.",
+                    f"File must contain a cell type column (e.g. 'cell_type', 'celltypes', 'phenotype') and a color column (e.g. 'colors', 'color', 'hex').\nFound columns: {list(df.columns)}",
                 )
                 return
+
+            color_map = {}
             for _, row in df.iterrows():
-                ct = str(row["celltypes"]).strip().lower()
-                cv = str(row["colors"]).strip()
-                if mcolors.is_color_like(cv):
-                    self.celltype_colors[ct] = mcolors.to_hex(cv)
+                val_ct = row[ct_col]
+                val_c = row[c_col]
+                if pd.notna(val_ct) and pd.notna(val_c):
+                    ct = str(val_ct).strip().lower()
+                    cv = str(val_c).strip()
+                    if mcolors.is_color_like(cv):
+                        hex_val = mcolors.to_hex(cv)
+                        self.celltype_colors[ct] = hex_val
+                        color_map[ct] = hex_val
 
             updated = 0
-            for row in getattr(ctx.legend_widget, "seg_rows", []):
-                if row.name.lower() in self.celltype_colors:
-                    c = self.celltype_colors[row.name.lower()]
-                    row.update_swatch_display(c)
-                    row.colorChanged.emit(row.name, c)
-                    updated += 1
-                    self._apply_colormap_to_layers(row.name, c)
+            lw = getattr(ctx, "legend_widget", None)
+            if lw:
+                for r_list in [
+                    getattr(lw, "ref_ct_rows", []),
+                    getattr(lw, "seg_rows", []),
+                    getattr(lw, "channel_rows", []),
+                ]:
+                    for row in r_list:
+                        if row.name.lower() in self.celltype_colors:
+                            c = self.celltype_colors[row.name.lower()]
+                            row.update_swatch_display(c)
+                            row.colorChanged.emit(row.name, c)
+                            updated += 1
+
+            for layer in ctx.viewer.layers:
+                layer_base = layer.name.split(" [")[0]
+                if layer_base.lower() in self.celltype_colors and hasattr(layer, "colormap"):
+                    c = self.celltype_colors[layer_base.lower()]
+                    self._apply_colormap_to_layer(layer, c)
 
             QMessageBox.information(
                 ctx.control_widget, "Success",
-                f"Updated {updated} cell type colors.",
+                f"Updated {len(color_map)} cell type color(s).",
             )
         except Exception as exc:
             QMessageBox.critical(
@@ -160,13 +207,20 @@ class ColorService:
             )
             return None
 
+    def _apply_colormap_to_layer(self, layer: Any, hex_color: str) -> None:
+        """Push a new two-stop colormap to a specific canvas layer."""
+        try:
+            colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]])
+            layer.colormap = Colormap(colors, name=f"custom_{layer.name}")
+            layer_base = layer.name.split(" [")[0]
+            if hasattr(self.ctx.state, "persistent_settings"):
+                self.ctx.state.persistent_settings.setdefault(layer_base, {})["colormap"] = layer.colormap
+        except Exception as exc:
+            print(f"[IRIS-Viewer] Could not set colormap for {layer.name}: {exc}")
+
     def _apply_colormap_to_layers(self, cell_type: str, hex_color: str) -> None:
         """Push a new two-stop colormap to every canvas layer matching *cell_type*."""
         for layer in self.ctx.viewer.layers:
             layer_base = layer.name.split(" [")[0]
             if layer_base.lower() == cell_type.lower() and hasattr(layer, "colormap"):
-                try:
-                    colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]])
-                    layer.colormap = Colormap(colors, name=f"custom_{layer.name}")
-                except Exception as exc:
-                    print(f"[IRIS-Viewer] Could not set colormap for {layer.name}: {exc}")
+                self._apply_colormap_to_layer(layer, hex_color)
