@@ -1,8 +1,14 @@
 """
 IRIS-Viewer Application State
-Holds all mutable application data for the Viewer scope:
-image data, segmentation results, consensus masks, confidence maps, and extracted features.
-Session save/restore serialises only recoverable fields to JSON; large arrays stay on disk.
+==============================
+Holds all mutable runtime data for one Viewer session.
+
+Mutable collections (dicts, lists) are never replaced — always mutated
+in place so that any service holding a reference to them sees updates
+automatically.
+
+Session save/restore serialises only lightweight scalars to JSON;
+large numpy arrays (images, masks) must be reloaded from disk.
 """
 from __future__ import annotations
 
@@ -16,64 +22,65 @@ import pandas as pd
 
 
 class ViewerAppState:
+    """Complete runtime state for IRIS-Viewer."""
+
     def __init__(self) -> None:
         # ── Image & File Management ─────────────────────────────────────
         self.image_dir: Optional[Path] = None
-        self.file_map: Dict[str, Path] = {}
+        self.file_map: Dict[str, Path] = {}        # sample_name -> Path
         self.markers: List[str] = []
         self.current_sample_name: Optional[str] = None
-        self.raw_image: Optional[np.ndarray] = None       # (C, H, W) multi-channel
-        self.channel_contrast_limits: Dict[str, list] = {}  # marker -> [lo, hi] cache
+        self.raw_image: Optional[np.ndarray] = None        # (C, H, W)
+        self.channel_contrast_limits: Dict[str, list] = {} # marker -> [lo, hi]
 
         # ── Segmentation Results ────────────────────────────────────────
-        # method_name -> {'nuclear': np.ndarray, 'cytoplasm': np.ndarray | None}
+        # method_name -> {'nuclear': ndarray, 'cytoplasm': ndarray|None}
         self.segmentation_results: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
-        self.segmentation_status: Dict[str, str] = {}     # step_key -> Queued|Running|Done|Failed
+        self.segmentation_status: Dict[str, str] = {}     # step_key -> status
 
         # ── Consensus & Confidence ──────────────────────────────────────
-        self.consensus_mask: Optional[np.ndarray] = None        # (H, W) label array
-        self.confidence_map: Optional[np.ndarray] = None        # (H, W) float [0, 1]
-        self.per_cell_confidence: Dict[int, float] = {}         # cell_id -> confidence
-        # Properly typed field (was private _cell_method_map in old code):
-        self.cell_method_map: Dict[int, Dict[str, int]] = {}    # cell_id -> {method: orig_id}
-        self.manual_overrides: Dict[int, str] = {}              # cell_id -> preferred method
+        self.consensus_mask: Optional[np.ndarray] = None      # (H, W) label array
+        self.confidence_map: Optional[np.ndarray] = None      # (H, W) float [0, 1]
+        self.per_cell_confidence: Dict[int, float] = {}       # cell_id -> confidence
+        self.cell_method_map: Dict[int, Dict[str, int]] = {}  # cell_id -> {method: orig_id}
+        self.manual_overrides: Dict[int, str] = {}            # cell_id -> preferred method
 
         # ── Override History (undo stack) ───────────────────────────────
-        # Each snapshot is (consensus_mask, confidence_map, per_cell_confidence, manual_overrides)
+        # Each snapshot: (consensus_mask, confidence_map, per_cell_confidence, manual_overrides)
         self.override_history: Deque[Tuple] = deque(maxlen=50)
 
         # ── Feature Extraction ──────────────────────────────────────────
-        self.feature_df: Optional[pd.DataFrame] = None
-        
-        # ── Multi-Sample Cache ──────────────────────────────────────────
-        self.multi_sample_images: Dict[str, np.ndarray] = {}
-        self.resolved_dfs: Dict[str, pd.DataFrame] = {}
-        self.masks_map: Dict[str, np.ndarray] = {}
-        self.sample_layers_map: Dict[str, List] = {}
         self.features_df: Optional[pd.DataFrame] = None
 
-        # ── Multi-sample Layer Tracking ─────────────────────────────────
-        self.masks_map: Dict[str, np.ndarray] = {}          # sample -> nuclear mask
-        self.cytoplasm_mask: Optional[np.ndarray] = None    # last loaded cytoplasm mask
-        self.current_mask: Optional[np.ndarray] = None      # active nuclear mask
-        self.sample_layers_map: Dict[str, List[Any]] = {}
-        self.persistent_settings: Dict[str, Any] = {}
+        # ── Active Mask References ──────────────────────────────────────
+        self.current_mask: Optional[np.ndarray] = None     # active nuclear mask
+        self.cytoplasm_mask: Optional[np.ndarray] = None   # last loaded cytoplasm mask
 
-        # ── Multi-sample Annotation Data ────────────────────────────────
-        # master_df   : full normalised DataFrame loaded from xlsx/csv
-        # resolved_dfs: per-sample slice after mask ID resolution
-        # areas_map   : sample -> tissue area (in µm² or px²)
-        # current_mapped_df : concat of all currently displayed samples
-        self.master_df: Optional[pd.DataFrame] = None
+        # ── Multi-Sample Canvas ─────────────────────────────────────────
+        # sample_name -> raw multi-channel image array (C, H, W)
+        self.multi_sample_images: Dict[str, np.ndarray] = {}
+        # sample_name -> list of napari layers for that sample
+        self.sample_layers_map: Dict[str, List[Any]] = {}
+        # sample_name -> nuclear mask (uint32)
+        self.masks_map: Dict[str, np.ndarray] = {}
+        # sample_name -> resolved annotation DataFrame
         self.resolved_dfs: Dict[str, pd.DataFrame] = {}
+        # sample_name -> tissue area (px² or µm²)
         self.areas_map: Dict[str, float] = {}
+        # concat of all currently displayed sample DataFrames
         self.current_mapped_df: Optional[pd.DataFrame] = None
-        # stash for IrisDataAdapter (set by MultiSampleService)
+        # IrisDataAdapter instance (set by MultiSampleService)
         self._data_adapter = None
+
+        # ── Annotation Master File ──────────────────────────────────────
+        self.master_df: Optional[pd.DataFrame] = None
 
         # ── Batch Processing ────────────────────────────────────────────
         self.batch_queue: List[str] = []
-        self.batch_results: Dict[str, Dict] = {}           # sample -> results dict
+        self.batch_results: Dict[str, Dict] = {}      # sample -> result dict
+
+        # ── Persistent UI Settings ──────────────────────────────────────
+        self.persistent_settings: Dict[str, Any] = {}
 
     # ── Override History ────────────────────────────────────────────────
 
@@ -88,7 +95,10 @@ class ViewerAppState:
             ))
 
     def undo_override(self) -> bool:
-        """Pop and restore the most recent snapshot. Returns True if successful."""
+        """Pop and restore the most recent override snapshot.
+
+        Returns ``True`` on success, ``False`` if the history is empty.
+        """
         if not self.override_history:
             return False
         (self.consensus_mask,
@@ -100,7 +110,7 @@ class ViewerAppState:
     # ── Lifecycle ───────────────────────────────────────────────────────
 
     def reset_sample_state(self) -> None:
-        """Resets volatile per-sample data while preserving global configs."""
+        """Reset per-sample volatile data while preserving global config."""
         self.raw_image = None
         self.channel_contrast_limits.clear()
         self.segmentation_results.clear()
@@ -114,6 +124,7 @@ class ViewerAppState:
         self.features_df = None
         self.current_mask = None
         self.cytoplasm_mask = None
+        self.multi_sample_images.clear()
         self.masks_map.clear()
         self.resolved_dfs.clear()
         self.areas_map.clear()
@@ -128,8 +139,8 @@ class ViewerAppState:
     def to_session_dict(self, consensus_threshold: float = 0.66) -> dict:
         """Serialise recoverable session fields to a JSON-compatible dict.
 
-        Large numpy arrays (masks, images) are intentionally excluded; they are
-        re-generated or reloaded from disk on session restore.
+        Large numpy arrays (masks, images) are excluded — they are
+        re-generated or reloaded from disk when the session is restored.
         """
         return {
             "version": 1,
@@ -137,7 +148,7 @@ class ViewerAppState:
             "markers": self.markers,
             "current_sample_name": self.current_sample_name,
             "consensus_threshold": consensus_threshold,
-            # Integer keys become strings in JSON — restored as int on load
+            # Integer keys become strings in JSON — restored as int on load.
             "per_cell_confidence": {str(k): v for k, v in self.per_cell_confidence.items()},
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
             "persistent_settings": self.persistent_settings,
@@ -145,7 +156,7 @@ class ViewerAppState:
 
     @classmethod
     def from_session_dict(cls, data: dict) -> "ViewerAppState":
-        """Restore session from a plain dict (as loaded from JSON)."""
+        """Restore a ``ViewerAppState`` from a plain dict (loaded from JSON)."""
         state = cls()
         if data.get("image_dir"):
             state.image_dir = Path(data["image_dir"])
@@ -161,7 +172,7 @@ class ViewerAppState:
         return state
 
     def save_session(self, path: Path, consensus_threshold: float = 0.66) -> None:
-        """Write session JSON to disk."""
+        """Write session JSON to *path*."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -174,10 +185,9 @@ class ViewerAppState:
         Returns
         -------
         state : ViewerAppState
-            Restored state object (no arrays — those need to be reloaded separately).
+            Restored state object (arrays are not restored — reload from disk).
         raw_data : dict
-            The raw JSON dict, so the caller can read extra fields like
-            ``consensus_threshold``.
+            Raw JSON dict so callers can read extra fields (e.g. ``consensus_threshold``).
         """
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)

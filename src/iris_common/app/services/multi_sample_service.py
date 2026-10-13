@@ -1,18 +1,21 @@
 """
-IRIS-Viewer Multi-Sample Service
+iris_common.app.services.multi_sample_service
+=============================================
+Orchestrates loading of TMA cores / tissue sections onto the napari canvas.
 
-Drives:
-- Loading multiple TMA cores or tissue sections onto the napari canvas
-- TMA grid auto-alignment using _rxcx_ sample name convention
-- Bounding box construction and per-sample layer synchronisation
-- Master annotation file ingestion (xlsx/csv) via IrisDataAdapter
-- Cell type overlay rendering using IrisPhenotypeMapper
-- Tissue boundary save/restore
-- Batch statistics export
+Responsibilities
+----------------
+- Loading image + mask + annotations for multiple samples
+- TMA grid auto-alignment using the ``_rxcx_`` sample-name convention
+- Bounding-box construction and per-sample layer synchronisation
+- Cell-type phenotype overlay rendering via ``IrisPhenotypeMapper``
+- Tissue boundary save / restore
 
-All state mutations go through self.ctx (the shared SimpleNamespace).
-Thread-safety: all napari calls happen on the Qt main thread; only
-pixel-level computation runs in thread_workers.
+Annotation loading is handled by :class:`AnnotationService`.
+Colour file loading is handled by :class:`ColorService`.
+All state mutations go through ``self.ctx`` (the shared ``SimpleNamespace``).
+Thread-safety: all napari calls happen on the Qt main thread;
+pixel-level I/O runs inside a ``thread_worker``.
 """
 from __future__ import annotations
 
@@ -32,6 +35,8 @@ from qtpy.QtWidgets import QFileDialog, QMessageBox
 
 from iris_common.io.data_adapter import IrisDataAdapter, IrisPhenotypeMapper
 from iris_common.widgets.styles import DEFAULT_MARKER_COLORS
+from iris_common.app.services.annotation_service import AnnotationService
+from iris_common.app.services.color_service import ColorService
 
 
 class MultiSampleService:
@@ -54,91 +59,17 @@ class MultiSampleService:
         self._syncing_colormap   = False
         self._syncing_opacity    = False
         self._syncing_contrast   = False
-        # CELLTYPE_COLORS: user-overridable via load_celltype_colors()
+        # Colour maps — mutated in place by ColorService
         self.CELLTYPE_COLORS: Dict[str, str] = {}
         self.DEFAULT_COLORS: Dict[str, str] = dict(DEFAULT_MARKER_COLORS)
+        self._annotation_svc = AnnotationService(ctx)
+        self._color_svc = ColorService(ctx, self.DEFAULT_COLORS, self.CELLTYPE_COLORS)
 
     # ── Master Annotation File ─────────────────────────────────────────────────
 
     def set_master_file(self, file_path: str) -> None:
-        """
-        Load an xlsx/csv annotation file through IrisDataAdapter and
-        store the normalised DataFrame in state.master_df.
-
-        Columns expected (auto-detected):
-          voron_x, voron_y, GROUP, DAPI…Ki67, area, elongation, …
-        """
-        ctx = self.ctx
-        try:
-            adapter = IrisDataAdapter.from_file(file_path)
-        except Exception as exc:
-            QMessageBox.critical(
-                ctx.control_widget, "Annotation Load Error",
-                f"Failed to parse annotation file:\n{exc}"
-            )
-            return
-
-        ctx.state.master_df = adapter.normalised
-        if "Image" in ctx.state.master_df.columns:
-            ctx.state.master_df["Image"] = (
-                ctx.state.master_df["Image"]
-                .astype(str)
-                .str.replace(".tiff", "", regex=False)
-                .str.replace("_image", "", regex=False)
-            )
-
-        ctx.state._data_adapter = adapter          # stash for phenotyper re-use
-
-        # Populate marker list from detected markers (if viewer hasn't set them yet)
-        if not ctx.state.markers and adapter.markers:
-            ctx.state.markers = adapter.markers
-            ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
-
-        # Populate cell type reference combo and quick curation dropdown
-        cw = ctx.control_widget
-        cols = adapter.normalised.columns.tolist()
-        
-        if hasattr(cw, "combo_ref"):
-            cw.combo_ref.blockSignals(True)
-            cw.combo_ref.clear()
-            cw.combo_ref.addItems(cols)
-            
-            # Auto-select best guess for cell type column
-            best_col = None
-            for c in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
-                if c in cols:
-                    best_col = c
-                    break
-                    
-            if best_col:
-                cw.combo_ref.setCurrentText(best_col)
-            elif cols:
-                cw.combo_ref.setCurrentText(cols[0])
-                
-            cw.combo_ref.blockSignals(False)
-
-        ref_col = cw.combo_ref.currentText() if hasattr(cw, "combo_ref") else "cell_type"
-        if ref_col in adapter.normalised.columns and hasattr(cw, "combo_quick_type"):
-            unique_types = sorted(
-                [str(t) for t in adapter.normalised[ref_col].dropna().unique()]
-            )
-            cw.combo_quick_type.blockSignals(True)
-            cw.combo_quick_type.clear()
-            cw.combo_quick_type.addItems(unique_types)
-            cw.combo_quick_type.blockSignals(False)
-
-        if hasattr(ctx, "control_widget") and hasattr(ctx.control_widget, "lbl_annotation"):
-            ctx.control_widget.lbl_annotation.setText(
-                Path(file_path).name
-            )
-
-        QMessageBox.information(
-            ctx.control_widget, "Annotation Loaded",
-            f"Loaded {len(adapter.normalised):,} cells from {Path(file_path).name}.\n"
-            f"Markers detected: {', '.join(adapter.markers[:8])}{'…' if len(adapter.markers) > 8 else ''}\n"
-            f"Samples: {adapter.normalised['Image'].nunique():,}"
-            if "Image" in adapter.normalised.columns else ""
-        )
+        """Load and normalise *file_path* (CSV/XLSX) into ``ctx.state.master_df``."""
+        self._annotation_svc.load_annotation_file(file_path)
 
         # Draw overlays for any samples that were already loaded on the canvas
         self.update_phenotypes_on_canvas()
@@ -637,20 +568,17 @@ class MultiSampleService:
     # ── Clear Canvas ──────────────────────────────────────────────────────────
 
     def clear_canvas(self) -> None:
+        """Remove all layers and legend entries, then reset per-sample state."""
         ctx = self.ctx
         ctx.viewer.layers.clear()
         ctx.legend_widget.clear()
         self._added_master_legends.clear()
         ctx.state.sample_layers_map.clear()
-        ctx.state.reset_sample_state()
-        if hasattr(ctx.state, "resolved_dfs"):
-            ctx.state.resolved_dfs.clear()
         if hasattr(ctx.state, "multi_sample_images"):
             ctx.state.multi_sample_images.clear()
-        if hasattr(ctx.state, "areas_map"):
-            ctx.state.areas_map.clear()
-        if hasattr(ctx.state, "current_mapped_df"):
-            ctx.state.current_mapped_df = None
+        ctx.state.reset_sample_state()
+        ctx.state.areas_map.clear()
+        ctx.state.current_mapped_df = None
 
     # ── Finalise canvas ───────────────────────────────────────────────────────
 
@@ -826,81 +754,9 @@ class MultiSampleService:
     # ── Colour loading ────────────────────────────────────────────────────────
 
     def load_channel_colors(self, filepath: str) -> None:
-        ctx = self.ctx
-        try:
-            import pandas as pd
-            df = (
-                pd.read_excel(filepath)
-                if Path(filepath).suffix.lower() in (".xlsx", ".xls")
-                else pd.read_csv(filepath)
-            )
-            df.columns = [str(c).lower().strip() for c in df.columns]
-            if "markers" not in df.columns or "colors" not in df.columns:
-                QMessageBox.warning(ctx.control_widget, "Invalid Format",
-                                    "File must contain 'markers' and 'colors' columns.")
-                return
-            color_map = {
-                str(r["markers"]).strip().lower(): mcolors.to_hex(str(r["colors"]).strip())
-                for _, r in df.iterrows()
-                if pd.notna(r["markers"]) and mcolors.is_color_like(str(r["colors"]).strip())
-            }
-            for m in ctx.state.markers:
-                if m.lower() in color_map:
-                    self.DEFAULT_COLORS[m] = color_map[m.lower()]
-            updated = 0
-            lw = ctx.legend_widget
-            if hasattr(lw, "custom_channel_groups") and "Channels" in lw.custom_channel_groups:
-                _, _, row_list = lw.custom_channel_groups["Channels"]
-                for row in row_list:
-                    if row.name.lower() in color_map:
-                        c = color_map[row.name.lower()]
-                        row.update_swatch_display(c)
-                        row.colorChanged.emit(row.name, c)
-                        updated += 1
-            QMessageBox.information(ctx.control_widget, "Success",
-                                    f"Updated {updated} marker colors.")
-        except Exception as exc:
-            QMessageBox.critical(ctx.control_widget, "Error",
-                                 f"Failed to load channel colors:\n{exc}")
+        """Load marker colour mapping from *filepath* and apply to the canvas."""
+        self._color_svc.load_channel_colors(filepath)
 
     def load_celltype_colors(self, filepath: str) -> None:
-        ctx = self.ctx
-        try:
-            import pandas as pd
-            df = (
-                pd.read_excel(filepath)
-                if Path(filepath).suffix.lower() in (".xlsx", ".xls")
-                else pd.read_csv(filepath)
-            )
-            df.columns = [str(c).lower().strip() for c in df.columns]
-            if "celltypes" not in df.columns or "colors" not in df.columns:
-                return
-            for _, row in df.iterrows():
-                ct = str(row["celltypes"]).strip().lower()
-                cv = str(row["colors"]).strip()
-                if mcolors.is_color_like(cv):
-                    self.CELLTYPE_COLORS[ct] = mcolors.to_hex(cv)
-            updated = 0
-            for row in getattr(ctx.legend_widget, "seg_rows", []):
-                if row.name.lower() in self.CELLTYPE_COLORS:
-                    c = self.CELLTYPE_COLORS[row.name.lower()]
-                    row.update_swatch_display(c)
-                    row.colorChanged.emit(row.name, c)
-                    updated += 1
-                    
-                    # Also directly update any matching layers in the viewer
-                    for l in ctx.viewer.layers:
-                        l_base = l.name.split(" [")[0]
-                        if l_base.lower() == row.name.lower():
-                            if hasattr(l, "colormap"):
-                                from napari.utils.colormaps import Colormap
-                                try:
-                                    colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(c)) + [1]])
-                                    l.colormap = Colormap(colors, name=f'custom_{l.name}')
-                                except Exception as e:
-                                    print(f"DEBUG: Failed to set colormap for {l.name}: {e}")
-            QMessageBox.information(ctx.control_widget, "Success",
-                                    f"Updated {updated} cell type colors.")
-        except Exception as exc:
-            QMessageBox.critical(ctx.control_widget, "Error",
-                                 f"Failed to load cell type colors:\n{exc}")
+        """Load cell-type colour mapping from *filepath* and apply to the canvas."""
+        self._color_svc.load_celltype_colors(filepath)

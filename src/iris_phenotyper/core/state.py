@@ -79,6 +79,10 @@ class PhenotyperAppState:
         self.ensemble_df = None
         self.umap_embedding = None
         self.override_history.clear()
+        self.multi_sample_images.clear()
+        self.masks_map.clear()
+        self.resolved_dfs.clear()
+        self.sample_layers_map.clear()
 
     def snapshot_override_state(self) -> None:
         self.override_history.append((
