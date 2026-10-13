@@ -133,30 +133,6 @@ class NeighborhoodService:
             widget.btn_niche.setText("Extract Spatial Neighborhoods")
             widget.btn_niche.setEnabled(True)
 
-            # Sync palette colors with MultiSampleService so phenotype masks match
-            if hasattr(ctx, "multi_sample_svc"):
-                for idx, item in widget.niche_metadata.items():
-                    c_name = item["name"]
-                    c_hex = item["color"]
-                    ctx.multi_sample_svc.CELLTYPE_COLORS[c_name.lower()] = c_hex
-                    ctx.multi_sample_svc.CELLTYPE_COLORS[f"niche {idx}"] = c_hex
-                    ctx.multi_sample_svc.CELLTYPE_COLORS[str(idx)] = c_hex
-
-        # 4. Reflect the cluster directly to the phenotype mask for visualization
-        cw = getattr(ctx, "control_widget", None)
-        if cw is not None and hasattr(cw, "combo_ref"):
-            items = [cw.combo_ref.itemText(i) for i in range(cw.combo_ref.count())]
-            if "Cellular_Neighborhood" not in items:
-                cw.combo_ref.addItem("Cellular_Neighborhood")
-
-            if cw.combo_ref.currentText() == "Cellular_Neighborhood":
-                if hasattr(ctx, "multi_sample_svc"):
-                    ctx.multi_sample_svc.update_phenotypes_on_canvas()
-            else:
-                cw.combo_ref.setCurrentText("Cellular_Neighborhood")
-        elif hasattr(ctx, "multi_sample_svc"):
-            ctx.multi_sample_svc.update_phenotypes_on_canvas()
-
     def _on_niche_error(self, exc: Exception) -> None:
         """Handles background calculation error."""
         ctx = self.ctx
@@ -232,13 +208,16 @@ class NeighborhoodService:
                 hex_color = item["color"]
                 layer_title = f"{current_param_prefix}{niche_name}"
 
-                # Extract cell IDs for this niche (matching by index, name, or string)
-                niche_cells = sub_df[
+                # Extract cell IDs for this niche (matching by index, name, ID column, or string)
+                cond = (
                     (sub_df['Cellular_Neighborhood'] == idx) |
                     (sub_df['Cellular_Neighborhood'] == f"Niche {idx}") |
                     (sub_df['Cellular_Neighborhood'] == niche_name) |
                     (sub_df['Cellular_Neighborhood'].astype(str) == str(idx))
-                ]
+                )
+                if 'Cellular_Neighborhood_ID' in sub_df.columns:
+                    cond = cond | (sub_df['Cellular_Neighborhood_ID'] == idx)
+                niche_cells = sub_df[cond]
                 if niche_cells.empty:
                     continue
 
