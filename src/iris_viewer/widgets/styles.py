@@ -203,6 +203,30 @@ STATUS_STYLES = {
 
 # ── Button Variant Styles ───────────────────────────────────────────────────
 
+BUTTON_PRIMARY = """
+    QPushButton {
+        background-color: #3A6A9A;
+        color: white;
+        font-weight: bold;
+        border-radius: 4px;
+        padding: 5px 10px;
+        border: none;
+    }
+    QPushButton:hover { background-color: #4A7FBA; }
+"""
+
+BUTTON_SECONDARY = """
+    QPushButton {
+        background-color: #2D333F;
+        color: #E0E0E0;
+        font-weight: bold;
+        border-radius: 4px;
+        padding: 5px 10px;
+        border: 1px solid #444C5C;
+    }
+    QPushButton:hover { background-color: #3D4454; }
+"""
+
 BUTTON_DANGER = """
     QPushButton {
         background-color: #CC4444;

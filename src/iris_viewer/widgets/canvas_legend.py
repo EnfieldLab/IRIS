@@ -20,7 +20,7 @@ class CanvasLegendOverlay(QWidget):
         self.layout.setSizeConstraint(QVBoxLayout.SetFixedSize)
         self.setLayout(self.layout)
         
-        self._opacity = 0.1
+        self._opacity = 0.0
         self._font_size = 16
         self.update_style()
         
@@ -50,13 +50,21 @@ class CanvasLegendOverlay(QWidget):
         # Dynamic style based on opacity
         alpha = int(self._opacity * 255)
         self.setObjectName("CanvasLegendOverlay")
-        self.setStyleSheet(f"""
-            QWidget#CanvasLegendOverlay {{
-                background-color: rgba(30, 30, 40, {alpha});
-                border-radius: 5px;
-                border: 1px solid rgba(100, 100, 100, {alpha});
-            }}
-        """)
+        if alpha == 0:
+            self.setStyleSheet("""
+                QWidget#CanvasLegendOverlay {
+                    background-color: transparent;
+                    border: none;
+                }
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QWidget#CanvasLegendOverlay {{
+                    background-color: rgba(30, 30, 40, {alpha});
+                    border-radius: 5px;
+                    border: 1px solid rgba(100, 100, 100, {alpha});
+                }}
+            """)
         
     def set_font_size(self, size: int):
         self._font_size = size

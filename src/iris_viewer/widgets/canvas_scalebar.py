@@ -1,5 +1,6 @@
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout
 from qtpy.QtCore import Qt, QPoint
+from qtpy.QtGui import QPainter, QColor
 import napari
 
 class CanvasScaleBarOverlay(QWidget):
@@ -11,9 +12,10 @@ class CanvasScaleBarOverlay(QWidget):
         
         self.viewer = viewer
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         
         self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setContentsMargins(6, 4, 6, 4)
         self.layout.setSpacing(2)
         self.layout.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
         self.setLayout(self.layout)
@@ -33,10 +35,15 @@ class CanvasScaleBarOverlay(QWidget):
         self._position = "bottom_left"
         self._font_size = 26
         self._thickness = 10
+        self._bg_opacity = 0.0
         self._update_style()
         
         # Hook into viewer zoom changes
-        self.viewer.camera.events.zoom.connect(self._update_scale_bar)
+        camera = getattr(self.viewer.scene, 'camera', None) if hasattr(self.viewer, 'scene') else getattr(self.viewer, 'camera', None)
+        if camera and hasattr(camera, 'events') and hasattr(camera.events, 'zoom'):
+            camera.events.zoom.connect(self._update_scale_bar)
+        elif hasattr(self.viewer, 'camera') and hasattr(self.viewer.camera.events, 'zoom'):
+            self.viewer.camera.events.zoom.connect(self._update_scale_bar)
         
         # We need to position it manually on resize events of the parent
         if self.parent():
@@ -50,6 +57,21 @@ class CanvasScaleBarOverlay(QWidget):
         self.lbl_bar.setFixedHeight(self._thickness)
         self.adjustSize()
         self._reposition()
+
+    def paintEvent(self, event):
+        if self._bg_opacity > 0.0:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            alpha = int(self._bg_opacity * 255)
+            painter.setBrush(QColor(0, 0, 0, alpha))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(self.rect(), 4, 4)
+        super().paintEvent(event)
+
+    def set_opacity(self, opacity: float):
+        """Set the background opacity of the scale bar box (0.0 to 1.0)."""
+        self._bg_opacity = max(0.0, min(1.0, float(opacity)))
+        self.update()
 
     def set_font_size(self, size: int):
         self._font_size = size
@@ -93,10 +115,11 @@ class CanvasScaleBarOverlay(QWidget):
         self.raise_()
 
     def _update_scale_bar(self, *args):
-        if not self.isVisible():
+        if self.isHidden():
             return
             
-        zoom = self.viewer.camera.zoom
+        camera = getattr(self.viewer.scene, 'camera', None) if hasattr(self.viewer, 'scene') else getattr(self.viewer, 'camera', None)
+        zoom = getattr(camera, 'zoom', 1.0)
         if zoom <= 0: return
         
         # Determine target length in pixels (e.g., around 150 pixels on screen)

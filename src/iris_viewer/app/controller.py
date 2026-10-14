@@ -310,6 +310,8 @@ class ViewerController:
         cw.batchProcessTriggered.connect(self.batch_svc.run_batch_processing)
         cw.colChanged.connect(self.multi_sample_svc.update_phenotypes_on_canvas)
         cw.colChanged.connect(self._on_phenotype_column_changed)
+
+
         # Optional session signals (added in a future control_widget update)
         if hasattr(cw, 'saveSessionTriggered'):
             cw.saveSessionTriggered.connect(self._save_session)
