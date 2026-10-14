@@ -156,6 +156,12 @@ class MarkerExpressionDialog(QDialog):
         self.row_linkage: Optional[np.ndarray] = None
         self.col_linkage: Optional[np.ndarray] = None
         self.ax_heatmap = None
+        self.ax_col_dendro = None
+        self.ax_row_dendro = None
+        self._pan_start = None
+        self._pan_xlim = None
+        self._pan_ylim = None
+        self._orig_limits = None
 
         self.setStyleSheet("""
             QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
@@ -278,6 +284,21 @@ class MarkerExpressionDialog(QDialog):
         self.btn_reset_order.clicked.connect(self._reset_order)
         top_bar2.addWidget(self.btn_reset_order)
 
+        self.btn_zoom_in = QPushButton("Zoom In")
+        self.btn_zoom_in.setToolTip("Zoom in towards heatmap center (or use Mouse Wheel)")
+        self.btn_zoom_in.clicked.connect(self.zoom_in)
+        top_bar2.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_out = QPushButton("Zoom Out")
+        self.btn_zoom_out.setToolTip("Zoom out from heatmap center (or use Mouse Wheel)")
+        self.btn_zoom_out.clicked.connect(self.zoom_out)
+        top_bar2.addWidget(self.btn_zoom_out)
+
+        self.btn_reset_zoom = QPushButton("Reset View")
+        self.btn_reset_zoom.setToolTip("Reset zoom and pan back to full heatmap view")
+        self.btn_reset_zoom.clicked.connect(self.reset_view)
+        top_bar2.addWidget(self.btn_reset_zoom)
+
         top_bar2.addStretch(1)
 
         self.btn_copy = QPushButton("Copy Figure")
@@ -295,7 +316,7 @@ class MarkerExpressionDialog(QDialog):
         main_layout.addLayout(top_bar2)
 
         # ── Hover Details Status Bar ──────────────────────────────────────
-        self.lbl_hover = QLabel("Hover over any cell in the heatmap to inspect exact expression values.")
+        self.lbl_hover = QLabel("Hover over any cell in the heatmap for values. Scroll mouse wheel to zoom, click and drag to pan.")
         self.lbl_hover.setStyleSheet("color: #AAA; font-size: 12px; font-style: italic; padding: 2px 4px;")
         main_layout.addWidget(self.lbl_hover)
 
@@ -323,7 +344,10 @@ class MarkerExpressionDialog(QDialog):
             cc_layout.addWidget(self.toolbar)
 
         cc_layout.addWidget(self.canvas, 1)
-        self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+        self.canvas.mpl_connect('motion_notify_event', self._on_mouse_motion)
+        self.canvas.mpl_connect('button_press_event', self._on_mouse_press)
+        self.canvas.mpl_connect('button_release_event', self._on_mouse_release)
+        self.canvas.mpl_connect('scroll_event', self._on_scroll_zoom)
 
         self.splitter.addWidget(canvas_container)
 
@@ -841,6 +865,23 @@ class MarkerExpressionDialog(QDialog):
         self.figure.clear()
         cmap = plt.get_cmap(self.current_cmap)
 
+        # 1. Dynamically size left and bottom margins based on maximum row and col label lengths
+        import math
+        max_row_len = max([len(str(r)) for r in safe_rows]) if safe_rows else 10
+        max_col_len = max([len(str(c)) for c in safe_cols]) if safe_cols else 10
+        fs = self.spin_font.value()
+        fig_w, fig_h = self.figure.get_size_inches()
+
+        # Dynamic left margin: each char at font size fs takes approx (fs * 0.58 / 72) inches
+        char_w_pts = fs * 0.58
+        row_label_w_in = (max_row_len + 3.0) * (char_w_pts / 72.0)
+        left_margin = float(np.clip(row_label_w_in / fig_w, 0.16, 0.44))
+
+        angle = self.spin_angle.value()
+        rad = math.radians(max(15, angle))
+        col_label_h_in = (max_col_len * math.sin(rad) + 2.5) * (char_w_pts / 72.0)
+        bottom_margin = float(np.clip(col_label_h_in / fig_h, 0.12, 0.36))
+
         if show_dendro and self.row_linkage is not None and self.col_linkage is not None:
             # 2 rows x 3 columns:
             # (0, 0): Column dendrogram (above heatmap)
@@ -852,6 +893,10 @@ class MarkerExpressionDialog(QDialog):
             gs = gridspec.GridSpec(
                 2, 3,
                 figure=self.figure,
+                left=left_margin,
+                right=0.96,
+                bottom=bottom_margin,
+                top=0.96,
                 width_ratios=[0.80, 0.16, 0.04],
                 height_ratios=[0.14, 0.86],
                 wspace=0.015,
@@ -897,15 +942,24 @@ class MarkerExpressionDialog(QDialog):
             ax_row_dendro.set_facecolor('#14161d')
             ax_row_dendro.set_ylim(10 * n_rows, 0)
             ax_row_dendro.axis('off')
+
+            self.ax_col_dendro = ax_col_dendro
+            self.ax_row_dendro = ax_row_dendro
         else:
             gs = gridspec.GridSpec(
                 1, 2,
                 figure=self.figure,
+                left=left_margin,
+                right=0.96,
+                bottom=bottom_margin,
+                top=0.96,
                 width_ratios=[0.96, 0.04],
                 wspace=0.02,
             )
             ax = self.figure.add_subplot(gs[0, 0])
             ax_cbar = self.figure.add_subplot(gs[0, 1])
+            self.ax_col_dendro = None
+            self.ax_row_dendro = None
 
         self.ax_heatmap = ax
         ax.set_facecolor('#14161d')
@@ -957,8 +1011,117 @@ class MarkerExpressionDialog(QDialog):
             "is_zscore": is_zscore,
         }
 
-        self.figure.tight_layout()
+        # Track default full heatmap bounds for Reset View
+        self._orig_limits = ((-0.5, n_cols - 0.5), (n_rows - 0.5, -0.5))
+
+        # Auto-sync dendrograms whenever heatmap axis bounds change
+        ax.callbacks.connect('xlim_changed', lambda a: self._sync_dendrogram_axes())
+        ax.callbacks.connect('ylim_changed', lambda a: self._sync_dendrogram_axes())
+
         self.canvas.draw()
+
+    def _sync_dendrogram_axes(self) -> None:
+        """Synchronizes top and right dendrograms with the current heatmap axis limits."""
+        if self.ax_heatmap is None:
+            return
+        cur_xlim = self.ax_heatmap.get_xlim()
+        cur_ylim = self.ax_heatmap.get_ylim()
+
+        if getattr(self, "ax_col_dendro", None) is not None:
+            d_x0 = (cur_xlim[0] + 0.5) * 10.0
+            d_x1 = (cur_xlim[1] + 0.5) * 10.0
+            self.ax_col_dendro.set_xlim(d_x0, d_x1)
+
+        if getattr(self, "ax_row_dendro", None) is not None:
+            d_y0 = (cur_ylim[0] + 0.5) * 10.0
+            d_y1 = (cur_ylim[1] + 0.5) * 10.0
+            self.ax_row_dendro.set_ylim(d_y0, d_y1)
+
+    def _zoom_step(self, scale: float) -> None:
+        """Zooms into or out of the heatmap center by scale factor."""
+        if self.ax_heatmap is None:
+            return
+        cur_xlim = self.ax_heatmap.get_xlim()
+        cur_ylim = self.ax_heatmap.get_ylim()
+
+        cx = (cur_xlim[0] + cur_xlim[1]) / 2.0
+        cy = (cur_ylim[0] + cur_ylim[1]) / 2.0
+        half_w = (cur_xlim[1] - cur_xlim[0]) * scale / 2.0
+        half_h = (cur_ylim[1] - cur_ylim[0]) * scale / 2.0
+
+        self.ax_heatmap.set_xlim(cx - half_w, cx + half_w)
+        self.ax_heatmap.set_ylim(cy - half_h, cy + half_h)
+        self._sync_dendrogram_axes()
+        self.canvas.draw_idle()
+
+    def zoom_in(self) -> None:
+        self._zoom_step(0.8)
+
+    def zoom_out(self) -> None:
+        self._zoom_step(1.25)
+
+    def reset_view(self) -> None:
+        if self.ax_heatmap is not None and getattr(self, "_orig_limits", None) is not None:
+            self.ax_heatmap.set_xlim(self._orig_limits[0])
+            self.ax_heatmap.set_ylim(self._orig_limits[1])
+            self._sync_dendrogram_axes()
+            self.canvas.draw_idle()
+
+    def _on_scroll_zoom(self, event) -> None:
+        """Handles mouse wheel zooming centered at the cursor position."""
+        if self.ax_heatmap is None or event.inaxes != self.ax_heatmap:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        scale = 0.85 if event.button == "up" else 1.18
+        cur_xlim = self.ax_heatmap.get_xlim()
+        cur_ylim = self.ax_heatmap.get_ylim()
+
+        xd, yd = event.xdata, event.ydata
+        new_w = (cur_xlim[1] - cur_xlim[0]) * scale
+        new_h = (cur_ylim[1] - cur_ylim[0]) * scale
+
+        frac_x = (xd - cur_xlim[0]) / (cur_xlim[1] - cur_xlim[0]) if cur_xlim[1] != cur_xlim[0] else 0.5
+        frac_y = (yd - cur_ylim[0]) / (cur_ylim[1] - cur_ylim[0]) if cur_ylim[1] != cur_ylim[0] else 0.5
+
+        self.ax_heatmap.set_xlim(xd - frac_x * new_w, xd + (1.0 - frac_x) * new_w)
+        self.ax_heatmap.set_ylim(yd - frac_y * new_h, yd + (1.0 - frac_y) * new_h)
+        self._sync_dendrogram_axes()
+        self.canvas.draw_idle()
+
+    def _on_mouse_press(self, event) -> None:
+        """Initiates click-and-drag panning on the heatmap."""
+        if self.ax_heatmap is not None and event.inaxes == self.ax_heatmap and event.button in (1, 2, 3):
+            self._pan_start = (event.x, event.y)
+            self._pan_xlim = self.ax_heatmap.get_xlim()
+            self._pan_ylim = self.ax_heatmap.get_ylim()
+
+    def _on_mouse_release(self, event) -> None:
+        """Ends click-and-drag panning."""
+        self._pan_start = None
+
+    def _on_mouse_motion(self, event) -> None:
+        """Handles panning motion or hover inspection."""
+        if (
+            getattr(self, "_pan_start", None) is not None
+            and self.ax_heatmap is not None
+            and event.x is not None
+            and event.y is not None
+        ):
+            inv = self.ax_heatmap.transData.inverted()
+            p0 = inv.transform(self._pan_start)
+            p1 = inv.transform((event.x, event.y))
+            dx = p1[0] - p0[0]
+            dy = p1[1] - p0[1]
+
+            self.ax_heatmap.set_xlim(self._pan_xlim[0] - dx, self._pan_xlim[1] - dx)
+            self.ax_heatmap.set_ylim(self._pan_ylim[0] - dy, self._pan_ylim[1] - dy)
+            self._sync_dendrogram_axes()
+            self.canvas.draw_idle()
+            return
+
+        self._on_mouse_move(event)
 
     def _on_mouse_move(self, event) -> None:
         if (
@@ -1378,7 +1541,9 @@ class IrisMarkerExpressionWidget(QWidget):
         for spine in ax.spines.values():
             spine.set_color('#444')
 
-        self.figure.tight_layout()
+        max_row_len = max([len(str(r)) for r in matrix.index]) if not matrix.empty else 10
+        left_m = float(np.clip((max_row_len + 2) * 0.014, 0.20, 0.45))
+        self.figure.subplots_adjust(left=left_m, right=0.92, bottom=0.22, top=0.94)
         self.canvas.draw()
 
     def open_popup_window(self) -> None:

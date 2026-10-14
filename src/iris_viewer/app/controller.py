@@ -80,8 +80,8 @@ class ViewerController:
         # ── Widgets ───────────────────────────────────────────────────────
         self.control_widget      = ImageControlWidget(viewer=self.viewer)
         self.segmentation_panel  = SegmentationPanelWidget()
-        self.consensus_panel     = ConsensusPanelWidget()
-        self.feature_panel       = FeaturePanelWidget()
+        self.consensus_panel     = self.segmentation_panel.consensus_panel
+        self.feature_panel       = self.segmentation_panel.feature_panel
         self.legend_widget       = ViewerLegendWidget(self.viewer)
         self.comparison_widget   = self.control_widget.comparison_widget
         self.neighborhood_widget = IrisCellularNeighborhoodsWidget()
@@ -94,8 +94,6 @@ class ViewerController:
             (self.control_widget,      "Control"),
             (self.comparison_widget,   "TMA"),
             (self.segmentation_panel,  "Segmentation"),
-            (self.consensus_panel,     "Consensus"),
-            (self.feature_panel,       "Features"),
             (self.neighborhood_widget, "Neighborhoods"),
             (self.marker_widget,       "Marker"),
         ]:
@@ -109,9 +107,7 @@ class ViewerController:
         qt = self.viewer.window._qt_window
         qt.tabifyDockWidget(dw["Control"].parent(),       dw["TMA"].parent())
         qt.tabifyDockWidget(dw["TMA"].parent(),           dw["Segmentation"].parent())
-        qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
-        qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
-        qt.tabifyDockWidget(dw["Features"].parent(),      dw["Neighborhoods"].parent())
+        qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Neighborhoods"].parent())
         qt.tabifyDockWidget(dw["Neighborhoods"].parent(), dw["Marker"].parent())
         dw["Control"].parent().raise_()
 
@@ -166,6 +162,8 @@ class ViewerController:
         self.curation_svc     = CurationService(self._ctx)
         self.boundary_svc     = BoundaryService(self._ctx)
         self.neighborhood_svc = NeighborhoodService(self._ctx)
+        self._ctx.review_svc = self.review_svc
+        self.segmentation_panel.ctx = self._ctx
 
         # ── Replace Napari Welcome Text ───────────────────────────────────────
         from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication

@@ -20,10 +20,12 @@ class FeaturePanelWidget(QWidget):
     # ── Signals ──────────────────────────────────────────────────────
     extractTriggered = Signal(list, list)   # selected_morphology, selected_intensity
     exportTriggered = Signal()
+    dataExtracted = Signal(object)          # df
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(SHARED_DARK_THEME)
+        self.cached_df = None
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -178,7 +180,8 @@ class FeaturePanelWidget(QWidget):
         self.extractTriggered.emit(morph, intensity)
 
     def populate_preview(self, df: pd.DataFrame, max_rows: int = 50):
-        """Update the extraction status without showing a preview table."""
+        """Update the extraction status and cache extracted dataframe."""
+        self.cached_df = df
         if df is None or df.empty:
             self.lbl_extract_status.setText("No data extracted")
             return
@@ -188,6 +191,7 @@ class FeaturePanelWidget(QWidget):
         self.lbl_extract_status.setText(f"Extracted {len(df):,} cells × {n_cols} features")
         self.lbl_extract_status.setStyleSheet("color: #44AA66; font-weight: bold; font-size: 11px;")
         self.btn_export.setEnabled(True)
+        self.dataExtracted.emit(df)
 
     def set_extracting_state(self, is_extracting: bool):
         """Toggle between extracting and idle UI states."""

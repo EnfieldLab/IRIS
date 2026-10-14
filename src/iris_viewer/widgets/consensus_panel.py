@@ -25,6 +25,9 @@ class ConsensusPanelWidget(QWidget):
     showIndividualToggled = Signal(str, bool) # method_name, visible
     reviewModeToggled = Signal(bool)
     cellOverrideRequested = Signal(int, str) # cell_id, preferred_method
+    statisticsUpdated = Signal(int, int, int, float) # total, agreed, flagged, mean_conf
+    cellReviewShown = Signal(int, float, dict)        # cell_id, confidence, method_map
+    cellReviewCleared = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -249,16 +252,28 @@ class ConsensusPanelWidget(QWidget):
         mean_conf: float = 0.0,
     ):
         """Update the agreement statistics display."""
+        self.cached_stats = {
+            "total": total,
+            "agreed": agreed,
+            "flagged": flagged,
+            "mean_conf": mean_conf,
+        }
         self.lbl_total_cells.setText(f"Total Cells: {total:,}")
         self.lbl_high_conf.setText(f"Agreed (Safe): {agreed:,} ({agreed/total*100:.1f}%)" if total > 0 else "Agreed (Safe): —")
         self.lbl_low_conf.setText(f"Flagged (Disputed): {flagged:,} ({flagged/total*100:.1f}%)" if total > 0 else "Flagged (Disputed): —")
         self.lbl_issue_count.setText(f"{flagged} flagged issues to review")
         self.lbl_mean_conf.setText(f"Mean IoU Overlap: {mean_conf:.3f}")
+        self.statisticsUpdated.emit(total, agreed, flagged, mean_conf)
 
     def show_cell_review(self, cell_id: int, confidence: float, method_map: dict):
         """
         Populate the review section when a user clicks on a low-confidence cell.
         """
+        self.cached_review = {
+            "cell_id": cell_id,
+            "confidence": confidence,
+            "method_map": method_map,
+        }
         self.lbl_review_cell.setText(f"Cell ID: {cell_id}")
         self.lbl_review_confidence.setText(f"IoU Overlap: {confidence:.3f}")
         self.lbl_review_methods.setText(
@@ -299,9 +314,11 @@ class ConsensusPanelWidget(QWidget):
             lambda checked, cid=cell_id: self.cellOverrideRequested.emit(cid, "Remove")
         )
         self.override_buttons_layout.addWidget(btn_remove)
+        self.cellReviewShown.emit(cell_id, confidence, method_map)
 
     def clear_cell_review(self):
         """Reset the review section to idle state."""
+        self.cached_review = None
         self.lbl_review_cell.setText("No cell selected")
         self.lbl_review_confidence.setText("Confidence: —")
         self.lbl_review_methods.setText("Methods: —")
@@ -309,3 +326,4 @@ class ConsensusPanelWidget(QWidget):
             child = self.override_buttons_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
+        self.cellReviewCleared.emit()
