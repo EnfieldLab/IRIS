@@ -18,7 +18,7 @@ def export_consensus_mask(
     cytoplasm_mask: Optional[np.ndarray] = None,
 ) -> None:
     """
-    Export the consensus mask as a multi-channel TIFF (zlib-compressed).
+    Export the consensus mask in multiple formats (TIFF, OME-TIFF, PNG, NumPy NPY/NPZ).
 
     Channel 0: nuclear label mask (required)
     Channel 1: cytoplasm label mask (optional)
@@ -36,7 +36,29 @@ def export_consensus_mask(
     else:
         output = nuclear_mask.astype(np.uint32)
 
-    tifffile.imwrite(str(filepath), output, compression='zlib')
+    suffix = filepath.suffix.lower()
+    lower_name = filepath.name.lower()
+
+    if suffix == '.npy':
+        np.save(str(filepath), output)
+    elif suffix == '.npz':
+        np.savez_compressed(str(filepath), mask=output)
+    elif suffix == '.png':
+        try:
+            from PIL import Image
+            img_arr = output[0] if output.ndim == 3 else output
+            if img_arr.max() > 255:
+                # 16-bit PNG for high cell counts
+                img = Image.fromarray(img_arr.astype(np.uint16))
+            else:
+                img = Image.fromarray(img_arr.astype(np.uint8))
+            img.save(str(filepath))
+        except Exception:
+            tifffile.imwrite(str(filepath), output)
+    elif '.ome.tif' in lower_name:
+        tifffile.imwrite(str(filepath), output, ome=True, compression='zlib')
+    else:
+        tifffile.imwrite(str(filepath), output, compression='zlib')
 
 
 def export_features_csv(
@@ -45,7 +67,7 @@ def export_features_csv(
     sample_name: str = "",
 ) -> None:
     """
-    Export a feature DataFrame to CSV.
+    Export a feature DataFrame in multiple formats (CSV, Excel XLSX, Parquet, TSV, JSON).
     Inserts an ``Image`` column with *sample_name* if not already present.
     """
     filepath = Path(filepath)
@@ -53,14 +75,52 @@ def export_features_csv(
     out = df.copy()
     if 'Image' not in out.columns and sample_name:
         out.insert(0, 'Image', sample_name)
-    out.to_csv(str(filepath), index=False)
+
+    suffix = filepath.suffix.lower()
+    if suffix == '.xlsx':
+        try:
+            out.to_excel(str(filepath), index=False)
+        except Exception as e:
+            # Fallback to CSV if openpyxl is not installed
+            fallback = filepath.with_suffix('.csv')
+            out.to_csv(str(fallback), index=False)
+            raise RuntimeError(f"Could not write Excel file ({e}). Saved as CSV: {fallback}") from e
+    elif suffix == '.parquet':
+        try:
+            out.to_parquet(str(filepath), index=False)
+        except Exception as e:
+            fallback = filepath.with_suffix('.csv')
+            out.to_csv(str(fallback), index=False)
+            raise RuntimeError(f"Could not write Parquet file ({e}). Saved as CSV: {fallback}") from e
+    elif suffix in ('.tsv', '.txt'):
+        out.to_csv(str(filepath), sep='\t', index=False)
+    elif suffix == '.json':
+        out.to_json(str(filepath), orient='records', indent=2)
+    else:
+        out.to_csv(str(filepath), index=False)
 
 
 def export_confidence_map(filepath: Path, confidence_map: np.ndarray) -> None:
-    """Export a per-pixel confidence map as a float32 TIFF."""
+    """
+    Export a per-pixel confidence map in multiple formats (float32 TIFF, PNG heatmap, NumPy NPY/NPZ).
+    """
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    tifffile.imwrite(str(filepath), confidence_map.astype(np.float32), compression='zlib')
+    suffix = filepath.suffix.lower()
+
+    if suffix == '.npy':
+        np.save(str(filepath), confidence_map.astype(np.float32))
+    elif suffix == '.npz':
+        np.savez_compressed(str(filepath), confidence=confidence_map.astype(np.float32))
+    elif suffix == '.png':
+        norm = np.clip(confidence_map * 255.0, 0, 255).astype(np.uint8)
+        try:
+            from PIL import Image
+            Image.fromarray(norm).save(str(filepath))
+        except Exception:
+            tifffile.imwrite(str(filepath), norm)
+    else:
+        tifffile.imwrite(str(filepath), confidence_map.astype(np.float32), compression='zlib')
 
 
 def export_batch_summary(filepath: Path, batch_results: dict) -> None:

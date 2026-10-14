@@ -427,15 +427,15 @@ class IrisCellularNeighborhoodsWidget(QWidget):
 
         self.setStyleSheet("""
             QWidget { background-color: #1f232b; color: #E0E0E0; font-size: 12px; }
-            QGroupBox { border: 1px solid #444; margin-top: 6px; padding-top: 6px; }
+            QGroupBox { border: 1px solid #444; border-radius: 8px; margin-top: 6px; padding-top: 6px; }
             QLabel { color: #DDD; }
             QSpinBox, QDoubleSpinBox, QComboBox {
                 background-color: #2A2A2A; color: white; border: 1px solid #555;
-                padding: 2px 4px; height: 22px;
+                border-radius: 4px; padding: 2px 4px; height: 22px;
             }
             QPushButton {
                 background-color: #3A6A9A; color: white; font-weight: bold;
-                border: 1px solid #558; padding: 5px;
+                border: 1px solid #558; border-radius: 4px; padding: 5px;
             }
             QPushButton:hover { background-color: #4A7FBA; }
             QPushButton:disabled { background-color: #333333; color: #777777; border-color: #444; }

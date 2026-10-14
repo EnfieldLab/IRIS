@@ -1,22 +1,28 @@
 """
 IRIS-Viewer Main Control Widget
-Settings, compute engine configuration, image loading, and dashboard.
-Modeled after IRIS/widgets/control.py but scoped exclusively to Viewer functions.
+Clean, natural, and user-friendly control panel for image loading, phenotyping,
+canvas overlays, multi-format export, and system diagnostics.
 """
+from __future__ import annotations
+
+import os
+from typing import Optional, List
+
 from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QSpinBox,
     QDoubleSpinBox, QCheckBox, QPushButton, QGroupBox, QFrame,
     QFileDialog, QMessageBox, QSizePolicy, QScrollArea
 )
 from qtpy.QtCore import Qt, Signal
+
 from iris_common.widgets.styles import SHARED_DARK_THEME
 from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
 from iris_common.widgets.canvas_legend import CanvasLegendOverlay
 from iris_common.widgets.canvas_scalebar import CanvasScaleBarOverlay
-import os
+
 
 class ImageControlWidget(QWidget):
-    """Dock widget for global Viewer settings, compute config, and image I/O."""
+    """Dock widget for Viewer settings, image I/O, annotations, and multi-format export."""
 
     # Signals
     loadDirectoryTriggered = Signal(str)
@@ -24,14 +30,14 @@ class ImageControlWidget(QWidget):
     scaleFactorChanged = Signal(float)
     scaleChanged = Signal(float)
     batchProcessTriggered = Signal()
-    exportMaskTriggered = Signal()
-    exportFeaturesTriggered = Signal()
-    exportConfidenceTriggered = Signal()
+    exportMaskTriggered = Signal([str], [])
+    exportFeaturesTriggered = Signal([str], [])
+    exportConfidenceTriggered = Signal([str], [])
     loadExistingMaskTriggered = Signal(str)
     loadChannelColorTriggered = Signal(str)
     loadCellTypeColorTriggered = Signal(str)
     loadAnnotationDataTriggered = Signal(str)
-    exportUpdatedPhenotypesTriggered = Signal()
+    exportUpdatedPhenotypesTriggered = Signal([str], [])
     autoSegmentTriggered = Signal()
     saveBoundsTriggered = Signal()
     viewLockToggled = Signal(bool)
@@ -41,153 +47,367 @@ class ImageControlWidget(QWidget):
         super().__init__(parent)
         self.viewer = viewer
         self.setStyleSheet(SHARED_DARK_THEME)
-        
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        
+
         self.content_widget = QWidget()
-        self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(2, 2, 2, 2)
-        self.main_layout.setSpacing(4)
-        self.content_widget.setLayout(self.main_layout)
-        
+        self.main_layout = QVBoxLayout(self.content_widget)
+        # Generous, breathable margins and spacing so nothing feels squished
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(12)
+
         self.scroll_area.setWidget(self.content_widget)
-        
-        outer_layout = QVBoxLayout()
+
+        outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(self.scroll_area)
-        self.setLayout(outer_layout)
 
-        self._build_settings_group()
-        self._build_compute_group()
+        # MultiSampleComparisonWidget is kept as an attribute for controller docking (TMA tab)
+        self.comparison_widget = MultiSampleComparisonWidget()
+
+        # Build clean, natural sections in logical order
         self._build_input_group()
         self._build_annotation_group()
-        
-        # Replace dashboard with MultiSampleComparisonWidget
-        self.comparison_widget = MultiSampleComparisonWidget()
-        self.main_layout.addWidget(self.comparison_widget)
-
+        self._build_display_group()
         self._build_output_group()
-        self.main_layout.addStretch()
+        self._build_compute_group()
 
-    # ── Settings ─────────────────────────────────────────────────────
-    def _build_settings_group(self):
-        group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(4, 4, 4, 4)
-        gl.setSpacing(4)
-        group.setLayout(gl)
+        self.main_layout.addStretch(1)
 
-        title = QLabel("Settings")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
+    # ── 1. Image & Sample Input ──────────────────────────────────────────────
+    def _build_input_group(self):
+        box = QGroupBox()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(10, 3, 10, 10)
+        layout.setSpacing(8)
 
-        self._add_separator(gl)
+        title = QLabel("Image Input")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        layout.addWidget(title)
 
-        # Scale
+        # Directory selection button
+        self.btn_load_dir = QPushButton("Select Image Directory…")
+        self.btn_load_dir.setMinimumHeight(28)
+        self.btn_load_dir.clicked.connect(self._on_load_dir_clicked)
+        layout.addWidget(self.btn_load_dir)
+
+        self.lbl_dir_path = QLabel("No directory selected")
+        self.lbl_dir_path.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
+        self.lbl_dir_path.setWordWrap(True)
+        layout.addWidget(self.lbl_dir_path)
+
+        # Sample selector
+        row_sample = QHBoxLayout()
+        row_sample.setSpacing(8)
+        lbl_sample = QLabel("Sample:")
+        lbl_sample.setFixedWidth(55)
+        row_sample.addWidget(lbl_sample)
+
+        self.combo_sample = QComboBox()
+        self.combo_sample.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_sample.currentTextChanged.connect(
+            lambda s: self.sampleSelected.emit(s) if s else None
+        )
+        row_sample.addWidget(self.combo_sample)
+        layout.addLayout(row_sample)
+
+        # Color Configuration Buttons
+        row_colors = QHBoxLayout()
+        row_colors.setSpacing(8)
+        self.btn_load_marker_color = QPushButton("Marker Colors…")
+        self.btn_load_marker_color.setToolTip("Load custom CSV/XLSX for channel color mappings")
+        self.btn_load_marker_color.clicked.connect(self._on_load_marker_color_clicked)
+        row_colors.addWidget(self.btn_load_marker_color)
+
+        self.btn_load_celltype_color = QPushButton("Cell Type Colors…")
+        self.btn_load_celltype_color.setToolTip("Load custom CSV/XLSX for cell phenotype colors")
+        self.btn_load_celltype_color.clicked.connect(self._on_load_celltype_color_clicked)
+        row_colors.addWidget(self.btn_load_celltype_color)
+        layout.addLayout(row_colors)
+
+        self.main_layout.addWidget(box)
+
+    # ── 2. Annotations & Phenotyping ─────────────────────────────────────────
+    def _build_annotation_group(self):
+        box = QGroupBox()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(10, 3, 10, 10)
+        layout.setSpacing(8)
+
+        title = QLabel("Annotations & Phenotyping")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        layout.addWidget(title)
+
+        # Load annotation file
+        self.btn_load_anno = QPushButton("Load Annotation File…")
+        self.btn_load_anno.setMinimumHeight(28)
+        self.btn_load_anno.clicked.connect(self._on_load_anno_clicked)
+        layout.addWidget(self.btn_load_anno)
+
+        self.lbl_annotation = QLabel("No file loaded")
+        self.lbl_annotation.setStyleSheet("color: #888; font-size: 11px; font-style: italic;")
+        self.lbl_annotation.setWordWrap(True)
+        layout.addWidget(self.lbl_annotation)
+
+        # Phenotype column selector
+        row_col = QHBoxLayout()
+        row_col.setSpacing(8)
+        lbl_pheno = QLabel("Phenotype:")
+        lbl_pheno.setFixedWidth(70)
+        row_col.addWidget(lbl_pheno)
+
+        self.combo_ref = QComboBox()
+        self.combo_ref.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_ref.currentIndexChanged.connect(self.on_col_change)
+        row_col.addWidget(self.combo_ref)
+        layout.addLayout(row_col)
+
+        # Quick Curation Row (Clean, natural layout)
+        row_curate = QHBoxLayout()
+        row_curate.setSpacing(8)
+        self.chk_quick_curate = QCheckBox("Quick Curation:")
+        self.chk_quick_curate.setToolTip("Hold Alt and click cells on canvas to reclassify into chosen type")
+        row_curate.addWidget(self.chk_quick_curate)
+
+        self.combo_quick_type = QComboBox()
+        self.combo_quick_type.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row_curate.addWidget(self.combo_quick_type)
+        layout.addLayout(row_curate)
+
+        # Tissue boundary tools
+        row_boundary = QHBoxLayout()
+        row_boundary.setSpacing(8)
+        self.btn_auto_segment = QPushButton("Auto Boundary")
+        self.btn_auto_segment.setToolTip("Automatically detect tissue envelope")
+        self.btn_auto_segment.clicked.connect(lambda: self.autoSegmentTriggered.emit())
+        row_boundary.addWidget(self.btn_auto_segment)
+
+        self.btn_save_bounds = QPushButton("Save Boundary")
+        self.btn_save_bounds.setToolTip("Save tissue boundary shapes")
+        self.btn_save_bounds.clicked.connect(lambda: self.saveBoundsTriggered.emit())
+        row_boundary.addWidget(self.btn_save_bounds)
+        layout.addLayout(row_boundary)
+
+        self.main_layout.addWidget(box)
+
+    # ── 3. Canvas Display & Overlays ─────────────────────────────────────────
+    def _build_display_group(self):
+        box = QGroupBox()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(10, 3, 10, 10)
+        layout.setSpacing(8)
+
+        title = QLabel("Canvas Display & Overlays")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        layout.addWidget(title)
+
+        # Physical Scale
         row_scale = QHBoxLayout()
-        row_scale.addWidget(QLabel("Physical Scale (µm/px):"))
+        row_scale.setSpacing(8)
+        lbl_scale = QLabel("Scale (µm/px):")
+        lbl_scale.setFixedWidth(90)
+        row_scale.addWidget(lbl_scale)
+
         self.spin_scale = QDoubleSpinBox()
-        self.spin_scale.setRange(0.01, 100.0)
+        self.spin_scale.setRange(0.001, 1000.0)
         self.spin_scale.setValue(1.0)
         self.spin_scale.setDecimals(4)
         self.spin_scale.setSingleStep(0.1)
         self.spin_scale.valueChanged.connect(self.scaleFactorChanged.emit)
         row_scale.addWidget(self.spin_scale)
-        gl.addLayout(row_scale)
+        layout.addLayout(row_scale)
 
-        # Scale Bar Position
-        sb_pos_layout = QHBoxLayout()
-        sb_pos_layout.addWidget(QLabel("Scale Bar Position:"))
+        # Camera Lock
+        self.chk_lock_camera = QCheckBox("Lock Camera View Across Samples")
+        self.chk_lock_camera.toggled.connect(self.viewLockToggled.emit)
+        layout.addWidget(self.chk_lock_camera)
+
+        self._add_divider(layout)
+
+        # Scale Bar Controls (Clean 2-row layout so nothing is squished)
+        row_sb_pos = QHBoxLayout()
+        row_sb_pos.setSpacing(8)
+        lbl_pos = QLabel("Scale Bar Pos:")
+        lbl_pos.setFixedWidth(90)
+        row_sb_pos.addWidget(lbl_pos)
+
         self.combo_sb_pos = QComboBox()
         self.combo_sb_pos.addItems(["bottom_right", "bottom_left", "top_right", "top_left"])
         self.combo_sb_pos.setCurrentText("bottom_right")
-        sb_pos_layout.addWidget(self.combo_sb_pos)
-        gl.addLayout(sb_pos_layout)
+        row_sb_pos.addWidget(self.combo_sb_pos)
+        layout.addLayout(row_sb_pos)
 
-        # Scale Bar Size
-        sb_size_layout = QHBoxLayout()
-        sb_size_layout.addWidget(QLabel("Scale Bar Font Size:"))
+        row_sb_details = QHBoxLayout()
+        row_sb_details.setSpacing(8)
+        row_sb_details.addWidget(QLabel("Font Size:"))
         self.spin_sb_size = QSpinBox()
         self.spin_sb_size.setRange(8, 48)
         self.spin_sb_size.setValue(26)
-        sb_size_layout.addWidget(self.spin_sb_size)
-        gl.addLayout(sb_size_layout)
+        row_sb_details.addWidget(self.spin_sb_size)
 
-        # Scale Bar Thickness
-        sb_thick_layout = QHBoxLayout()
-        sb_thick_layout.addWidget(QLabel("Scale Bar Thickness:"))
+        row_sb_details.addWidget(QLabel("Thickness:"))
         self.spin_sb_thick = QSpinBox()
         self.spin_sb_thick.setRange(1, 40)
         self.spin_sb_thick.setValue(10)
-        sb_thick_layout.addWidget(self.spin_sb_thick)
-        gl.addLayout(sb_thick_layout)
+        row_sb_details.addWidget(self.spin_sb_thick)
+        layout.addLayout(row_sb_details)
 
-        # Lock Camera
-        self.chk_lock_camera = QCheckBox("Lock Camera Position")
-        self.chk_lock_camera.toggled.connect(self.viewLockToggled.emit)
-        gl.addWidget(self.chk_lock_camera)
-
+        # Canvas Legend
         if self.viewer:
             try:
                 self.viewer.scale_bar.visible = False
             except AttributeError:
                 pass
-                
+
             self.custom_scale_bar = CanvasScaleBarOverlay(self.viewer)
             self.spin_scale.valueChanged.connect(self.custom_scale_bar.set_physical_scale)
             self.combo_sb_pos.currentTextChanged.connect(self.custom_scale_bar.set_position)
             self.spin_sb_size.valueChanged.connect(self.custom_scale_bar.set_font_size)
             self.spin_sb_thick.valueChanged.connect(self.custom_scale_bar.set_thickness)
-            
-            # Canvas Legend Overlay
+
+            self._add_divider(layout)
+
             self.canvas_legend = CanvasLegendOverlay(self.viewer)
-            
-            # Canvas Legend Toggle
+
             self.chk_canvas_legend = QCheckBox("Show On-Canvas Legend")
             self.chk_canvas_legend.toggled.connect(self.canvas_legend.set_visible)
             self.chk_canvas_legend.setChecked(True)
-            gl.addWidget(self.chk_canvas_legend)
-            
-            # Canvas Legend Opacity
-            row_opacity = QHBoxLayout()
-            row_opacity.addWidget(QLabel("Legend Opacity:"))
+            layout.addWidget(self.chk_canvas_legend)
+
+            row_leg_details = QHBoxLayout()
+            row_leg_details.setSpacing(8)
+            row_leg_details.addWidget(QLabel("Opacity:"))
             self.spin_legend_opacity = QDoubleSpinBox()
             self.spin_legend_opacity.setRange(0.1, 1.0)
             self.spin_legend_opacity.setValue(0.1)
             self.spin_legend_opacity.setSingleStep(0.1)
             self.spin_legend_opacity.valueChanged.connect(self.canvas_legend.set_opacity)
-            row_opacity.addWidget(self.spin_legend_opacity)
-            gl.addLayout(row_opacity)
-            
-            # Canvas Legend Font Size
-            row_font = QHBoxLayout()
-            row_font.addWidget(QLabel("Legend Font Size:"))
+            row_leg_details.addWidget(self.spin_legend_opacity)
+
+            row_leg_details.addWidget(QLabel("Font Size:"))
             self.spin_legend_font = QSpinBox()
             self.spin_legend_font.setRange(8, 36)
             self.spin_legend_font.setValue(16)
             self.spin_legend_font.valueChanged.connect(self.canvas_legend.set_font_size)
-            row_font.addWidget(self.spin_legend_font)
-            gl.addLayout(row_font)
+            row_leg_details.addWidget(self.spin_legend_font)
+            layout.addLayout(row_leg_details)
 
-        self.main_layout.addWidget(group)
+        self.main_layout.addWidget(box)
 
+    # ── 4. Export & Output ───────────────────────────────────────────────────
+    def _build_output_group(self):
+        self.output_group = QGroupBox()
+        layout = QVBoxLayout(self.output_group)
+        layout.setContentsMargins(10, 3, 10, 10)
+        layout.setSpacing(8)
 
+        title = QLabel("Export")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        layout.addWidget(title)
 
+        # Format selector row: simple, intuitive, natural
+        row_fmt = QHBoxLayout()
+        row_fmt.setSpacing(8)
+        lbl_fmt = QLabel("Preferred Format:")
+        lbl_fmt.setFixedWidth(110)
+        row_fmt.addWidget(lbl_fmt)
 
+        self.combo_export_format = QComboBox()
+        self.combo_export_format.addItem("Default (TIFF / CSV)", "")
+        self.combo_export_format.addItem("OME-TIFF (*.ome.tif)", ".ome.tif")
+        self.combo_export_format.addItem("PNG Image (*.png)", ".png")
+        self.combo_export_format.addItem("NumPy Array (*.npy)", ".npy")
+        self.combo_export_format.addItem("Excel Workbook (*.xlsx)", ".xlsx")
+        self.combo_export_format.addItem("Apache Parquet (*.parquet)", ".parquet")
+        self.combo_export_format.addItem("Tab-Separated (*.tsv)", ".tsv")
+        row_fmt.addWidget(self.combo_export_format)
+        layout.addLayout(row_fmt)
+
+        # 4 Direct, clear action buttons in a 2x2 grid
+        grid = QGridLayout()
+        grid.setSpacing(8)
+
+        self.btn_export_mask = QPushButton("Export Mask…")
+        self.btn_export_mask.setMinimumHeight(28)
+        self.btn_export_mask.clicked.connect(self._on_export_mask_clicked)
+        grid.addWidget(self.btn_export_mask, 0, 0)
+
+        self.btn_export_features = QPushButton("Export Features…")
+        self.btn_export_features.setMinimumHeight(28)
+        self.btn_export_features.clicked.connect(self._on_export_features_clicked)
+        grid.addWidget(self.btn_export_features, 0, 1)
+
+        self.btn_export_confidence = QPushButton("Export Confidence…")
+        self.btn_export_confidence.setMinimumHeight(28)
+        self.btn_export_confidence.clicked.connect(self._on_export_confidence_clicked)
+        grid.addWidget(self.btn_export_confidence, 1, 0)
+
+        self.btn_export_anno = QPushButton("Export Phenotypes…")
+        self.btn_export_anno.setMinimumHeight(28)
+        self.btn_export_anno.clicked.connect(self._on_export_phenotypes_clicked)
+        grid.addWidget(self.btn_export_anno, 1, 1)
+
+        layout.addLayout(grid)
+
+        self._add_divider(layout)
+
+        # Batch Processing
+        self.btn_batch = QPushButton("Batch Process All Samples")
+        self.btn_batch.setMinimumHeight(32)
+        self.btn_batch.setStyleSheet("""
+            QPushButton {
+                background-color: #2D6A4F; color: white; font-weight: bold;
+                border-radius: 4px; padding: 6px; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #40916C; }
+            QPushButton:disabled { background-color: #2A3A4A; color: #777; }
+        """)
+        self.btn_batch.clicked.connect(lambda: self.batchProcessTriggered.emit())
+        layout.addWidget(self.btn_batch)
+
+        self.main_layout.addWidget(self.output_group)
+
+    def _get_current_fmt(self) -> str:
+        return self.combo_export_format.currentData() or ""
+
+    def _on_export_mask_clicked(self):
+        fmt = self._get_current_fmt()
+        # If user picked a tabular format (xlsx/csv/tsv), fallback to tiff for mask
+        if fmt in ('.xlsx', '.parquet', '.tsv', '.csv'):
+            fmt = '.tiff'
+        self.exportMaskTriggered[str].emit(fmt)
+
+    def _on_export_features_clicked(self):
+        fmt = self._get_current_fmt()
+        # If user picked an image format (tiff/png/npy), fallback to csv for features
+        if fmt in ('.tiff', '.ome.tif', '.png'):
+            fmt = '.csv'
+        self.exportFeaturesTriggered[str].emit(fmt)
+
+    def _on_export_confidence_clicked(self):
+        fmt = self._get_current_fmt()
+        if fmt in ('.xlsx', '.parquet', '.tsv', '.csv'):
+            fmt = '.tiff'
+        self.exportConfidenceTriggered[str].emit(fmt)
+
+    def _on_export_phenotypes_clicked(self):
+        fmt = self._get_current_fmt()
+        if fmt in ('.tiff', '.ome.tif', '.png'):
+            fmt = '.csv'
+        self.exportUpdatedPhenotypesTriggered[str].emit(fmt)
+
+    # ── 5. System & Compute ──────────────────────────────────────────────────
     def _build_compute_group(self):
-        group = QGroupBox()
-        cl = QVBoxLayout()
-        cl.setContentsMargins(4, 4, 4, 4)
-        cl.setSpacing(4)
-        group.setLayout(cl)
+        box = QGroupBox()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(10, 3, 10, 10)
+        layout.setSpacing(4)
 
-        lbl_c_title = QLabel("Compute Engine")
-        lbl_c_title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        cl.addWidget(lbl_c_title)
-
-        self._add_separator(cl)
+        title = QLabel("System & Compute")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        layout.addWidget(title)
 
         try:
             import torch
@@ -196,179 +416,33 @@ class ImageControlWidget(QWidget):
             HAS_TORCH = False
 
         cpu_cores = os.cpu_count() or "Unknown"
-        gpu_stat = "Not Detected (CPU Only)"
+        accel_text = "CPU Only"
         if HAS_TORCH:
-            if torch.cuda.is_available(): gpu_stat = f"CUDA Enabled ({torch.cuda.get_device_name(0)})"
-            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(): gpu_stat = "Apple Silicon MPS Enabled"
+            if torch.cuda.is_available():
+                accel_text = f"CUDA ({torch.cuda.get_device_name(0)})"
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                accel_text = "Apple Silicon (MPS)"
 
-        lbl_cpu = QLabel(f"<b>CPU Cores:</b> {cpu_cores} Available")
-        lbl_cpu.setStyleSheet("color: #AACCFF;")
-        cl.addWidget(lbl_cpu)
+        lbl_cpu = QLabel(f"CPU: {cpu_cores} Cores Available")
+        lbl_cpu.setStyleSheet("color: #BBB; font-size: 11px;")
+        layout.addWidget(lbl_cpu)
 
-        lbl_gpu = QLabel(f"<b>Hardware Accelerator:</b> {gpu_stat}")
-        lbl_gpu.setWordWrap(True)
-        lbl_gpu.setStyleSheet("color: #AAFFAA;" if "Enabled" in gpu_stat else "color: #FFAAAA;")
-        cl.addWidget(lbl_gpu)
+        lbl_gpu = QLabel(f"Accelerator: {accel_text}")
+        lbl_gpu.setStyleSheet("color: #BBB; font-size: 11px;")
+        layout.addWidget(lbl_gpu)
 
-
-
-        self.main_layout.addWidget(group)
-
-    # ── Input ────────────────────────────────────────────────────────
-    def _build_input_group(self):
-        group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(5, 5, 5, 5)
-        gl.setSpacing(4)
-        group.setLayout(gl)
-
-        title = QLabel("Image Input")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
-
-        self._add_separator(gl)
-
-        self.btn_load_dir = QPushButton("Select Image Directory")
-        self.btn_load_dir.clicked.connect(self._on_load_dir_clicked)
-        gl.addWidget(self.btn_load_dir)
-
-        self.lbl_dir_path = QLabel("No directory selected")
-        self.lbl_dir_path.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
-        self.lbl_dir_path.setWordWrap(True)
-        gl.addWidget(self.lbl_dir_path)
-
-        # Sample selector
-        row_sample = QHBoxLayout()
-        row_sample.addWidget(QLabel("Sample:"))
-        self.combo_sample = QComboBox()
-        self.combo_sample.currentTextChanged.connect(
-            lambda s: self.sampleSelected.emit(s) if s else None
-        )
-        row_sample.addWidget(self.combo_sample)
-        gl.addLayout(row_sample)
-
-        # Load existing mask
-        self.btn_load_mask = QPushButton("Load Existing Segmentation Mask")
-        self.btn_load_mask.clicked.connect(self._on_load_mask_clicked)
-        gl.addWidget(self.btn_load_mask)
-        # Load Marker Color and Cell Type Color
-        color_row = QHBoxLayout()
-        self.btn_load_marker_color = QPushButton("Load Marker Color")
-        self.btn_load_marker_color.clicked.connect(self._on_load_marker_color_clicked)
-        color_row.addWidget(self.btn_load_marker_color)
-        
-        self.btn_load_celltype_color = QPushButton("Load Cell Type Color")
-        self.btn_load_celltype_color.clicked.connect(self._on_load_celltype_color_clicked)
-        color_row.addWidget(self.btn_load_celltype_color)
-        
-        gl.addLayout(color_row)
-
-        self.main_layout.addWidget(group)
-
-    def _build_annotation_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(4)
-        
-        title = QLabel("Annotation Data")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        layout.addWidget(title)
-
-        self.lbl_annotation = QLabel("No file loaded")
-        self.lbl_annotation.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self.lbl_annotation)
-
-        self.btn_load_anno = QPushButton("Load Annotation File…")
-        self.btn_load_anno.clicked.connect(self._on_load_anno_clicked)
-        layout.addWidget(self.btn_load_anno)
-        
-        # Cell Phenotype Ref Col
-        r_row = QHBoxLayout()
-        r_row.addWidget(QLabel("Cell Phenotype:"))
-        self.combo_ref = QComboBox()
-        self.combo_ref.currentIndexChanged.connect(self.on_col_change)
-        r_row.addWidget(self.combo_ref)
-        layout.addLayout(r_row)
-
-        # Quick Curation
-        q_row = QHBoxLayout()
-        self.chk_quick_curate = QCheckBox("Quick Curation")
-        self.chk_quick_curate.setStyleSheet("color: #FFaa00; font-weight: bold;")
-        self.combo_quick_type = QComboBox()
-        q_row.addWidget(self.chk_quick_curate)
-        q_row.addWidget(self.combo_quick_type)
-        layout.addLayout(q_row)
-        
-        segment_save_layout = QHBoxLayout()
-        self.btn_auto_segment = QPushButton("Auto-Segment Boundary")
-        self.btn_auto_segment.clicked.connect(lambda: self.autoSegmentTriggered.emit())
-        self.btn_save_bounds = QPushButton("Save Tissue Boundary")
-        self.btn_save_bounds.clicked.connect(lambda: self.saveBoundsTriggered.emit())
-        segment_save_layout.addWidget(self.btn_auto_segment)
-        segment_save_layout.addWidget(self.btn_save_bounds)
-        layout.addLayout(segment_save_layout)
-
-        self.btn_export_anno = QPushButton("Export Updated Phenotypes")
-        self.btn_export_anno.clicked.connect(lambda: self.exportUpdatedPhenotypesTriggered.emit())
-        layout.addWidget(self.btn_export_anno)
-        
         self.main_layout.addWidget(box)
+
+    # ── Utilities ────────────────────────────────────────────────────────────
+    def _add_divider(self, layout):
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("color: #383D48; background-color: #383D48; max-height: 1px; margin: 4px 0;")
+        layout.addWidget(line)
 
     def on_col_change(self):
         """Signal handler for when the cell phenotype reference column changes."""
         self.colChanged.emit()
-
-    def _on_load_anno_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Annotation File", "", "Table files (*.csv *.xlsx *.h5ad);;All files (*)"
-        )
-        if path:
-            self.lbl_annotation.setText(path.split("/")[-1])
-            self.loadAnnotationDataTriggered.emit(path)
-
-
-
-    # ── Output ───────────────────────────────────────────────────────
-    def _build_output_group(self):
-        self.output_group = QGroupBox()
-        gl = QVBoxLayout()
-        gl.setContentsMargins(5, 5, 5, 5)
-        gl.setSpacing(4)
-        self.output_group.setLayout(gl)
-
-        title = QLabel("Export")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
-        gl.addWidget(title)
-
-        self._add_separator(gl)
-
-        self.btn_export_mask = QPushButton("Export Consensus Mask (.tiff)")
-        self.btn_export_mask.clicked.connect(lambda: self.exportMaskTriggered.emit())
-        gl.addWidget(self.btn_export_mask)
-
-        self.btn_export_features = QPushButton("Export Features (.csv)")
-        self.btn_export_features.clicked.connect(lambda: self.exportFeaturesTriggered.emit())
-        gl.addWidget(self.btn_export_features)
-
-        self.btn_export_confidence = QPushButton("Export Confidence Map (.tiff)")
-        self.btn_export_confidence.clicked.connect(lambda: self.exportConfidenceTriggered.emit())
-        gl.addWidget(self.btn_export_confidence)
-
-        self._add_separator(gl)
-
-        self.btn_batch = QPushButton("Batch Process All Samples")
-        self.btn_batch.clicked.connect(lambda: self.batchProcessTriggered.emit())
-        gl.addWidget(self.btn_batch)
-
-        self.main_layout.addWidget(self.output_group)
-
-    # ── Utility ──────────────────────────────────────────────────────
-    def _add_separator(self, layout):
-        pass
-
-    def _detect_device(self):
-        pass
 
     def _on_load_dir_clicked(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Image Directory")
@@ -387,15 +461,16 @@ class ImageControlWidget(QWidget):
         if fname:
             self.loadCellTypeColorTriggered.emit(fname)
 
-    def _on_load_mask_clicked(self):
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "Load Segmentation Mask", "", "TIFF Images (*.tiff *.tif)"
+    def _on_load_anno_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Annotation File", "", "Table files (*.csv *.xlsx *.h5ad);;All files (*)"
         )
-        if filepath:
-            self.loadExistingMaskTriggered.emit(filepath)
+        if path:
+            self.lbl_annotation.setText(os.path.basename(path))
+            self.loadAnnotationDataTriggered.emit(path)
 
-    # ── Public API ───────────────────────────────────────────────────
-    def update_sample_list(self, sample_names: list):
+    # ── Public API ───────────────────────────────────────────────────────────
+    def update_sample_list(self, sample_names: List[str]):
         """Populate the sample selector dropdown."""
         self.combo_sample.blockSignals(True)
         self.combo_sample.clear()
@@ -403,12 +478,12 @@ class ImageControlWidget(QWidget):
         self.combo_sample.blockSignals(False)
 
     def update_dashboard(
-        self, 
-        image_dims: str = None, 
-        num_channels: str = None,
-        seg_status: str = None, 
-        total_cells: str = None, 
-        confidence: str = None
+        self,
+        image_dims: Optional[str] = None,
+        num_channels: Optional[str] = None,
+        seg_status: Optional[str] = None,
+        total_cells: Optional[str] = None,
+        confidence: Optional[str] = None
     ):
         """Update dashboard labels with current state. (Deprecated)"""
         pass

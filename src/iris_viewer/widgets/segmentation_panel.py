@@ -388,7 +388,7 @@ class PipelineBuilderWidget(QWidget):
         # Header controls
         row_header = QHBoxLayout()
         title = QLabel("Method Groups (Pipelines)")
-        title.setStyleSheet("color: #DDD; font-size: 13px; font-weight: bold;")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
         row_header.addWidget(title)
         
         self.btn_add_group = QPushButton("+ New Group")
@@ -488,15 +488,15 @@ class SegmentationStudioDialog(QDialog):
 
         self.setStyleSheet("""
             QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
-            QGroupBox { border: 1px solid #444; margin-top: 6px; font-weight: bold; color: #DDD; }
+            QGroupBox { border: 1px solid #444; border-radius: 8px; margin-top: 6px; padding-top: 6px; font-weight: bold; color: #DDD; }
             QPushButton {
                 background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 3px; padding: 5px 12px; font-size: 12px;
+                border: 1px solid #4B82B5; border-radius: 4px; padding: 5px 12px; font-size: 12px;
             }
             QPushButton:hover { background-color: #3D75A8; }
             QComboBox, QSpinBox, QSlider {
                 background-color: #2A2A2A; color: white; border: 1px solid #555;
-                border-radius: 3px; padding: 3px 6px; font-size: 12px;
+                border-radius: 4px; padding: 3px 6px; font-size: 12px;
             }
             QLabel { color: #DDD; font-size: 12px; }
             QTableWidget {

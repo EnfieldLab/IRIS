@@ -90,6 +90,7 @@ class ViewerController:
 
         from qtpy.QtWidgets import QDockWidget
 
+        docks = {}
         for widget, name in [
             (self.control_widget,      "Control"),
             (self.comparison_widget,   "TMA"),
@@ -97,24 +98,38 @@ class ViewerController:
             (self.neighborhood_widget, "Neighborhoods"),
             (self.marker_widget,       "Marker"),
         ]:
-            self.viewer.window.add_dock_widget(widget, name=name, area="right")
+            docks[name] = self.viewer.window.add_dock_widget(widget, name=name, area="right")
             
-        self.viewer.window.add_dock_widget(self.legend_widget, name="Legend", area="left")
+        legend_dock = self.viewer.window.add_dock_widget(self.legend_widget, name="Legend", area="left")
         
         self.comparison_widget.show()
 
-        dw = self.viewer.window.dock_widgets
         qt = self.viewer.window._qt_window
-        qt.tabifyDockWidget(dw["Control"].parent(),       dw["TMA"].parent())
-        qt.tabifyDockWidget(dw["TMA"].parent(),           dw["Segmentation"].parent())
-        qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Neighborhoods"].parent())
-        qt.tabifyDockWidget(dw["Neighborhoods"].parent(), dw["Marker"].parent())
-        dw["Control"].parent().raise_()
+
+        def _get_dock_wrapper(d):
+            if isinstance(d, QDockWidget):
+                return d
+            if hasattr(d, 'parent') and isinstance(d.parent(), QDockWidget):
+                return d.parent()
+            return d
+
+        control_dock = _get_dock_wrapper(docks["Control"])
+        tma_dock     = _get_dock_wrapper(docks["TMA"])
+        seg_dock     = _get_dock_wrapper(docks["Segmentation"])
+        neigh_dock   = _get_dock_wrapper(docks["Neighborhoods"])
+        marker_dock  = _get_dock_wrapper(docks["Marker"])
+
+        qt.tabifyDockWidget(control_dock, tma_dock)
+        qt.tabifyDockWidget(tma_dock,     seg_dock)
+        qt.tabifyDockWidget(seg_dock,     neigh_dock)
+        qt.tabifyDockWidget(neigh_dock,   marker_dock)
+        control_dock.raise_()
 
         # Tabify Legend with napari's layer list
+        leg_wrapper = _get_dock_wrapper(legend_dock)
         for d in qt.findChildren(QDockWidget):
             if d.windowTitle().lower() == "layer list":
-                qt.tabifyDockWidget(d, dw["Legend"].parent())
+                qt.tabifyDockWidget(d, leg_wrapper)
                 d.raise_()
                 break
 
@@ -732,14 +747,18 @@ class ViewerController:
 
     # ── Exports ─────────────────────────────────────────────────────────────
 
-    def _export_mask(self) -> None:
+    def _export_mask(self, fmt: str = "") -> None:
         if self.state.consensus_mask is None:
             QMessageBox.warning(self.control_widget, "No Mask", "No consensus mask to export.")
             return
         sample = self.state.current_sample_name or "sample"
-        filepath, _ = QFileDialog.getSaveFileName(
+        ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".tiff"
+        default_name = f"{sample}_mask{ext}"
+        
+        filters = "TIFF Image (*.tiff *.tif);;OME-TIFF Image (*.ome.tif *.ome.tiff);;PNG Image (*.png);;NumPy Array (*.npy);;NumPy Compressed (*.npz);;All Files (*)"
+        filepath, selected_filter = QFileDialog.getSaveFileName(
             self.control_widget, "Export Consensus Mask",
-            f"{sample}_mask.tiff", "TIFF (*.tiff)"
+            default_name, filters
         )
         if filepath:
             cyto = next(
@@ -747,43 +766,63 @@ class ViewerController:
                  if r.get('cytoplasm') is not None),
                 None,
             )
-            export_consensus_mask(Path(filepath), self.state.consensus_mask, cyto)
-            QMessageBox.information(self.control_widget, "Export Complete", "Consensus mask saved.")
+            try:
+                export_consensus_mask(Path(filepath), self.state.consensus_mask, cyto)
+                QMessageBox.information(self.control_widget, "Export Complete", f"Consensus mask saved:\n{Path(filepath).name}")
+            except Exception as e:
+                QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save mask: {e}")
 
-    def _export_features(self) -> None:
+    def _export_features(self, fmt: str = "") -> None:
         if self.state.features_df is None or self.state.features_df.empty:
             QMessageBox.warning(self.control_widget, "No Features", "Extract features first.")
             return
         sample = self.state.current_sample_name or "sample"
-        filepath, _ = QFileDialog.getSaveFileName(
-            self.control_widget, "Export Features CSV",
-            f"{sample}_features.csv", "CSV (*.csv)"
+        ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".csv"
+        default_name = f"{sample}_features{ext}"
+        
+        filters = "CSV (*.csv);;Excel Workbook (*.xlsx);;Apache Parquet (*.parquet);;Tab-Separated Values (*.tsv);;JSON (*.json);;All Files (*)"
+        filepath, selected_filter = QFileDialog.getSaveFileName(
+            self.control_widget, "Export Features",
+            default_name, filters
         )
         if filepath:
-            export_features_csv(Path(filepath), self.state.features_df, sample)
-            QMessageBox.information(self.control_widget, "Export Complete", "Features CSV saved.")
+            try:
+                export_features_csv(Path(filepath), self.state.features_df, sample)
+                QMessageBox.information(self.control_widget, "Export Complete", f"Features saved:\n{Path(filepath).name}")
+            except Exception as e:
+                QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save features: {e}")
 
-    def _export_confidence(self) -> None:
+    def _export_confidence(self, fmt: str = "") -> None:
         if self.state.confidence_map is None:
             QMessageBox.warning(self.control_widget, "No Confidence Map", "Run consensus first.")
             return
         sample = self.state.current_sample_name or "sample"
-        filepath, _ = QFileDialog.getSaveFileName(
+        ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".tiff"
+        default_name = f"{sample}_confidence{ext}"
+        
+        filters = "TIFF Image (*.tiff *.tif);;PNG Heatmap (*.png);;NumPy Array (*.npy);;NumPy Compressed (*.npz);;All Files (*)"
+        filepath, selected_filter = QFileDialog.getSaveFileName(
             self.control_widget, "Export Confidence Map",
-            f"{sample}_confidence.tiff", "TIFF (*.tiff)"
+            default_name, filters
         )
         if filepath:
-            export_confidence_map(Path(filepath), self.state.confidence_map)
-            QMessageBox.information(self.control_widget, "Export Complete", "Confidence map saved.")
+            try:
+                export_confidence_map(Path(filepath), self.state.confidence_map)
+                QMessageBox.information(self.control_widget, "Export Complete", f"Confidence map saved:\n{Path(filepath).name}")
+            except Exception as e:
+                QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save confidence map: {e}")
 
-    def _export_updated_phenotypes(self) -> None:
+    def _export_updated_phenotypes(self, fmt: str = "") -> None:
         if getattr(self.state, 'master_df', None) is None or self.state.master_df.empty:
             QMessageBox.warning(self.control_widget, "No Annotation Data", "Load annotation data first.")
             return
             
-        filepath, _ = QFileDialog.getSaveFileName(
+        ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".csv"
+        default_name = f"updated_phenotypes{ext}"
+        filters = "CSV (*.csv);;Excel Workbook (*.xlsx);;Apache Parquet (*.parquet);;Tab-Separated Values (*.tsv);;JSON (*.json);;All Files (*)"
+        filepath, selected_filter = QFileDialog.getSaveFileName(
             self.control_widget, "Export Updated Phenotypes",
-            "updated_phenotypes.csv", "CSV (*.csv)"
+            default_name, filters
         )
         if filepath:
             ref_col = self.control_widget.combo_ref.currentText()
@@ -797,10 +836,20 @@ class ViewerController:
                 df_export[updated_col_name] = df_export[ref_col]
                 
             try:
-                df_export.to_csv(filepath, index=False)
-                QMessageBox.information(self.control_widget, "Export Complete", "Updated phenotypes saved.")
+                lower = filepath.lower()
+                if lower.endswith('.xlsx'):
+                    df_export.to_excel(filepath, index=False)
+                elif lower.endswith('.parquet'):
+                    df_export.to_parquet(filepath, index=False)
+                elif lower.endswith('.tsv') or lower.endswith('.txt'):
+                    df_export.to_csv(filepath, sep='\t', index=False)
+                elif lower.endswith('.json'):
+                    df_export.to_json(filepath, orient='records', indent=2)
+                else:
+                    df_export.to_csv(filepath, index=False)
+                QMessageBox.information(self.control_widget, "Export Complete", f"Updated phenotypes saved:\n{Path(filepath).name}")
             except Exception as e:
-                QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save CSV: {e}")
+                QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save file: {e}")
 
     # ── Session ─────────────────────────────────────────────────────────────
 

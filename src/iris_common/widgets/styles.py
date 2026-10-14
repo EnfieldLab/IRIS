@@ -9,20 +9,21 @@ SHARED_DARK_THEME = """
         background-color: #1f232b;
         color: #E0E0E0;
         font-size: 12px;
-        border-radius: 0px;
     }
     QGroupBox {
         border: 1px solid #444444;
-        margin-top: 8px;
-        border-radius: 0px;
-        padding-top: 8px;
+        border-radius: 8px;
+        margin-top: 6px;
+        padding-top: 6px;
     }
     QGroupBox::title {
         subcontrol-origin: margin;
-        subcontrol-position: top center;
+        subcontrol-position: top left;
         color: #DDD;
         font-size: 12px;
         font-weight: bold;
+        padding-left: 8px;
+        padding-right: 8px;
     }
     QLabel {
         color: #DDD;
@@ -33,7 +34,7 @@ SHARED_DARK_THEME = """
         background-color: #3A6A9A;
         color: white;
         font-weight: bold;
-        border-radius: 0px;
+        border-radius: 4px;
         padding: 5px 10px;
         border: none;
         font-size: 12px;
@@ -52,7 +53,7 @@ SHARED_DARK_THEME = """
         background-color: #2A2A2A;
         color: white;
         border: 1px solid #555;
-        border-radius: 0px;
+        border-radius: 4px;
         padding: 3px 6px;
         height: 22px;
     }
@@ -63,9 +64,17 @@ SHARED_DARK_THEME = """
         background-color: #2A2A2A;
         color: white;
         border: 1px solid #555;
-        border-radius: 0px;
+        border-radius: 4px;
         height: 22px;
         padding: 1px 4px;
+    }
+    QLineEdit {
+        background-color: #2A2A2A;
+        color: white;
+        border: 1px solid #555;
+        border-radius: 4px;
+        padding: 3px 6px;
+        height: 22px;
     }
     QCheckBox {
         color: #DDD;
@@ -74,6 +83,7 @@ SHARED_DARK_THEME = """
     QCheckBox::indicator {
         width: 14px;
         height: 14px;
+        border-radius: 3px;
     }
     QCheckBox::indicator:unchecked {
         border: 1px solid #555;
@@ -101,7 +111,7 @@ SHARED_DARK_THEME = """
     }
     QProgressBar {
         border: 1px solid #555;
-        border-radius: 0px;
+        border-radius: 4px;
         text-align: center;
         background-color: #2A2A2A;
         color: white;
@@ -109,6 +119,7 @@ SHARED_DARK_THEME = """
     }
     QProgressBar::chunk {
         background-color: #3A6A9A;
+        border-radius: 3px;
     }
     QScrollArea {
         border: none;
@@ -119,6 +130,7 @@ SHARED_DARK_THEME = """
         color: white;
         gridline-color: #444;
         border: 1px solid #555;
+        border-radius: 6px;
     }
     QHeaderView::section {
         background-color: #333;
@@ -131,6 +143,7 @@ SHARED_DARK_THEME = """
         background-color: #2A2A2A;
         color: white;
         border: 1px solid #555;
+        border-radius: 6px;
         font-size: 12px;
     }
     QListWidget::item {
@@ -181,7 +194,7 @@ BUTTON_DANGER = """
         background-color: #CC4444;
         color: white;
         font-weight: bold;
-        border-radius: 0px;
+        border-radius: 4px;
         padding: 5px 10px;
         border: none;
     }
@@ -193,7 +206,7 @@ BUTTON_SUCCESS = """
         background-color: #44AA66;
         color: white;
         font-weight: bold;
-        border-radius: 0px;
+        border-radius: 4px;
         padding: 5px 10px;
         border: none;
     }
