@@ -12,7 +12,7 @@ from qtpy.QtWidgets import (
     QSlider, QMessageBox, QTabWidget, QSizePolicy, QApplication
 )
 from qtpy.QtCore import Qt, Signal
-from iris_common.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
+from iris_viewer.widgets.styles import SHARED_DARK_THEME, STATUS_STYLES
 from iris_viewer.engine.pipeline import SegmentationStep
 from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
 from iris_viewer.widgets.feature_panel import FeaturePanelWidget

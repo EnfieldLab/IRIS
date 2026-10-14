@@ -24,28 +24,33 @@ from iris_viewer.core.state import ViewerAppState
 from iris_viewer.engine.pipeline import PipelineService, SegmentationSequence
 from iris_viewer.engine.consensus import compute_consensus_mask
 from iris_viewer.engine.feature_extraction import extract_cell_features
-from iris_common.io.exporters import (
+from iris_viewer.io.exporters import (
     export_confidence_map,
     export_consensus_mask,
     export_features_csv,
 )
 
-from iris_common.widgets.image_control import ImageControlWidget
-from iris_viewer.widgets.segmentation_panel import SegmentationPanelWidget
-from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
-from iris_viewer.widgets.feature_panel import FeaturePanelWidget
-from iris_viewer.widgets.phenotyping_panel import PhenotyperPanelWidget
-from iris_common.widgets.legend import ViewerLegendWidget
-from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
-from iris_common.widgets.neighborhood import IrisCellularNeighborhoodsWidget
-from iris_common.widgets.marker_expression import IrisMarkerExpressionWidget
+from iris_viewer.widgets import (
+    ImageControlWidget,
+    SegmentationPanelWidget,
+    ConsensusPanelWidget,
+    FeaturePanelWidget,
+    PhenotyperPanelWidget,
+    ViewerLegendWidget,
+    MultiSampleComparisonWidget,
+    IrisCellularNeighborhoodsWidget,
+    IrisMarkerExpressionWidget,
+)
 
 from iris_viewer.app.services import (
-    BatchService, ReviewService, BoundaryService, NeighborhoodService
+    BatchService,
+    ReviewService,
+    BoundaryService,
+    NeighborhoodService,
+    ImageService,
+    MultiSampleService,
+    CurationService,
 )
-from iris_common.app.services.image_service import ImageService
-from iris_common.app.services.multi_sample_service import MultiSampleService
-from iris_viewer.app.services.curation_service import CurationService
 
 
 class ViewerController:
@@ -191,7 +196,7 @@ class ViewerController:
         from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
         from qtpy.QtCore import Qt
         
-        # 1. Forcefully hide napari's Qt welcome widget(s) across the entire app
+        # Suppress default napari welcome widgets
         try:
             for top_widget in QApplication.instance().topLevelWidgets():
                 for child in top_widget.findChildren(QWidget):
@@ -206,7 +211,7 @@ class ViewerController:
         except Exception:
             pass
 
-        # 2. Try to hide Vispy TextVisuals (older napari versions)
+        # Suppress Vispy TextVisual elements for legacy napari backends
         try:
             if hasattr(self.viewer.window._qt_viewer, "canvas"):
                 scene = self.viewer.window._qt_viewer.canvas.scene
@@ -222,7 +227,7 @@ class ViewerController:
         except Exception:
             pass
 
-        # 3. Create our own centered IRIS label on the canvas
+        # Initialize centered IRIS branding animation canvas overlay
         canvas_native = self.viewer.window._qt_viewer.canvas.native
         
         self.iris_welcome = QLabel()
@@ -372,15 +377,22 @@ class ViewerController:
 
 
     def _load_colors_smart(self, filepath: str) -> None:
+        """Parse and apply color map definitions for markers or cell phenotypes.
+
+        Automatically inspects tabular columns to detect whether color codes correspond
+        to imaging channels/markers or phenotypic cell types, delegating to the
+        appropriate service subsystem.
+
+        Args:
+            filepath: Path to the Excel (.xlsx) or CSV color configuration table.
+        """
         import re
         import pandas as pd
-        from pathlib import Path
         path_obj = Path(filepath)
         try:
             df = pd.read_excel(filepath) if path_obj.suffix.lower() in ('.xlsx', '.xls') else pd.read_csv(filepath)
             cols = [re.sub(r'[^a-z0-9]', '', str(c).lower()) for c in df.columns]
         except Exception as e:
-            from qtpy.QtWidgets import QMessageBox
             QMessageBox.critical(self.control_widget, "Error", f"Failed to read file:\n{e}")
             return
             
@@ -389,7 +401,6 @@ class ViewerController:
         has_celltypes = has_color and any(k in cols for k in ['celltypes', 'celltype', 'phenotype', 'phenotypes', 'label', 'labels', 'cluster', 'clusters'])
         
         if not has_markers and not has_celltypes:
-            from qtpy.QtWidgets import QMessageBox
             QMessageBox.warning(self.control_widget, "Invalid Format", "File must contain a color column and either marker or cell type names.")
             return
             
@@ -398,9 +409,14 @@ class ViewerController:
         if has_celltypes:
             self.multi_sample_svc.load_celltype_colors(filepath)
 
-    # ── Misc Controls ──────────────────────────────────────────────────────
+    # ── Interactive Review & Canvas Controls ──────────────────────────────────
 
     def _toggle_interactive_review(self, enabled: bool) -> None:
+        """Toggle mouse click callbacks for interactive confidence review.
+
+        Args:
+            enabled: If True, binds click handler to review low-confidence boundaries.
+        """
         cb = self.review_svc.on_mouse_click
         if enabled and cb not in self.viewer.mouse_drag_callbacks:
             self.viewer.mouse_drag_callbacks.append(cb)
@@ -408,6 +424,11 @@ class ViewerController:
             self.viewer.mouse_drag_callbacks.remove(cb)
 
     def _select_layer(self, layer_name: str) -> None:
+        """Set active layer selection in napari's layer list by name.
+
+        Args:
+            layer_name: Channel name or layer label to select.
+        """
         self.viewer.layers.selection.clear()
         for layer in self.viewer.layers:
             base = layer.name.split(" [")[0] if " [" in layer.name else layer.name
@@ -416,7 +437,12 @@ class ViewerController:
                 break
 
     def _toggle_view_lock(self, is_locked: bool) -> None:
-        self.viewer.camera.mouse_pan  = not is_locked
+        """Lock or unlock canvas pan and zoom interactions.
+
+        Args:
+            is_locked: If True, disables camera panning and zooming.
+        """
+        self.viewer.camera.mouse_pan = not is_locked
         self.viewer.camera.mouse_zoom = not is_locked
         if is_locked:
             self._old_double_clicks = list(self.viewer.mouse_double_click_callbacks)

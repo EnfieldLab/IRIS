@@ -38,7 +38,17 @@ class PipelineService:
         on_group_complete: Callable[[str, dict], None],
         on_all_complete: Callable[[], None],
         on_error: Callable[[str, int, str, str], None]
-    ):
+    ) -> None:
+        """Execute segmentation pipeline groups asynchronously on a worker thread.
+
+        Args:
+            groups: Mapping of group name to SegmentationSequence.
+            image: Multi-channel input image array (C, H, W).
+            on_step_complete: Callback invoked after each individual step finishes.
+            on_group_complete: Callback invoked when a group finishes all steps.
+            on_all_complete: Callback invoked when all sequences conclude.
+            on_error: Error handler callback receiving step error details.
+        """
         try:
             import torch
             device = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
@@ -229,33 +239,21 @@ def execute_group_sync(
     device: str,
     gpu_lock: Optional[threading.Lock] = None,
 ) -> Dict[str, Optional[np.ndarray]]:
-    """
-    Execute a ``SegmentationSequence`` synchronously (blocking).
+    """Execute a segmentation sequence synchronously for batch processing.
 
-    This is the non-generator equivalent of ``PipelineService._run_sequence``
-    and is used by ``BatchService``, which cannot call ``thread_worker`` from
-    inside another ``thread_worker`` context.
+    Used by BatchService to sequentially process segmentation steps without nesting
+    napari thread workers.
 
-    Parameters
-    ----------
-    group_name : str
-        Human-readable label (used only for log messages).
-    sequence : SegmentationSequence
-        The ordered list of ``SegmentationStep`` objects to execute.
-    image : np.ndarray
-        Full multi-channel image ``(C, H, W)``.
-    backends : dict
-        Mapping of ``method_name -> SegmentationBackend`` (already filtered
-        to available backends only).
-    device : str
-        ``'cpu'``, ``'cuda'``, or ``'mps'``.
-    gpu_lock : threading.Lock, optional
-        Shared lock to serialise GPU access across concurrent batch workers.
+    Args:
+        group_name: Identifier for log reporting.
+        sequence: Ordered sequence of SegmentationStep objects to execute.
+        image: Multi-channel input image array (C, H, W).
+        backends: Dictionary mapping method name to available backend instance.
+        device: Target compute device ('cpu', 'cuda', 'mps').
+        gpu_lock: Optional threading.Lock to synchronize GPU access across workers.
 
-    Returns
-    -------
-    dict with keys ``'nuclear'`` and ``'cytoplasm'``, each an ``np.ndarray``
-    or ``None``.
+    Returns:
+        Dict with keys 'nuclear' and 'cytoplasm', each containing an ndarray or None.
     """
     global_nuc: Optional[np.ndarray] = None
     global_cyto: Optional[np.ndarray] = None

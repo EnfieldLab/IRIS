@@ -9,7 +9,7 @@ from qtpy.QtWidgets import (
     QCheckBox, QPushButton, QGroupBox, QFrame, QSizePolicy, QScrollArea
 )
 from qtpy.QtCore import Qt, Signal
-from iris_common.widgets.styles import (
+from iris_viewer.widgets.styles import (
     SHARED_DARK_THEME, CONFIDENCE_HIGH_COLOR,
     CONFIDENCE_MEDIUM_COLOR, CONFIDENCE_LOW_COLOR
 )
@@ -265,9 +265,13 @@ class ConsensusPanelWidget(QWidget):
         self.lbl_mean_conf.setText(f"Mean IoU Overlap: {mean_conf:.3f}")
         self.statisticsUpdated.emit(total, agreed, flagged, mean_conf)
 
-    def show_cell_review(self, cell_id: int, confidence: float, method_map: dict):
-        """
-        Populate the review section when a user clicks on a low-confidence cell.
+    def show_cell_review(self, cell_id: int, confidence: float, method_map: dict) -> None:
+        """Populate the review section when a user selects a cell for manual audit.
+
+        Args:
+            cell_id: Integer consensus object identifier.
+            confidence: Inter-method agreement confidence score [0.0, 1.0].
+            method_map: Dict mapping method names to their predicted cell labels.
         """
         self.cached_review = {
             "cell_id": cell_id,

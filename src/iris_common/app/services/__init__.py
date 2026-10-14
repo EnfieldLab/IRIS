@@ -1,16 +1,6 @@
-"""iris_common.app.services — shared application service layer."""
-from .image_service import ImageService
-from .multi_sample_service import MultiSampleService
-from .annotation_service import AnnotationService
-from .color_service import ColorService
-from .boundary_service import BoundaryService
-from .neighborhood_service import NeighborhoodService
+"""
+iris_common.app.services compatibility shim forwarding to iris_viewer.app.services.
+"""
+from __future__ import annotations
 
-__all__ = [
-    "ImageService",
-    "MultiSampleService",
-    "AnnotationService",
-    "ColorService",
-    "BoundaryService",
-    "NeighborhoodService",
-]
+from iris_viewer.app.services import *

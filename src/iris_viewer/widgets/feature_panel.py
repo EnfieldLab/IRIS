@@ -10,7 +10,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, Signal
 import pandas as pd
-from iris_common.widgets.styles import SHARED_DARK_THEME, BUTTON_SUCCESS
+from iris_viewer.widgets.styles import SHARED_DARK_THEME, BUTTON_SUCCESS
 from iris_viewer.engine.feature_extraction import MORPHOLOGY_FEATURES, INTENSITY_FEATURES
 
 
@@ -179,22 +179,30 @@ class FeaturePanelWidget(QWidget):
         intensity = [k for k, chk in self.intensity_checkboxes.items() if chk.isChecked()]
         self.extractTriggered.emit(morph, intensity)
 
-    def populate_preview(self, df: pd.DataFrame, max_rows: int = 50):
-        """Update the extraction status and cache extracted dataframe."""
+    def populate_preview(self, df: pd.DataFrame, max_rows: int = 50) -> None:
+        """Update extraction status and cache extracted single-cell features.
+
+        Args:
+            df: Single-cell morphological and intensity feature DataFrame.
+            max_rows: Maximum rows for preview table display.
+        """
         self.cached_df = df
         if df is None or df.empty:
             self.lbl_extract_status.setText("No data extracted")
             return
 
         n_rows, n_cols = df.shape
-
         self.lbl_extract_status.setText(f"Extracted {len(df):,} cells × {n_cols} features")
         self.lbl_extract_status.setStyleSheet("color: #44AA66; font-weight: bold; font-size: 11px;")
         self.btn_export.setEnabled(True)
         self.dataExtracted.emit(df)
 
-    def set_extracting_state(self, is_extracting: bool):
-        """Toggle between extracting and idle UI states."""
+    def set_extracting_state(self, is_extracting: bool) -> None:
+        """Toggle UI between active computation and idle states.
+
+        Args:
+            is_extracting: True while feature extraction worker thread is running.
+        """
         self.btn_extract.setEnabled(not is_extracting)
         if is_extracting:
             self.lbl_extract_status.setText("Extracting features...")

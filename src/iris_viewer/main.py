@@ -11,23 +11,25 @@ import sys
 from pathlib import Path
 
 # ── Model Storage Paths ────────────────────────────────────────────────────────
-# Resolve to <package_root>/data/ so models are always stored inside the
-# package directory tree, regardless of where the process is launched from.
+# Use standard user cache directory ~/.cache/iris (or IRIS_DATA_DIR) for downloaded weights,
+# preserving bundled static resources within package data.
 
-_local_data_dir = Path(__file__).parent / "data"
-_local_data_dir.mkdir(exist_ok=True)
+_user_cache_dir = Path(os.environ.get("IRIS_DATA_DIR", Path.home() / ".cache" / "iris"))
+_pkg_data_dir = Path(__file__).parent / "data"
 
-# Only set if not already overridden in the environment (allows CI/test overrides)
 def _setenv(var: str, default: Path) -> None:
+    """Set environment variable default if not explicitly provided."""
     if var not in os.environ:
         default.mkdir(parents=True, exist_ok=True)
         os.environ[var] = str(default)
 
-_setenv("CELLPOSE_LOCAL_MODELS_PATH", _local_data_dir / "cellpose")
-_setenv("INSTANSEG_MODEL_PATH",       _local_data_dir / "instanseg_models")
-_setenv("INSTANSEG_BIOIMAGEIO_PATH",  _local_data_dir / "bioimageio")
-_setenv("TORCH_HOME",                 _local_data_dir / "torch")
-_setenv("HF_HOME",                    _local_data_dir / "huggingface")
+_bioimageio_dir = _pkg_data_dir / "bioimageio" if (_pkg_data_dir / "bioimageio").exists() else _user_cache_dir / "bioimageio"
+
+_setenv("CELLPOSE_LOCAL_MODELS_PATH", _user_cache_dir / "cellpose")
+_setenv("INSTANSEG_MODEL_PATH",       _user_cache_dir / "instanseg_models")
+_setenv("INSTANSEG_BIOIMAGEIO_PATH",  _bioimageio_dir)
+_setenv("TORCH_HOME",                 _user_cache_dir / "torch")
+_setenv("HF_HOME",                    _user_cache_dir / "huggingface")
 
 # ── Deferred imports (after env vars are in place) ─────────────────────────────
 import napari

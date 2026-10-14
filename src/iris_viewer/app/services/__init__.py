@@ -1,16 +1,20 @@
 """
-IRIS-Viewer App Services
-========================
-Re-exports all service classes used by the viewer application layer.
+IRIS-Viewer Application Services
+
+Coordinators for image I/O, cohort multi-sample loading, annotations, color palettes,
+boundary geometry, neighborhood analytics, batch execution, and interactive review curation.
 """
-from iris_common.app.services.image_service import ImageService
-from iris_common.app.services.multi_sample_service import MultiSampleService
-from iris_common.app.services.annotation_service import AnnotationService
-from iris_common.app.services.color_service import ColorService
-from iris_common.app.services.boundary_service import BoundaryService
-from iris_common.app.services.neighborhood_service import NeighborhoodService
+from __future__ import annotations
+
+from .image_service import ImageService
+from .multi_sample_service import MultiSampleService
+from .annotation_service import AnnotationService
+from .color_service import ColorService
+from .boundary_service import BoundaryService
+from .neighborhood_service import NeighborhoodService
 from .batch_service import BatchService
 from .review_service import ReviewService
+from .curation_service import CurationService
 
 __all__ = [
     "ImageService",
@@ -21,4 +25,5 @@ __all__ = [
     "NeighborhoodService",
     "BatchService",
     "ReviewService",
+    "CurationService",
 ]

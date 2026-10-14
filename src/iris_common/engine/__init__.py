@@ -1,9 +1,6 @@
-"""iris_common.engine — shared computational engines."""
-from .geometry import compute_tissue_boundary_mask, recompute_area_from_vertices
-from .neighborhood import identify_cellular_neighborhoods
+"""
+iris_common.engine compatibility shim forwarding to iris_viewer.engine.
+"""
+from __future__ import annotations
 
-__all__ = [
-    "compute_tissue_boundary_mask",
-    "recompute_area_from_vertices",
-    "identify_cellular_neighborhoods",
-]
+from iris_viewer.engine import *

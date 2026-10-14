@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "iris-suite"
+name = "iris-viewer"
 version = "0.2.0"
-description = "IRIS Suite: Viewer, Phenotyper, and Analyzer for multiplexed immunofluorescence imaging"
+description = "IRIS-Viewer: Interactive Spatial Proteomics, Multiplexed Imaging, Single-Cell Phenotyping & Microenvironment Analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -25,7 +25,7 @@ dependencies = [
     "dask[array]",
     "openpyxl",
     
-    # Phenotyper specific
+    # Phenotyping & single-cell analysis
     "anndata>=0.9",
     "scanpy>=1.9",
     "umap-learn>=0.5",
@@ -33,14 +33,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Viewer Extras
+# Segmentation Extras
 cellpose   = ["cellpose>=3.0"]
 stardist   = ["stardist", "csbdeep"]
 
-# Phenotyper Extras
+# Deep Learning Phenotyping Extras
 astir      = ["astir"]
-celesta    = [] # GitHub-only: pip install git+https://github.com/plevritis-lab/CELESTA.git
-
+maps       = ["torch>=2.0", "torch-geometric"]
 
 # Master Extras
 all        = ["cellpose>=3.0", "stardist", "csbdeep", "astir", "torch>=2.0", "torch-geometric"]
@@ -48,7 +47,6 @@ dev        = ["pytest>=7.0", "pytest-qt>=4.0"]
 
 [project.scripts]
 iris-viewer = "iris_viewer.main:main"
-iris-phenotyper = "iris_phenotyper.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

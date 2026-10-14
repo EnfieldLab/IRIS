@@ -69,7 +69,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from iris_common.widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.styles import SHARED_DARK_THEME
 
 
 # ── Mathematical Transformations & Quality Evaluation ───────────────────────
@@ -1868,7 +1868,7 @@ class ManualGatingWidget(QWidget):
         layout.setContentsMargins(8, 4, 8, 8)
         layout.setSpacing(8)
 
-        # ── 1. Gating Data & Projection Box (Title inside box) ────────────────
+        # ── Gating Data & Projection Box ─────────────────────────────────────
         box_proj = QGroupBox()
         bl_proj = QVBoxLayout(box_proj)
         bl_proj.setContentsMargins(8, 2, 8, 8)
@@ -1979,7 +1979,7 @@ class ManualGatingWidget(QWidget):
 
         layout.addWidget(box_proj)
 
-        # ── 2. Spacious Gating Scatter Preview Box ────────────────────────────
+        # ── Gating Scatter Preview Box ───────────────────────────────────────
         box_plot = QGroupBox()
         bl_plot = QVBoxLayout(box_plot)
         bl_plot.setContentsMargins(8, 2, 8, 8)
@@ -2020,7 +2020,7 @@ class ManualGatingWidget(QWidget):
 
         layout.addWidget(box_plot)
 
-        # ── 3. Gating Quality & Sample Assessment (UNDERNEATH the plot!) ───────
+        # ── Gating Quality & Sample Assessment ───────────────────────────────
         box_quality = QGroupBox()
         bl_quality = QVBoxLayout(box_quality)
         bl_quality.setContentsMargins(8, 2, 8, 8)
@@ -2064,7 +2064,7 @@ class ManualGatingWidget(QWidget):
 
         layout.addWidget(box_quality)
 
-        # ── 4. Categorize & Classify Box ─────────────────────────────────────
+        # ── Categorize & Classify Box ────────────────────────────────────────
         box_class = QGroupBox()
         bl_class = QVBoxLayout(box_class)
         bl_class.setContentsMargins(8, 2, 8, 8)
@@ -2701,19 +2701,19 @@ class PhenotyperPanelWidget(QWidget):
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # 1. Manual Gating
+        # Manual Gating
         self.manual_gating = ManualGatingWidget(parent=self, ctx=self.ctx)
         self.stack.addWidget(self.manual_gating)
 
-        # 2. ASTIR Subpanel
+        # ASTIR Subpanel
         self.astir_widget = self._build_astir_panel()
         self.stack.addWidget(self.astir_widget)
 
-        # 3. MAPS Subpanel
+        # MAPS Subpanel
         self.maps_widget = self._build_maps_panel()
         self.stack.addWidget(self.maps_widget)
 
-        # 4. Unsupervised Clustering Subpanel
+        # Unsupervised Clustering Subpanel
         self.cluster_widget = self._build_clustering_panel()
         self.stack.addWidget(self.cluster_widget)
 
@@ -2732,7 +2732,7 @@ class PhenotyperPanelWidget(QWidget):
         layout.setContentsMargins(8, 4, 8, 8)
         layout.setSpacing(8)
 
-        # 1. Model Configuration Box
+        # Model Configuration Box
         box_cfg = QGroupBox()
         bl_cfg = QVBoxLayout(box_cfg)
         bl_cfg.setContentsMargins(10, 3, 10, 10)
@@ -2780,7 +2780,7 @@ class PhenotyperPanelWidget(QWidget):
 
         layout.addWidget(box_cfg)
 
-        # 2. Marker Association & Thresholding
+        # Marker Association & Thresholding
         box_thresh = QGroupBox()
         bl_thresh = QVBoxLayout(box_thresh)
         bl_thresh.setContentsMargins(10, 3, 10, 10)
@@ -2814,7 +2814,7 @@ class PhenotyperPanelWidget(QWidget):
 
         layout.addWidget(box_thresh)
 
-        # 3. Model Execution & Status
+        # Model Execution & Status
         box_exec = QGroupBox()
         bl_exec = QVBoxLayout(box_exec)
         bl_exec.setContentsMargins(10, 3, 10, 10)
@@ -2862,7 +2862,7 @@ class PhenotyperPanelWidget(QWidget):
         layout.setContentsMargins(8, 4, 8, 8)
         layout.setSpacing(8)
 
-        # 1. Architecture Box
+        # Architecture Box
         box_arch = QGroupBox()
         bl_arch = QVBoxLayout(box_arch)
         bl_arch.setContentsMargins(10, 3, 10, 10)
@@ -2901,7 +2901,7 @@ class PhenotyperPanelWidget(QWidget):
 
         layout.addWidget(box_arch)
 
-        # 2. Spatial Context Modeling
+        # Spatial Context Modeling
         box_ctx = QGroupBox()
         bl_ctx = QVBoxLayout(box_ctx)
         bl_ctx.setContentsMargins(10, 3, 10, 10)
@@ -2934,7 +2934,7 @@ class PhenotyperPanelWidget(QWidget):
 
         layout.addWidget(box_ctx)
 
-        # 3. Execution & Status
+        # Execution & Status
         box_exec = QGroupBox()
         bl_exec = QVBoxLayout(box_exec)
         bl_exec.setContentsMargins(10, 3, 10, 10)
@@ -2982,7 +2982,7 @@ class PhenotyperPanelWidget(QWidget):
         layout.setContentsMargins(8, 4, 8, 8)
         layout.setSpacing(8)
 
-        # 1. Algorithm Box
+        # Algorithm Box
         box_alg = QGroupBox()
         bl_alg = QVBoxLayout(box_alg)
         bl_alg.setContentsMargins(10, 3, 10, 10)
@@ -3031,7 +3031,7 @@ class PhenotyperPanelWidget(QWidget):
 
         layout.addWidget(box_alg)
 
-        # 2. Cluster Selection & Exploration
+        # Cluster Selection & Exploration
         box_sel = QGroupBox()
         bl_sel = QVBoxLayout(box_sel)
         bl_sel.setContentsMargins(10, 3, 10, 10)
@@ -3061,7 +3061,7 @@ class PhenotyperPanelWidget(QWidget):
 
         layout.addWidget(box_sel)
 
-        # 3. Phenotype Assignment
+        # Phenotype Assignment
         box_assign = QGroupBox()
         bl_assign = QVBoxLayout(box_assign)
         bl_assign.setContentsMargins(10, 3, 10, 10)

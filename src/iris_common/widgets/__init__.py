@@ -1,16 +1,6 @@
-"""iris_common.widgets — shared UI widgets for IRIS suite."""
-from .neighborhood import IrisCellularNeighborhoodsWidget
-from .marker_expression import IrisMarkerExpressionWidget, MarkerExpressionDialog
-from .image_control import ImageControlWidget
-from .legend import ViewerLegendWidget
-from .multi_sample import MultiSampleComparisonWidget
+"""
+iris_common.widgets compatibility shim forwarding to iris_viewer.widgets.
+"""
+from __future__ import annotations
 
-__all__ = [
-    "IrisCellularNeighborhoodsWidget",
-    "IrisMarkerExpressionWidget",
-    "MarkerExpressionDialog",
-    "ImageControlWidget",
-    "ViewerLegendWidget",
-    "MultiSampleComparisonWidget",
-]
-
+from iris_viewer.widgets import *
