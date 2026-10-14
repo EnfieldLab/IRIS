@@ -245,6 +245,11 @@ class MultiSampleService:
                     celltype_col=ref_col,
                     selected_samples=selected_s,
                 )
+            if hasattr(ctx, "phenotyper_panel") and active_df is not None and not active_df.empty:
+                ctx.phenotyper_panel.set_data(
+                    df=active_df,
+                    markers=ctx.state.markers,
+                )
 
     # ── Add Samples to Canvas ─────────────────────────────────────────────────
 
@@ -641,6 +646,12 @@ class MultiSampleService:
                     celltype_col=ref_col,
                     selected_samples=selected_s,
                 )
+            if hasattr(ctx, "phenotyper_panel") and active_df is not None and not active_df.empty:
+                ctx.phenotyper_panel.set_data(
+                    df=active_df,
+                    markers=ctx.state.markers,
+                )
+
 
     # ── Saved boundary ────────────────────────────────────────────────────────
 

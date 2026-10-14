@@ -34,6 +34,7 @@ from iris_common.widgets.image_control import ImageControlWidget
 from iris_viewer.widgets.segmentation_panel import SegmentationPanelWidget
 from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
 from iris_viewer.widgets.feature_panel import FeaturePanelWidget
+from iris_viewer.widgets.phenotyping_panel import PhenotyperPanelWidget
 from iris_common.widgets.legend import ViewerLegendWidget
 from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
 from iris_common.widgets.neighborhood import IrisCellularNeighborhoodsWidget
@@ -82,11 +83,12 @@ class ViewerController:
         self.segmentation_panel  = SegmentationPanelWidget()
         self.consensus_panel     = self.segmentation_panel.consensus_panel
         self.feature_panel       = self.segmentation_panel.feature_panel
+        self.phenotyper_panel    = PhenotyperPanelWidget()
         self.legend_widget       = ViewerLegendWidget(self.viewer)
         self.comparison_widget   = self.control_widget.comparison_widget
+        self.marker_widget       = IrisMarkerExpressionWidget()
         self.neighborhood_widget = IrisCellularNeighborhoodsWidget()
         self.neighborhood_widget.legend_widget_ref = self.legend_widget
-        self.marker_widget       = IrisMarkerExpressionWidget()
 
         from qtpy.QtWidgets import QDockWidget
 
@@ -95,8 +97,9 @@ class ViewerController:
             (self.control_widget,      "Control"),
             (self.comparison_widget,   "TMA"),
             (self.segmentation_panel,  "Segmentation"),
-            (self.neighborhood_widget, "Neighborhoods"),
+            (self.phenotyper_panel,    "Phenotyper"),
             (self.marker_widget,       "Marker"),
+            (self.neighborhood_widget, "Neighborhoods"),
         ]:
             docks[name] = self.viewer.window.add_dock_widget(widget, name=name, area="right")
             
@@ -116,13 +119,15 @@ class ViewerController:
         control_dock = _get_dock_wrapper(docks["Control"])
         tma_dock     = _get_dock_wrapper(docks["TMA"])
         seg_dock     = _get_dock_wrapper(docks["Segmentation"])
-        neigh_dock   = _get_dock_wrapper(docks["Neighborhoods"])
+        pheno_dock   = _get_dock_wrapper(docks["Phenotyper"])
         marker_dock  = _get_dock_wrapper(docks["Marker"])
+        neigh_dock   = _get_dock_wrapper(docks["Neighborhoods"])
 
         qt.tabifyDockWidget(control_dock, tma_dock)
         qt.tabifyDockWidget(tma_dock,     seg_dock)
-        qt.tabifyDockWidget(seg_dock,     neigh_dock)
-        qt.tabifyDockWidget(neigh_dock,   marker_dock)
+        qt.tabifyDockWidget(seg_dock,     pheno_dock)
+        qt.tabifyDockWidget(pheno_dock,   marker_dock)
+        qt.tabifyDockWidget(marker_dock,  neigh_dock)
         control_dock.raise_()
 
         # Tabify Legend with napari's layer list
@@ -158,6 +163,7 @@ class ViewerController:
             segmentation_panel=self.segmentation_panel,
             consensus_panel=self.consensus_panel,
             feature_panel=self.feature_panel,
+            phenotyper_panel=self.phenotyper_panel,
             legend_widget=self.legend_widget,
             comparison_widget=self.comparison_widget,
             neighborhood_widget=self.neighborhood_widget,
@@ -179,6 +185,7 @@ class ViewerController:
         self.neighborhood_svc = NeighborhoodService(self._ctx)
         self._ctx.review_svc = self.review_svc
         self.segmentation_panel.ctx = self._ctx
+        self.phenotyper_panel.ctx = self._ctx
 
         # ── Replace Napari Welcome Text ───────────────────────────────────────
         from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
@@ -305,12 +312,17 @@ class ViewerController:
             cw.loadSessionTriggered.connect(self._load_session)
 
     def _on_phenotype_column_changed(self, col: str) -> None:
-        if hasattr(self, "marker_widget"):
-            active_df = (
-                self.state.master_df
-                if (self.state.master_df is not None and not self.state.master_df.empty)
-                else self.state.current_mapped_df
+        active_df = (
+            self.state.master_df
+            if (self.state.master_df is not None and not self.state.master_df.empty)
+            else self.state.current_mapped_df
+        )
+        if hasattr(self, "phenotyper_panel") and active_df is not None and not active_df.empty:
+            self.phenotyper_panel.set_data(
+                df=active_df,
+                markers=self.state.markers,
             )
+        if hasattr(self, "marker_widget"):
             selected_s = (
                 list(self.state.sample_layers_map.keys())
                 or ([self.state.current_sample_name] if self.state.current_sample_name else [])
@@ -321,6 +333,7 @@ class ViewerController:
                 celltype_col=col,
                 selected_samples=selected_s,
             )
+
 
     def _bind_segmentation_signals(self) -> None:
         self.segmentation_panel.runSequence.connect(self._run_segmentation_pipeline)
@@ -744,6 +757,8 @@ class ViewerController:
         self.state.features_df = df
         self.feature_panel.set_extracting_state(False)
         self.feature_panel.populate_preview(df)
+        if hasattr(self, "phenotyper_panel") and df is not None and not df.empty:
+            self.phenotyper_panel.set_data(df=df, markers=self.state.markers)
 
     # ── Exports ─────────────────────────────────────────────────────────────
 

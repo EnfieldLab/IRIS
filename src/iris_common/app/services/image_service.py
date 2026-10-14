@@ -73,6 +73,8 @@ class ImageService:
                 ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
             if hasattr(ctx, 'expression_widget'):
                 ctx.expression_widget.set_data(markers=ctx.state.markers)
+            if hasattr(ctx, 'phenotyper_panel'):
+                ctx.phenotyper_panel.set_data(markers=ctx.state.markers)
 
         ctx.control_widget.update_sample_list(sample_names)
         if hasattr(ctx, 'comparison_widget'):

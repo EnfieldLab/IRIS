@@ -68,6 +68,8 @@ class AnnotationService:
                 ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
             if hasattr(ctx, "expression_widget"):
                 ctx.expression_widget.set_data(markers=ctx.state.markers)
+            if hasattr(ctx, "phenotyper_panel"):
+                ctx.phenotyper_panel.set_data(markers=ctx.state.markers)
 
         # Populate the cell-type reference combo and quick-curation dropdown
         self._populate_celltype_combos(adapter)
@@ -90,6 +92,12 @@ class AnnotationService:
                 celltype_col=ref_col,
                 selected_samples=selected_s,
             )
+            if hasattr(ctx, "phenotyper_panel"):
+                ctx.phenotyper_panel.set_data(
+                    df=adapter.normalised,
+                    markers=ctx.state.markers or adapter.markers,
+                )
+
 
         QMessageBox.information(
             ctx.control_widget, "Annotation Loaded",
