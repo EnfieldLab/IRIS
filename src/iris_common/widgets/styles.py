@@ -126,17 +126,31 @@ SHARED_DARK_THEME = """
         background-color: #1f232b;
     }
     QTableWidget {
-        background-color: #2A2A2A;
-        color: white;
-        gridline-color: #444;
-        border: 1px solid #555;
+        background-color: #1e2128;
+        alternate-background-color: #262a33;
+        color: #E0E0E0;
+        gridline-color: #333842;
+        border: 1px solid #444;
         border-radius: 6px;
     }
+    QTableWidget::item {
+        color: #E0E0E0;
+        background-color: #1e2128;
+        padding: 4px;
+    }
+    QTableWidget::item:alternate {
+        background-color: #262a33;
+        color: #E0E0E0;
+    }
+    QTableWidget::item:selected {
+        background-color: #3A6A9A;
+        color: white;
+    }
     QHeaderView::section {
-        background-color: #333;
+        background-color: #2A2E39;
         color: white;
         padding: 4px;
-        border: 1px solid #444;
+        border: 1px solid #3c424f;
         font-weight: bold;
     }
     QListWidget {

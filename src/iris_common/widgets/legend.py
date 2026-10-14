@@ -179,16 +179,21 @@ class ViewerLegendWidget(QWidget):
     def _add_layer_row(self, layer, name: str, initial_color: str, target_group, target_layout, target_list, layer_type='image'):
         """Create and wire a legend row for a napari layer."""
         target_group.show()
-        row = ViewerLegendRow(name, initial_color, initial_visible=layer.visible)
+        initial_vis = layer.visible if (layer is not None and hasattr(layer, 'visible')) else True
+        row = ViewerLegendRow(name, initial_color, initial_visible=initial_vis)
         row.layerDoubleClicked.connect(self.layerSelected.emit)
 
         def on_ui_vis_change(n, is_vis):
+            if not self.viewer:
+                return
             for l in self.viewer.layers:
                 l_base = l.name.split(" [")[0] if " [" in l.name else l.name
                 if l_base == n:
                     l.visible = is_vis
 
         def on_ui_col_change(n, hex_c):
+            if not self.viewer:
+                return
             rgb = mcolors.to_rgba(hex_c)
             for target_layer in self.viewer.layers:
                 l_base = target_layer.name.split(" [")[0] if " [" in target_layer.name else target_layer.name
@@ -200,14 +205,15 @@ class ViewerLegendWidget(QWidget):
                         target_layer.refresh()
 
         def on_layer_vis_change(event):
-            if row.checkbox.isChecked() != layer.visible:
+            if layer is not None and hasattr(layer, 'visible') and row.checkbox.isChecked() != layer.visible:
                 row.checkbox.blockSignals(True)
                 row.checkbox.setChecked(layer.visible)
                 row.checkbox.blockSignals(False)
 
         row.visibilityChanged.connect(on_ui_vis_change)
         row.colorChanged.connect(on_ui_col_change)
-        layer.events.visible.connect(on_layer_vis_change)
+        if layer is not None and hasattr(layer, 'events') and hasattr(layer.events, 'visible'):
+            layer.events.visible.connect(on_layer_vis_change)
         target_layout.addWidget(row)
         target_list.append(row)
 
@@ -232,6 +238,12 @@ class ViewerLegendWidget(QWidget):
         self._add_layer_row(layer, name, initial_color, self.seg_group, self.seg_layout, self.seg_rows, layer_type=layer_type)
 
     def add_ref_ct_row(self, layer, name: str, initial_color: str):
+        if layer is None and self.viewer:
+            for l in self.viewer.layers:
+                l_base = l.name.split(" [")[0] if " [" in l.name else l.name
+                if l_base == name or l.name == name:
+                    layer = l
+                    break
         self._add_layer_row(layer, name, initial_color, self.ref_ct_group, self.ref_ct_layout, self.ref_ct_rows, layer_type='image')
 
     def remove_row(self, layer_name: str):
