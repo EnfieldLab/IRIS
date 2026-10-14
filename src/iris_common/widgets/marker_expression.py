@@ -352,10 +352,14 @@ class MarkerExpressionDialog(QDialog):
         self.splitter.addWidget(canvas_container)
 
         # ── Organize Drawer Panel ─────────────────────────────────────────
-        self.organizer_panel = QGroupBox("Organize Rows & Columns")
+        self.organizer_panel = QGroupBox()
         op_layout = QVBoxLayout(self.organizer_panel)
-        op_layout.setContentsMargins(10, 10, 10, 10)
-        op_layout.setSpacing(8)
+        op_layout.setContentsMargins(10, 4, 10, 10)
+        op_layout.setSpacing(6)
+
+        title_organize = QLabel("Organize Rows & Columns")
+        title_organize.setStyleSheet("color: #DDD; font-size: 13px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        op_layout.addWidget(title_organize)
 
         lbl_hint = QLabel("Check/uncheck to show/hide items. Drag or use buttons to reorder.")
         lbl_hint.setStyleSheet("color: #9E9E9E; font-size: 11px; font-style: italic;")
@@ -1268,12 +1272,12 @@ class IrisMarkerExpressionWidget(QWidget):
         # ── Configuration Box ─────────────────────────────────────────────
         config_box = QGroupBox()
         cb = QVBoxLayout()
-        cb.setContentsMargins(6, 6, 6, 6)
+        cb.setContentsMargins(10, 3, 10, 10)
         cb.setSpacing(6)
         config_box.setLayout(cb)
 
-        title = QLabel("Marker Expression Profiler")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
+        title = QLabel("Marker Expression Analysis")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
         cb.addWidget(title)
 
         # Row 1: Dataset & Filter

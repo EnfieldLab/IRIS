@@ -234,8 +234,8 @@ class ImageControlWidget(QWidget):
         row_sb_pos.addWidget(lbl_pos)
 
         self.combo_sb_pos = QComboBox()
-        self.combo_sb_pos.addItems(["bottom_right", "bottom_left", "top_right", "top_left"])
-        self.combo_sb_pos.setCurrentText("bottom_right")
+        self.combo_sb_pos.addItems(["bottom_left", "bottom_right", "top_left", "top_right"])
+        self.combo_sb_pos.setCurrentText("bottom_left")
         row_sb_pos.addWidget(self.combo_sb_pos)
         layout.addLayout(row_sb_pos)
 
@@ -262,6 +262,7 @@ class ImageControlWidget(QWidget):
                 pass
 
             self.custom_scale_bar = CanvasScaleBarOverlay(self.viewer)
+            self.custom_scale_bar.set_position(self.combo_sb_pos.currentText())
             self.spin_scale.valueChanged.connect(self.custom_scale_bar.set_physical_scale)
             self.combo_sb_pos.currentTextChanged.connect(self.custom_scale_bar.set_position)
             self.spin_sb_size.valueChanged.connect(self.custom_scale_bar.set_font_size)
@@ -280,7 +281,7 @@ class ImageControlWidget(QWidget):
             row_leg_details.setSpacing(8)
             row_leg_details.addWidget(QLabel("Opacity:"))
             self.spin_legend_opacity = QDoubleSpinBox()
-            self.spin_legend_opacity.setRange(0.1, 1.0)
+            self.spin_legend_opacity.setRange(0.0, 1.0)
             self.spin_legend_opacity.setValue(0.1)
             self.spin_legend_opacity.setSingleStep(0.1)
             self.spin_legend_opacity.valueChanged.connect(self.canvas_legend.set_opacity)

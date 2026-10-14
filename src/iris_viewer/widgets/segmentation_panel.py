@@ -483,7 +483,7 @@ class SegmentationStudioDialog(QDialog):
         self.ctx = ctx
         self.consensus_panel = consensus_panel
         self.feature_panel = feature_panel
-        self.setWindowTitle("Segmentation & Consensus Studio")
+        self.setWindowTitle("Segmentation Module")
         self.resize(1150, 750)
 
         self.setStyleSheet("""
@@ -968,11 +968,11 @@ class SegmentationPanelWidget(QWidget):
         # ── Top Configuration Box: Category Navigation & Summary ─────────
         config_box = QGroupBox()
         cb = QVBoxLayout(config_box)
-        cb.setContentsMargins(6, 6, 6, 6)
+        cb.setContentsMargins(10, 3, 10, 10)
         cb.setSpacing(6)
 
-        title = QLabel("Segmentation & Consensus Studio")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
+        title = QLabel("Segmentation Module")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
         cb.addWidget(title)
 
         # Category switcher segmented buttons
@@ -995,46 +995,17 @@ class SegmentationPanelWidget(QWidget):
         cb.addWidget(self.lbl_studio_summary)
         main_layout.addWidget(config_box)
 
-        # ── Bottom Workspace Box: Header with Pop-up Button & Sub-views ────
-        self.workspace_box = QGroupBox()
-        wb = QVBoxLayout(self.workspace_box)
-        wb.setContentsMargins(6, 6, 6, 6)
-        wb.setSpacing(6)
-
-        header_row = QHBoxLayout()
-        self.lbl_workspace_title = QLabel("Segmentation Pipelines")
-        self.lbl_workspace_title.setStyleSheet("font-weight: bold; color: #EEE; font-size: 13px;")
-        header_row.addWidget(self.lbl_workspace_title)
-        header_row.addStretch(1)
-
-        # Enlargement symbol on pop-up window button matching Neighborhoods & Marker
-        self.btn_popout = QPushButton("⤢ Pop-up Window")
-        self.btn_popout.setToolTip("Open full-size interactive Segmentation & Consensus Studio")
-        self.btn_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 3px; padding: 3px 8px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-        """)
-        self.btn_popout.clicked.connect(self.open_popup_window)
-        header_row.addWidget(self.btn_popout)
-        wb.addLayout(header_row)
-
-        # Stacked sub-panels
+        # Stacked sub-panels directly in layout
         self.stack = QStackedWidget()
         self.stack.addWidget(self.pipeline_builder)
         self.stack.addWidget(self.consensus_panel)
         self.stack.addWidget(self.feature_panel)
-        wb.addWidget(self.stack, 1)
+        main_layout.addWidget(self.stack, 1)
 
-        main_layout.addWidget(self.workspace_box, 1)
         self._update_nav_styles(0)
 
     def _switch_sub_panel(self, idx: int):
         self.stack.setCurrentIndex(idx)
-        titles = ["Segmentation Pipelines", "Consensus Map & Interactive Review", "Cell Feature Extraction"]
-        self.lbl_workspace_title.setText(titles[idx])
         self._update_nav_styles(idx)
 
     def _update_nav_styles(self, active_idx: int):

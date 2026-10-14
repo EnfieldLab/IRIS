@@ -455,12 +455,12 @@ class IrisCellularNeighborhoodsWidget(QWidget):
         # ── Configuration Box ─────────────────────────────────────────────
         config_box = QGroupBox()
         cb = QVBoxLayout()
-        cb.setContentsMargins(6, 6, 6, 6)
+        cb.setContentsMargins(10, 3, 10, 10)
         cb.setSpacing(6)
         config_box.setLayout(cb)
 
-        title = QLabel("Cellular Neighborhood Profiler")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold;")
+        title = QLabel("Cellular Neighborhood Analysis")
+        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
         cb.addWidget(title)
 
         row1 = QHBoxLayout()

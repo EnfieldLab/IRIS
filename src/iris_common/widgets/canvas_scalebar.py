@@ -15,7 +15,7 @@ class CanvasScaleBarOverlay(QWidget):
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(2)
-        self.layout.setAlignment(Qt.AlignBottom | Qt.AlignRight)
+        self.layout.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
         self.setLayout(self.layout)
         
         # Text label (e.g. "100 µm")
@@ -30,7 +30,7 @@ class CanvasScaleBarOverlay(QWidget):
         
         self._scale_val = 1.0
         self._unit = "px"
-        self._position = "bottom_right"
+        self._position = "bottom_left"
         self._font_size = 26
         self._thickness = 10
         self._update_style()
