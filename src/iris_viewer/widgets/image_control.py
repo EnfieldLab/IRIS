@@ -302,7 +302,7 @@ class ImageControlWidget(QWidget):
         self.chk_canvas_legend.setChecked(True)
         layout.addWidget(self.chk_canvas_legend)
 
-        self.chk_legend_in_export = QCheckBox("Include Legend in Screenshot & Copy")
+        self.chk_legend_in_export = QCheckBox("Include Legend in Screenshot")
         self.chk_legend_in_export.setChecked(True)
         self.chk_legend_in_export.setToolTip(
             "When checked, saving screenshots or copying canvas includes the active on-canvas legend"
