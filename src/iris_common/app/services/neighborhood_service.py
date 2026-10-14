@@ -16,6 +16,7 @@ from qtpy.QtWidgets import QMessageBox
 
 from iris_common.engine.neighborhood import identify_cellular_neighborhoods
 from iris_common.app.services.multi_sample_service import get_sample_sub_df
+from iris_common.io.data_adapter import IrisPhenotypeMapper
 
 
 class NeighborhoodService:
@@ -102,27 +103,28 @@ class NeighborhoodService:
         # 1. Propagate clusters across all cells in master_df
         ctx.state.master_df = updated_df
 
-        # 2. Update current_mapped_df for loaded canvas samples
-        loaded_samples = list(ctx.state.sample_layers_map.keys())
-        if loaded_samples and "Image" in updated_df.columns:
-            matched = []
-            for sn in loaded_samples:
-                sub = get_sample_sub_df(updated_df, sn)
-                if not sub.empty:
-                    matched.append(sub)
-            if matched:
-                ctx.state.current_mapped_df = pd.concat(matched, ignore_index=True)
-            else:
-                ctx.state.current_mapped_df = updated_df
-        else:
-            ctx.state.current_mapped_df = updated_df
-
-        # 3. Store into resolved_dfs for each loaded sample
+        # 2. Update resolved_dfs for each loaded sample, preserving resolved ObjectNumbers
         if hasattr(ctx.state, "resolved_dfs"):
             for sname in list(ctx.state.sample_layers_map.keys()):
                 sub = get_sample_sub_df(updated_df, sname)
                 if not sub.empty:
-                    ctx.state.resolved_dfs[sname] = sub
+                    if sname in ctx.state.resolved_dfs and len(ctx.state.resolved_dfs[sname]) == len(sub):
+                        ctx.state.resolved_dfs[sname]['Cellular_Neighborhood'] = sub['Cellular_Neighborhood'].values
+                        if 'Cellular_Neighborhood_ID' in sub.columns:
+                            ctx.state.resolved_dfs[sname]['Cellular_Neighborhood_ID'] = sub['Cellular_Neighborhood_ID'].values
+                    else:
+                        ctx.state.resolved_dfs[sname] = sub
+
+        # 3. Update current_mapped_df for loaded canvas samples
+        loaded_samples = list(ctx.state.sample_layers_map.keys())
+        if hasattr(ctx.state, "resolved_dfs") and ctx.state.resolved_dfs:
+            dfs_to_concat = [ctx.state.resolved_dfs[sn] for sn in loaded_samples if sn in ctx.state.resolved_dfs]
+            if dfs_to_concat:
+                ctx.state.current_mapped_df = pd.concat(dfs_to_concat, ignore_index=True)
+            else:
+                ctx.state.current_mapped_df = updated_df
+        else:
+            ctx.state.current_mapped_df = updated_df
 
         total_cn = centers.shape[0]
         widget = getattr(ctx, "neighborhood_widget", None)
@@ -151,10 +153,11 @@ class NeighborhoodService:
     ) -> None:
         """Creates or refreshes napari overlay layers for each identified niche."""
         ctx = self.ctx
-        if ctx.state.current_mapped_df is None:
+        if ctx.state.current_mapped_df is None and ctx.state.master_df is None:
             return
 
-        scale_val = ctx.control_widget.spin_scale.value()
+        cw = getattr(ctx, "control_widget", None)
+        scale_val = cw.spin_scale.value() if cw and hasattr(cw, "spin_scale") else 1.0
         k_neighbors = self.last_cn_k
         method = self.last_cn_method
         if total_cn is None:
@@ -186,6 +189,8 @@ class NeighborhoodService:
         sample_names = list(ctx.state.sample_layers_map.keys())
         if not sample_names and ctx.state.current_sample_name:
             sample_names = [ctx.state.current_sample_name]
+        if not sample_names and hasattr(ctx.state, "masks_map") and ctx.state.masks_map:
+            sample_names = list(ctx.state.masks_map.keys())
 
         for sample_name in sample_names:
             mask = ctx.state.masks_map.get(sample_name)
@@ -194,14 +199,34 @@ class NeighborhoodService:
             if mask is None:
                 continue
 
+            # Ensure 2D mask (flatten nuclear channel if multi-dimensional)
+            if mask.ndim > 2:
+                mask = mask[0] if mask.shape[0] < mask.shape[-1] else mask[..., 0]
+
             sub_df = get_sample_sub_df(ctx.state.current_mapped_df, sample_name)
             if sub_df.empty and ctx.state.master_df is not None:
                 sub_df = get_sample_sub_df(ctx.state.master_df, sample_name)
-            if sub_df.empty and len(sample_names) == 1:
-                sub_df = ctx.state.current_mapped_df
+            if sub_df.empty and (len(sample_names) == 1 or "Image" not in ctx.state.master_df.columns):
+                sub_df = ctx.state.current_mapped_df if ctx.state.current_mapped_df is not None else ctx.state.master_df
 
             if sub_df.empty or 'Cellular_Neighborhood' not in sub_df.columns:
                 continue
+
+            # Spatially resolve cell IDs to exact mask pixels using IrisPhenotypeMapper
+            mapper = IrisPhenotypeMapper(mask, sub_df, target_col='Cellular_Neighborhood')
+            mapper.resolve_ids()
+            resolved_sub = mapper.df
+
+            sample_layers = ctx.state.sample_layers_map.get(sample_name, [])
+            bounds_layer = next(
+                (l for l in ctx.viewer.layers if l.name == f"Bounds - {sample_name}"), None
+            )
+            translation = bounds_layer.translate if bounds_layer else None
+            if translation is None and sample_layers:
+                for sl in sample_layers:
+                    if hasattr(sl, "translate") and tuple(sl.translate) != (0.0, 0.0):
+                        translation = sl.translate
+                        break
 
             for idx, item in meta_dict.items():
                 niche_name = item["name"]
@@ -210,14 +235,14 @@ class NeighborhoodService:
 
                 # Extract cell IDs for this niche (matching by index, name, ID column, or string)
                 cond = (
-                    (sub_df['Cellular_Neighborhood'] == idx) |
-                    (sub_df['Cellular_Neighborhood'] == f"Niche {idx}") |
-                    (sub_df['Cellular_Neighborhood'] == niche_name) |
-                    (sub_df['Cellular_Neighborhood'].astype(str) == str(idx))
+                    (resolved_sub['Cellular_Neighborhood'] == idx) |
+                    (resolved_sub['Cellular_Neighborhood'] == f"Niche {idx}") |
+                    (resolved_sub['Cellular_Neighborhood'] == niche_name) |
+                    (resolved_sub['Cellular_Neighborhood'].astype(str) == str(idx))
                 )
-                if 'Cellular_Neighborhood_ID' in sub_df.columns:
-                    cond = cond | (sub_df['Cellular_Neighborhood_ID'] == idx)
-                niche_cells = sub_df[cond]
+                if 'Cellular_Neighborhood_ID' in resolved_sub.columns:
+                    cond = cond | (resolved_sub['Cellular_Neighborhood_ID'] == idx)
+                niche_cells = resolved_sub[cond]
                 if niche_cells.empty:
                     continue
 
@@ -238,18 +263,16 @@ class NeighborhoodService:
                 layer = ctx.viewer.add_image(
                     niche_mask,
                     name=layer_title,
-                    opacity=0.5,
+                    opacity=0.6,
+                    visible=True,
                     blending='translucent',
                     colormap=Colormap(colors),
                     contrast_limits=[0, 1],
                     scale=(scale_val, scale_val),
                 )
 
-                bounds_layer = next(
-                    (l for l in ctx.viewer.layers if l.name == f"Bounds - {sample_name}"), None
-                )
-                if bounds_layer:
-                    layer.translate = bounds_layer.translate
+                if translation is not None:
+                    layer.translate = translation
 
                 if sample_name in ctx.state.sample_layers_map:
                     ctx.state.sample_layers_map[sample_name].append(layer)
@@ -265,3 +288,7 @@ class NeighborhoodService:
                         ctx.legend_widget.add_cn_row(
                             layer, layer_title, hex_color, layer_type='image'
                         )
+
+        # Ensure Cellular Neighborhoods group is visible in the Legend panel
+        if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "cn_group"):
+            ctx.legend_widget.cn_group.show()

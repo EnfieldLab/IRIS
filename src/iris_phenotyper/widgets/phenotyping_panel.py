@@ -158,7 +158,7 @@ class PhenotypingPanelWidget(QWidget):
         layout.addWidget(ens_box)
 
         # ── Run / Cancel ──────────────────────────────────────────────────────
-        self.btn_run = QPushButton("▶  Run Phenotyping")
+        self.btn_run = QPushButton("Run Phenotyping")
         self.btn_run.setStyleSheet(
             "QPushButton { background: #444; color: white; font-weight: bold;"
             "padding: 8px; font-size: 13px; border-radius: 5px; }"
@@ -167,7 +167,7 @@ class PhenotypingPanelWidget(QWidget):
         self.btn_run.clicked.connect(self._emit_run)
         layout.addWidget(self.btn_run)
 
-        self.btn_cancel = QPushButton("■  Cancel")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setStyleSheet(
             "QPushButton { background: #7A2A2A; color: white; font-weight: bold;"
             "padding: 6px; border-radius: 5px; }"

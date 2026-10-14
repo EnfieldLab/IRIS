@@ -37,6 +37,7 @@ from iris_viewer.widgets.feature_panel import FeaturePanelWidget
 from iris_common.widgets.legend import ViewerLegendWidget
 from iris_common.widgets.multi_sample import MultiSampleComparisonWidget
 from iris_common.widgets.neighborhood import IrisCellularNeighborhoodsWidget
+from iris_common.widgets.marker_expression import IrisMarkerExpressionWidget
 
 from iris_viewer.app.services import (
     BatchService, ReviewService, BoundaryService, NeighborhoodService
@@ -85,6 +86,7 @@ class ViewerController:
         self.comparison_widget   = self.control_widget.comparison_widget
         self.neighborhood_widget = IrisCellularNeighborhoodsWidget()
         self.neighborhood_widget.legend_widget_ref = self.legend_widget
+        self.marker_widget       = IrisMarkerExpressionWidget()
 
         from qtpy.QtWidgets import QDockWidget
 
@@ -95,6 +97,7 @@ class ViewerController:
             (self.consensus_panel,     "Consensus"),
             (self.feature_panel,       "Features"),
             (self.neighborhood_widget, "Neighborhoods"),
+            (self.marker_widget,       "Marker"),
         ]:
             self.viewer.window.add_dock_widget(widget, name=name, area="right")
             
@@ -109,6 +112,7 @@ class ViewerController:
         qt.tabifyDockWidget(dw["Segmentation"].parent(),  dw["Consensus"].parent())
         qt.tabifyDockWidget(dw["Consensus"].parent(),     dw["Features"].parent())
         qt.tabifyDockWidget(dw["Features"].parent(),      dw["Neighborhoods"].parent())
+        qt.tabifyDockWidget(dw["Neighborhoods"].parent(), dw["Marker"].parent())
         dw["Control"].parent().raise_()
 
         # Tabify Legend with napari's layer list
@@ -146,6 +150,8 @@ class ViewerController:
             legend_widget=self.legend_widget,
             comparison_widget=self.comparison_widget,
             neighborhood_widget=self.neighborhood_widget,
+            marker_widget=self.marker_widget,
+            expression_widget=self.marker_widget,
             added_legend_entries=self.added_legend_entries,  # same set object
             active_workers=self._active_workers,             # same list object
             flagged_cells=[],
@@ -278,11 +284,30 @@ class ViewerController:
         cw.exportUpdatedPhenotypesTriggered.connect(self._export_updated_phenotypes)
         cw.batchProcessTriggered.connect(self.batch_svc.run_batch_processing)
         cw.colChanged.connect(self.multi_sample_svc.update_phenotypes_on_canvas)
+        cw.colChanged.connect(self._on_phenotype_column_changed)
         # Optional session signals (added in a future control_widget update)
         if hasattr(cw, 'saveSessionTriggered'):
             cw.saveSessionTriggered.connect(self._save_session)
         if hasattr(cw, 'loadSessionTriggered'):
             cw.loadSessionTriggered.connect(self._load_session)
+
+    def _on_phenotype_column_changed(self, col: str) -> None:
+        if hasattr(self, "marker_widget"):
+            active_df = (
+                self.state.master_df
+                if (self.state.master_df is not None and not self.state.master_df.empty)
+                else self.state.current_mapped_df
+            )
+            selected_s = (
+                list(self.state.sample_layers_map.keys())
+                or ([self.state.current_sample_name] if self.state.current_sample_name else [])
+            )
+            self.marker_widget.set_data(
+                df=active_df,
+                markers=self.state.markers,
+                celltype_col=col,
+                selected_samples=selected_s,
+            )
 
     def _bind_segmentation_signals(self) -> None:
         self.segmentation_panel.runSequence.connect(self._run_segmentation_pipeline)

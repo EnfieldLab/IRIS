@@ -66,12 +66,30 @@ class AnnotationService:
             ctx.state.markers = adapter.markers
             if hasattr(ctx, "segmentation_panel"):
                 ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
+            if hasattr(ctx, "expression_widget"):
+                ctx.expression_widget.set_data(markers=ctx.state.markers)
 
         # Populate the cell-type reference combo and quick-curation dropdown
         self._populate_celltype_combos(adapter)
 
         if hasattr(ctx, "control_widget") and hasattr(ctx.control_widget, "lbl_annotation"):
             ctx.control_widget.lbl_annotation.setText(Path(file_path).name)
+
+        if hasattr(ctx, "multi_sample_svc"):
+            ctx.multi_sample_svc.update_phenotypes_on_canvas()
+        elif hasattr(ctx, "expression_widget"):
+            cw = getattr(ctx, "control_widget", None)
+            ref_col = cw.combo_ref.currentText() if cw and hasattr(cw, "combo_ref") else "cell_type"
+            selected_s = (
+                list(ctx.state.sample_layers_map.keys())
+                or ([ctx.state.current_sample_name] if ctx.state.current_sample_name else [])
+            )
+            ctx.expression_widget.set_data(
+                df=adapter.normalised,
+                markers=ctx.state.markers or adapter.markers,
+                celltype_col=ref_col,
+                selected_samples=selected_s,
+            )
 
         QMessageBox.information(
             ctx.control_widget, "Annotation Loaded",

@@ -219,14 +219,32 @@ class MultiSampleService:
                     self._added_master_legends.add(type_name)
                     
             # Update the resolved dataframes cache for analytics/export
-            ctx.state.resolved_dfs[sample_name] = mapper.df if 'mapper' in locals() else sub_df
+            resolved_df = mapper.df.copy() if 'mapper' in locals() else sub_df.copy()
+            resolved_df["Image"] = sample_name
+            ctx.state.resolved_dfs[sample_name] = resolved_df
             
         # Rebuild the unified mapped DataFrame
         all_dfs = [ctx.state.resolved_dfs[sn] for sn in ctx.state.sample_layers_map.keys() if sn in ctx.state.resolved_dfs]
         if all_dfs:
             ctx.state.current_mapped_df = pd.concat(all_dfs, ignore_index=True)
-            if hasattr(ctx, "expression_widget"):
-                ctx.expression_widget.set_data(ctx.state.current_mapped_df)
+
+        if hasattr(ctx, "expression_widget"):
+            active_df = (
+                ctx.state.master_df
+                if (ctx.state.master_df is not None and not ctx.state.master_df.empty)
+                else ctx.state.current_mapped_df
+            )
+            selected_s = (
+                list(ctx.state.sample_layers_map.keys())
+                or ([ctx.state.current_sample_name] if ctx.state.current_sample_name else [])
+            )
+            if active_df is not None and not active_df.empty:
+                ctx.expression_widget.set_data(
+                    df=active_df,
+                    markers=ctx.state.markers,
+                    celltype_col=ref_col,
+                    selected_samples=selected_s,
+                )
 
     # ── Add Samples to Canvas ─────────────────────────────────────────────────
 
@@ -598,12 +616,31 @@ class MultiSampleService:
             else:
                 df = pd.DataFrame()
             if not df.empty:
+                df = df.copy()
+                df["Image"] = sn
                 all_dfs.append(df)
 
         if all_dfs:
             ctx.state.current_mapped_df = pd.concat(all_dfs, ignore_index=True)
-            if hasattr(ctx, "expression_widget"):
-                ctx.expression_widget.set_data(ctx.state.current_mapped_df)
+
+        if hasattr(ctx, "expression_widget"):
+            ref_col = ctx.control_widget.combo_ref.currentText() if hasattr(ctx, "control_widget") and hasattr(ctx.control_widget, "combo_ref") else "cell_type"
+            active_df = (
+                ctx.state.master_df
+                if (ctx.state.master_df is not None and not ctx.state.master_df.empty)
+                else ctx.state.current_mapped_df
+            )
+            selected_s = (
+                list(ctx.state.sample_layers_map.keys())
+                or ([ctx.state.current_sample_name] if ctx.state.current_sample_name else [])
+            )
+            if active_df is not None and not active_df.empty:
+                ctx.expression_widget.set_data(
+                    df=active_df,
+                    markers=ctx.state.markers,
+                    celltype_col=ref_col,
+                    selected_samples=selected_s,
+                )
 
     # ── Saved boundary ────────────────────────────────────────────────────────
 

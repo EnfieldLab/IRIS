@@ -71,6 +71,8 @@ class ImageService:
             ctx.state.markers = dialog.marker_panel
             if hasattr(ctx, 'segmentation_panel'):
                 ctx.segmentation_panel.update_channel_dropdowns(ctx.state.markers)
+            if hasattr(ctx, 'expression_widget'):
+                ctx.expression_widget.set_data(markers=ctx.state.markers)
 
         ctx.control_widget.update_sample_list(sample_names)
         if hasattr(ctx, 'comparison_widget'):
@@ -202,6 +204,23 @@ class ImageService:
             image_dims=f"{w} × {h}",
             num_channels=str(n_channels),
         )
+
+        if ctx.state.master_df is not None and hasattr(ctx, "multi_sample_svc"):
+            ctx.multi_sample_svc.update_phenotypes_on_canvas()
+        elif hasattr(ctx, "expression_widget"):
+            cw = getattr(ctx, "control_widget", None)
+            ref_col = cw.combo_ref.currentText() if cw and hasattr(cw, "combo_ref") else "cell_type"
+            active_df = (
+                ctx.state.master_df
+                if (ctx.state.master_df is not None and not ctx.state.master_df.empty)
+                else ctx.state.current_mapped_df
+            )
+            ctx.expression_widget.set_data(
+                df=active_df,
+                markers=ctx.state.markers,
+                celltype_col=ref_col,
+                selected_samples=[sample_name],
+            )
 
     # ── Mask Loading ───────────────────────────────────────────────────────
 

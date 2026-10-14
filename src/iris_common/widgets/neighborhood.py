@@ -134,12 +134,12 @@ class CellProportionDialog(QDialog):
 
         controls_layout.addStretch(1)
 
-        self.btn_copy = QPushButton("📋 Copy to Clipboard")
+        self.btn_copy = QPushButton("Copy to Clipboard")
         self.btn_copy.setToolTip("Copy plot as image to clipboard")
         self.btn_copy.clicked.connect(self.copy_to_clipboard)
         controls_layout.addWidget(self.btn_copy)
 
-        self.btn_save = QPushButton("💾 Export Figure…")
+        self.btn_save = QPushButton("Export Figure...")
         self.btn_save.setToolTip("Export plot as high-resolution PDF, SVG, or PNG")
         self.btn_save.clicked.connect(self.export_figure)
         controls_layout.addWidget(self.btn_save)
@@ -352,7 +352,7 @@ class CellProportionDialog(QDialog):
         try:
             pixmap = self.canvas.grab()
             QApplication.clipboard().setPixmap(pixmap)
-            self.lbl_hover.setText("✓ Copied figure to clipboard! (You can paste directly into slides or docs)")
+            self.lbl_hover.setText("Copied figure to clipboard! (You can paste directly into slides or docs)")
             self.lbl_hover.setStyleSheet("color: #76FF03; font-size: 12px; font-weight: bold; padding: 2px 4px;")
         except Exception as exc:
             QMessageBox.warning(self, "Copy Failed", f"Could not copy to clipboard: {exc}")
@@ -548,28 +548,6 @@ class IrisCellularNeighborhoodsWidget(QWidget):
         self.table_meta.setColumnWidth(0, 65)
         pg.addWidget(self.table_meta, 2)
 
-        btn_row = QHBoxLayout()
-        self.btn_popout = QPushButton("⤢ Pop-up Window")
-        self.btn_popout.setToolTip("Open full-sized interactive plot in a separate pop-up window")
-        self.btn_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 3px; padding: 5px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-        """)
-        self.btn_popout.clicked.connect(self.open_popup_window)
-        btn_row.addWidget(self.btn_popout)
-
-        self.btn_export = QPushButton("Export Figure")
-        self.btn_export.clicked.connect(self.export_publication_plot)
-        btn_row.addWidget(self.btn_export)
-
-        self.btn_export_data = QPushButton("Export Profiles CSV")
-        self.btn_export_data.clicked.connect(self.export_neighborhood_profiles_csv)
-        btn_row.addWidget(self.btn_export_data)
-        pg.addLayout(btn_row)
-
         self.main_layout.addWidget(self.plot_group, 2)
 
     def _toggle_method_visibility(self, method: str) -> None:
@@ -719,6 +697,23 @@ class IrisCellularNeighborhoodsWidget(QWidget):
         self.popup_dialog.show()
         self.popup_dialog.raise_()
         self.popup_dialog.activateWindow()
+
+    def _trigger_overlay_refresh(self) -> None:
+        """Forces refresh and re-rendering of spatial neighborhood coloration on canvas."""
+        if not self.niche_metadata:
+            QMessageBox.information(self, "No Niches", "Please extract spatial neighborhoods first.")
+            return
+        self.nicheMetadataChanged.emit(self.niche_metadata)
+
+    def toggle_phenotypes_visibility(self) -> None:
+        """Toggles visibility of cell phenotype layers for easy microenvironment comparison."""
+        if self.legend_widget_ref and hasattr(self.legend_widget_ref, "ref_ct_rows"):
+            rows = self.legend_widget_ref.ref_ct_rows
+            if rows:
+                any_vis = any(r.checkbox.isChecked() for r in rows)
+                new_state = not any_vis
+                for r in rows:
+                    r.checkbox.setChecked(new_state)
 
     def display_niche_compositions(
         self,

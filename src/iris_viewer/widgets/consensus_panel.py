@@ -155,8 +155,8 @@ class ConsensusPanelWidget(QWidget):
         gl.addWidget(self.chk_enable_review)
 
         row_nav = QHBoxLayout()
-        self.btn_prev_issue = QPushButton("◀ Prev Issue")
-        self.btn_next_issue = QPushButton("Next Issue ▶")
+        self.btn_prev_issue = QPushButton("Prev Issue")
+        self.btn_next_issue = QPushButton("Next Issue")
         
         # Define new signals at class level later, but for now we can just emit custom signals
         # Or better, we define them in __init__ dynamically, or we use existing mechanisms.

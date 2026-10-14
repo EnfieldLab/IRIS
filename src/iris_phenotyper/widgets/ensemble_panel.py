@@ -134,7 +134,7 @@ class EnsemblePanelWidget(QWidget):
         self.btn_apply_override.clicked.connect(self._on_apply_override)
         row_btn.addWidget(self.btn_apply_override)
 
-        self.btn_undo = QPushButton("↩ Undo")
+        self.btn_undo = QPushButton("Undo")
         self.btn_undo.clicked.connect(self.undoRequested.emit)
         row_btn.addWidget(self.btn_undo)
         flag_layout.addLayout(row_btn)
