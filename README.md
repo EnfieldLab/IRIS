@@ -6,10 +6,10 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
 [![Framework: napari](https://img.shields.io/badge/napari-plugin-blueviolet.svg)](https://napari.org/)
 
-**IRIS Suite** is an interactive, high-performance spatial biology framework for multiplexed tissue imaging (CODEX/PhenoCycler, Akoya, CyCIF, MIBI, IMC, and multiplexed immunofluorescence). IRIS bridges deep learning segmentation, interactive curation, automated cell phenotyping, and spatial cellular neighborhood analytics within a unified hardware-accelerated desktop environment.
+**IRIS Suite** is an interactive, high-performance spatial biology framework for multiplexed tissue imaging. IRIS bridges deep learning segmentation, interactive curation, automated cell phenotyping, and spatial cellular neighborhood analytics within a unified hardware-accelerated desktop environment.
 
 <p align="center">
-  <img src="image/iris_blink.gif" alt="IRIS Suite Interface Preview" width="850">
+  <img src="image/iris_blink.gif" alt="IRIS Suite Interface Preview" width="700">
 </p>
 
 ---
@@ -17,7 +17,7 @@
 ## Key Methodological Capabilities
 
 ### 1. Multi-Model Consensus Segmentation & Confidence Mapping
-- **Deep Learning Segmenters**: Modular execution pipeline supporting Cellpose, StarDist, and pretrained deep learning backends.
+- **Deep Learning Segmentmentation**: Modular execution pipeline supporting Cellpose, StarDist, and pretrained deep learning backends.
 - **Ensemble Consensus**: Probability-weighted consensus masks generated across multiple segmentation architectures to mitigate model-specific boundary artifacts.
 - **Pixel-Level Uncertainty**: Per-cell and spatial confidence scoring highlighting ambiguous boundaries and oversegmentation regions.
 
