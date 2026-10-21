@@ -329,3 +329,119 @@ class TestUnsupervisedClusteringAndMarkerExpression:
         assert "leiden" in adata.obs.columns
 
 
+class TestModularPackageArchitecture:
+    """Verifies that all modularized subpackages maintain clean, backward-compatible API contracts."""
+
+    def test_phenotyping_modular_imports(self):
+        # Direct modular subpackage imports
+        from iris_viewer.widgets.phenotyping import (
+            GatingHierarchyNode,
+            GatingStudioDialog,
+            ManualGatingWidget,
+            PhenotyperPanelWidget,
+            SampleImpactDialog,
+            arcsinh_transform,
+            assess_gating_quality,
+            compute_optimal_threshold,
+            find_sample_column,
+            log10_transform,
+        )
+        assert GatingHierarchyNode is not None
+        assert PhenotyperPanelWidget is not None
+        assert ManualGatingWidget is not None
+        assert GatingStudioDialog is not None
+        assert SampleImpactDialog is not None
+        assert arcsinh_transform is not None
+        assert assess_gating_quality is not None
+        assert compute_optimal_threshold is not None
+        assert find_sample_column is not None
+        assert log10_transform is not None
+
+        # Re-export facade backwards compatibility
+        from iris_viewer.widgets.phenotyping_panel import (
+            GatingStudioDialog as FacadeStudio,
+        )
+        from iris_viewer.widgets.phenotyping_panel import (
+            ManualGatingWidget as FacadeManual,
+        )
+        from iris_viewer.widgets.phenotyping_panel import (
+            PhenotyperPanelWidget as FacadePanel,
+        )
+        from iris_viewer.widgets.phenotyping_panel import (
+            SampleImpactDialog as FacadeImpact,
+        )
+        assert FacadePanel is PhenotyperPanelWidget
+        assert FacadeManual is ManualGatingWidget
+        assert FacadeStudio is GatingStudioDialog
+        assert FacadeImpact is SampleImpactDialog
+
+    def test_marker_expression_modular_imports(self):
+        from iris_viewer.widgets.marker_expression import (
+            IrisMarkerExpressionWidget,
+            MarkerExpressionDialog,
+            SampleSubsetDialog,
+        )
+        from iris_viewer.widgets.marker_expression.dialog import MarkerExpressionDialog as Dlg
+        from iris_viewer.widgets.marker_expression.subset_dialog import SampleSubsetDialog as SubDlg
+        from iris_viewer.widgets.marker_expression.widget import IrisMarkerExpressionWidget as Wgt
+
+        assert MarkerExpressionDialog is Dlg
+        assert SampleSubsetDialog is SubDlg
+        assert IrisMarkerExpressionWidget is Wgt
+
+    def test_segmentation_modular_imports(self):
+        from iris_viewer.widgets.segmentation_panel import (
+            IrisSegmentationWidget,
+            MultiSelectButton,
+            PipelineBuilderWidget,
+            PipelineGroupWidget,
+            SegmentationPanelWidget,
+            SegmentationStudioDialog,
+            StepWidget,
+        )
+        from iris_viewer.widgets.segmentation_pipeline_builder import (
+            MultiSelectButton as MSB,
+        )
+        from iris_viewer.widgets.segmentation_pipeline_builder import (
+            PipelineBuilderWidget as PBW,
+        )
+        from iris_viewer.widgets.segmentation_pipeline_builder import (
+            PipelineGroupWidget as PGW,
+        )
+        from iris_viewer.widgets.segmentation_pipeline_builder import (
+            StepWidget as SW,
+        )
+        from iris_viewer.widgets.segmentation_studio_dialog import (
+            SegmentationStudioDialog as SSD,
+        )
+
+        assert MultiSelectButton is MSB
+        assert StepWidget is SW
+        assert PipelineGroupWidget is PGW
+        assert PipelineBuilderWidget is PBW
+        assert SegmentationStudioDialog is SSD
+        assert IrisSegmentationWidget is SegmentationPanelWidget
+
+    def test_thresholding_and_quality_with_nan_edge_cases(self):
+        from iris_viewer.widgets.phenotyping.thresholding import (
+            arcsinh_transform,
+            assess_gating_quality,
+            compute_optimal_threshold,
+        )
+
+        # Vector with NaNs, Infs, and zero variance
+        v_dirty = np.array([np.nan, 1.0, 1.0, 2.0, 2.0, np.inf, 3.0, 3.0, np.nan])
+        v_clean = arcsinh_transform(v_dirty)
+        assert len(v_clean) == len(v_dirty)
+
+        # Otsu should produce a finite float threshold despite NaNs
+        th = compute_optimal_threshold(v_clean, method="otsu")
+        assert np.isfinite(th)
+
+        # Quality readout should produce robust finite score
+        label, color, score = assess_gating_quality(v_clean, th)
+        assert isinstance(label, str)
+        assert color.startswith("#")
+        assert np.isfinite(score)
+
+
