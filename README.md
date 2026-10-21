@@ -124,11 +124,6 @@ Launch the unified interactive desktop environment directly from the terminal:
 iris-viewer
 ```
 
-Optionally restore a previously saved experiment session:
-```bash
-iris-viewer /path/to/experiment_session.json
-```
-
 ---
 
 ## End-to-End Workflow
@@ -161,24 +156,3 @@ Run the comprehensive test suite to verify backend detection, pipeline coordinat
 ```bash
 pytest tests/ -v
 ```
-
-<!-- ---
-
-## Citation & Attribution
-
-If you use IRIS in your research, please cite:
-
-```bibtex
-@article{iris_spatial2026,
-  title={IRIS: An Interactive Ensemble Framework for High-Plex Spatial Proteomics and Single-Cell Phenotyping},
-  author={Wu, Willie and Contributors},
-  journal={Bioinformatics / Nature Methods (Under Review)},
-  year={2026}
-}
-```
-
----
-
-## License
-
-This project is licensed under the [MIT License](LICENSE). -->
