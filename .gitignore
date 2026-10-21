@@ -75,10 +75,7 @@ scratch/
 *.safetensors
 *.onnx
 cpsam*
-src/iris_viewer/data/cellpose/
-src/iris_viewer/data/torch/
-src/iris_viewer/data/huggingface/
-src/iris_viewer/data/instanseg_models/
+src/iris_viewer/data/
 /data/
 *.h5ad
 *.qptiff
