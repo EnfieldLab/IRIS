@@ -32,6 +32,9 @@ class ViewerAppState:
         self.current_sample_name: Optional[str] = None
         self.raw_image: Optional[np.ndarray] = None        # (C, H, W)
         self.channel_contrast_limits: Dict[str, list] = {} # marker -> [lo, hi]
+        # Persistent Marker & Cell-Type Color Maps
+        self.channel_colors: Dict[str, str] = {}            # marker_name -> hex_color
+        self.celltype_colors: Dict[str, str] = {}           # celltype_name -> hex_color
 
         # Segmentation Results
         # method_name -> {'nuclear': ndarray, 'cytoplasm': ndarray|None}
@@ -152,6 +155,8 @@ class ViewerAppState:
             "per_cell_confidence": {str(k): v for k, v in self.per_cell_confidence.items()},
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
             "persistent_settings": self.persistent_settings,
+            "channel_colors": self.channel_colors,
+            "celltype_colors": self.celltype_colors,
         }
 
     @classmethod
@@ -169,6 +174,8 @@ class ViewerAppState:
             int(k): str(v) for k, v in data.get("manual_overrides", {}).items()
         }
         state.persistent_settings = data.get("persistent_settings", {})
+        state.channel_colors = data.get("channel_colors", {})
+        state.celltype_colors = data.get("celltype_colors", {})
         return state
 
     def save_session(self, path: Path, consensus_threshold: float = 0.66) -> None:

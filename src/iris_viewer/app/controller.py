@@ -184,6 +184,9 @@ class ViewerController:
         self.boundary_svc     = BoundaryService(self._ctx)
         self.neighborhood_svc = NeighborhoodService(self._ctx)
         self._ctx.review_svc = self.review_svc
+        self._ctx.multi_sample_svc = self.multi_sample_svc
+        self._ctx.image_svc = self.image_svc
+        self.legend_widget.ctx = self._ctx
         self.segmentation_panel.ctx = self._ctx
         self.phenotyper_panel.ctx = self._ctx
 
@@ -403,10 +406,17 @@ class ViewerController:
             QMessageBox.warning(self.control_widget, "Invalid Format", "File must contain a color column and either marker or cell type names.")
             return
 
-        if has_markers:
-            self.image_svc.load_channel_colors(filepath)
-        if has_celltypes:
-            self.multi_sample_svc.load_celltype_colors(filepath)
+        if has_markers and has_celltypes:
+            self.multi_sample_svc.load_channel_colors(filepath, show_dialog=False)
+            self.multi_sample_svc.load_celltype_colors(filepath, show_dialog=False)
+            QMessageBox.information(
+                self.control_widget, "Success",
+                "Updated channel marker and cell type colors from file."
+            )
+        elif has_markers:
+            self.multi_sample_svc.load_channel_colors(filepath, show_dialog=True)
+        elif has_celltypes:
+            self.multi_sample_svc.load_celltype_colors(filepath, show_dialog=True)
 
     # Interactive Review & Canvas Controls
 
@@ -922,6 +932,11 @@ class ViewerController:
             self.state.per_cell_confidence = restored.per_cell_confidence
             self.state.manual_overrides    = restored.manual_overrides
             self.state.persistent_settings = restored.persistent_settings
+            self.state.channel_colors      = restored.channel_colors
+            self.state.celltype_colors     = restored.celltype_colors
+            if hasattr(self, "multi_sample_svc"):
+                self.multi_sample_svc.DEFAULT_COLORS.update(restored.channel_colors)
+                self.multi_sample_svc.CELLTYPE_COLORS.update(restored.celltype_colors)
 
             # Restore consensus threshold slider
             thresh = raw_data.get("consensus_threshold", 0.66)

@@ -229,6 +229,31 @@ class ViewerLegendWidget(QWidget):
                     elif layer_type == 'labels':
                         target_layer.refresh()
 
+            ctx = getattr(self, "ctx", None)
+            if ctx:
+                if layer_type == 'image':
+                    if hasattr(ctx, "state"):
+                        if hasattr(ctx.state, "channel_colors"):
+                            ctx.state.channel_colors[n] = hex_c
+                            ctx.state.channel_colors[n.lower()] = hex_c
+                            ctx.state.channel_colors[n.upper()] = hex_c
+                        if hasattr(ctx.state, "persistent_settings"):
+                            colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_c)) + [1]])
+                            cmap = Colormap(colors, name=f'custom_{n}')
+                            ctx.state.persistent_settings.setdefault(n, {})["colormap"] = cmap
+                            ctx.state.persistent_settings.setdefault(n.lower(), {})["colormap"] = cmap
+                            ctx.state.persistent_settings.setdefault(n.upper(), {})["colormap"] = cmap
+                    if hasattr(ctx, "multi_sample_svc"):
+                        ctx.multi_sample_svc.DEFAULT_COLORS[n] = hex_c
+                        ctx.multi_sample_svc.DEFAULT_COLORS[n.lower()] = hex_c
+                        ctx.multi_sample_svc.DEFAULT_COLORS[n.upper()] = hex_c
+                else:
+                    if hasattr(ctx, "state") and hasattr(ctx.state, "celltype_colors"):
+                        ctx.state.celltype_colors[n] = hex_c
+                        ctx.state.celltype_colors[n.lower()] = hex_c
+                    if hasattr(ctx, "multi_sample_svc"):
+                        ctx.multi_sample_svc.CELLTYPE_COLORS[n.lower()] = hex_c
+
         def on_layer_vis_change(event) -> None:
             if layer is not None and hasattr(layer, 'visible') and row.checkbox.isChecked() != layer.visible:
                 row.checkbox.blockSignals(True)

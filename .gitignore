@@ -1,11 +1,11 @@
-# ── Python bytecode & C-extensions ───────────────────────────────────────────
+# Python bytecode & C-extensions
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.dylib
 
-# ── Packaging & Distribution ──────────────────────────────────────────────────
+# Packaging & Distribution
 build/
 develop-eggs/
 dist/
@@ -24,7 +24,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# ── Testing, Coverage & Linters ───────────────────────────────────────────────
+# Testing, Coverage & Linters
 .pytest_cache/
 .tox/
 .nox/
@@ -40,7 +40,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# ── Virtual Environments ──────────────────────────────────────────────────────
+# Virtual Environments
 .venv/
 env/
 venv/
@@ -48,7 +48,7 @@ ENV/
 env.bak/
 venv.bak/
 
-# ── IDEs, Editors & OS Metadata ───────────────────────────────────────────────
+# IDEs, Editors & OS Metadata
 .DS_Store
 .DS_Store?
 ._*
@@ -60,15 +60,15 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*.tmp
 *~
 
-# ── Scratch, Temporary & Archives ─────────────────────────────────────────────
+# Scratch, Temporary & Archives
 scratch/
 *.bak
-*.tmp
 *.log
 
-# ── Deep Learning Model Checkpoints & Large Data ──────────────────────────────
+# Deep Learning Model Checkpoints & Large Data
 *.pt
 *.pth
 *.bin
@@ -83,3 +83,4 @@ src/iris_viewer/data/instanseg_models/
 *.h5ad
 *.qptiff
 *.ndpi
+

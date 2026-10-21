@@ -23,7 +23,7 @@ import json
 import re
 import types
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import matplotlib.colors as mcolors
 import numpy as np
@@ -105,6 +105,52 @@ class MultiSampleService:
         self.DEFAULT_COLORS: Dict[str, str] = dict(DEFAULT_MARKER_COLORS)
         self._annotation_svc = AnnotationService(ctx)
         self._color_svc = ColorService(ctx, self.DEFAULT_COLORS, self.CELLTYPE_COLORS)
+
+    # Colour Resolution & Colormap Helpers
+
+    def get_marker_color(self, marker: str) -> str:
+        """Resolve hex or named color for a marker, respecting user overrides."""
+        ctx = self.ctx
+        # 1. State channel colors
+        if hasattr(ctx, "state") and hasattr(ctx.state, "channel_colors"):
+            cc = ctx.state.channel_colors
+            for k in (marker, marker.lower(), marker.upper()):
+                if k in cc:
+                    return cc[k]
+        # 2. DEFAULT_COLORS dict
+        for k in (marker, marker.lower(), marker.upper()):
+            if k in self.DEFAULT_COLORS:
+                return self.DEFAULT_COLORS[k]
+        # 3. Persistent settings
+        if hasattr(ctx, "state") and hasattr(ctx.state, "persistent_settings"):
+            for k in (marker, marker.lower(), marker.upper()):
+                if k in ctx.state.persistent_settings and "colormap" in ctx.state.persistent_settings[k]:
+                    cmap = ctx.state.persistent_settings[k]["colormap"]
+                    if isinstance(cmap, Colormap) and hasattr(cmap, "colors"):
+                        try:
+                            return mcolors.to_hex(cmap.colors[-1][:3])
+                        except Exception:
+                            pass
+                    return cmap
+        # 4. Fallback default
+        return DEFAULT_MARKER_COLORS.get(marker.upper(), "gray")
+
+    def _get_layer_colormap(self, color_val: Any, name: str) -> Any:
+        """Convert a hex string or Colormap into a valid napari colormap."""
+        if isinstance(color_val, Colormap):
+            return color_val
+        if isinstance(color_val, str):
+            if color_val.startswith("#") or (
+                mcolors.is_color_like(color_val)
+                and color_val.lower() not in ("gray", "red", "green", "blue", "cyan", "magenta", "yellow")
+            ):
+                try:
+                    rgb = list(mcolors.to_rgb(color_val))
+                    colors = np.array([[0, 0, 0, 0], rgb + [1.0]])
+                    return Colormap(colors, name=f"custom_{name}")
+                except Exception:
+                    pass
+        return color_val
 
     # Master Annotation File
 
@@ -199,7 +245,9 @@ class MultiSampleService:
                     continue
 
                 mask_bin, hex_color = layer_data_ref[type_name]
-                if type_name.lower() in self.CELLTYPE_COLORS:
+                if hasattr(ctx, "state") and hasattr(ctx.state, "celltype_colors") and type_name.lower() in ctx.state.celltype_colors:
+                    hex_color = ctx.state.celltype_colors[type_name.lower()]
+                elif type_name.lower() in self.CELLTYPE_COLORS:
                     hex_color = self.CELLTYPE_COLORS[type_name.lower()]
 
                 colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]])
@@ -355,17 +403,22 @@ class MultiSampleService:
             # Image channels
             for m, chan_data, clims in img_data:
                 sample_h, sample_w = chan_data.shape
-                cname = self.DEFAULT_COLORS.get(m, "gray")
+                cname = self.get_marker_color(m)
+                cmap = self._get_layer_colormap(cname, m)
                 is_vis = m in ("DAPI", "CK", "aSMA", "CD45")
                 layer = ctx.viewer.add_image(
-                    chan_data, name=m, colormap=cname, blending="additive",
+                    chan_data, name=m, colormap=cmap, blending="additive",
                     visible=is_vis, contrast_limits=clims, scale=(scale_val, scale_val),
                 )
                 sample_layers.append(layer)
                 self._register_layer(layer, m)
                 if m not in self._added_master_legends:
                     try:
-                        init_color = layer.colormap.map([1.0])[0]
+                        if isinstance(cname, str) and (cname.startswith("#") or mcolors.is_color_like(cname)):
+                            init_color = mcolors.to_hex(cname)
+                        else:
+                            mapped = layer.colormap.map([1.0])[0]
+                            init_color = mcolors.to_hex(mapped) if not isinstance(mapped, str) or not mapped.startswith("#") else mapped
                     except Exception:
                         init_color = "#FFFFFF"
                     ctx.legend_widget.add_grouped_channel_row(layer, m, init_color, "Channels")
@@ -427,7 +480,9 @@ class MultiSampleService:
 
                 for type_name in sorted(layer_data_ref.keys()):
                     mask_bin, hex_color = layer_data_ref[type_name]
-                    if type_name.lower() in self.CELLTYPE_COLORS:
+                    if hasattr(ctx, "state") and hasattr(ctx.state, "celltype_colors") and type_name.lower() in ctx.state.celltype_colors:
+                        hex_color = ctx.state.celltype_colors[type_name.lower()]
+                    elif type_name.lower() in self.CELLTYPE_COLORS:
                         hex_color = self.CELLTYPE_COLORS[type_name.lower()]
                     colors = np.array(
                         [[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]]
@@ -763,6 +818,18 @@ class MultiSampleService:
                 try:
                     cmap = layer.colormap
                     settings.setdefault(base_name, {})["colormap"] = cmap
+                    try:
+                        if hasattr(cmap, "colors") and len(cmap.colors) > 0:
+                            hex_c = mcolors.to_hex(cmap.colors[-1][:3])
+                            if hasattr(ctx.state, "channel_colors"):
+                                ctx.state.channel_colors[base_name] = hex_c
+                                ctx.state.channel_colors[base_name.lower()] = hex_c
+                                ctx.state.channel_colors[base_name.upper()] = hex_c
+                            self.DEFAULT_COLORS[base_name] = hex_c
+                            self.DEFAULT_COLORS[base_name.lower()] = hex_c
+                            self.DEFAULT_COLORS[base_name.upper()] = hex_c
+                    except Exception:
+                        pass
                     for l in ctx.viewer.layers:
                         lb = l.name.split(" [")[0] if " [" in l.name else l.name
                         if lb == base_name and l is not layer and hasattr(l, "colormap"):
@@ -827,10 +894,10 @@ class MultiSampleService:
 
     # Colour loading
 
-    def load_channel_colors(self, filepath: str) -> None:
+    def load_channel_colors(self, filepath: str, show_dialog: bool = True) -> None:
         """Load marker colour mapping from *filepath* and apply to the canvas."""
-        self._color_svc.load_channel_colors(filepath)
+        self._color_svc.load_channel_colors(filepath, show_dialog=show_dialog)
 
-    def load_celltype_colors(self, filepath: str) -> None:
+    def load_celltype_colors(self, filepath: str, show_dialog: bool = True) -> None:
         """Load cell-type colour mapping from *filepath* and apply to the canvas."""
-        self._color_svc.load_celltype_colors(filepath)
+        self._color_svc.load_celltype_colors(filepath, show_dialog=show_dialog)
