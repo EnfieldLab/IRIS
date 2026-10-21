@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import types
 from pathlib import Path
+from typing import Any
 
-import numpy as np
 import matplotlib.colors as mcolors
+import numpy as np
+import pandas as pd
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
-
-import pandas as pd
 
 
 class ColorService:
@@ -46,9 +46,9 @@ class ColorService:
         self.default_colors = default_colors
         self.celltype_colors = celltype_colors
 
-    # ── Channel / Marker colours ────────────────────────────────────────────
+    # Channel / Marker colours
 
-    # ── Channel / Marker colours ────────────────────────────────────────────
+    # Channel / Marker colours
 
     def load_channel_colors(self, filepath: str) -> None:
         """
@@ -121,7 +121,7 @@ class ColorService:
                 f"Failed to load channel colors:\n{exc}",
             )
 
-    # ── Cell-type colours ───────────────────────────────────────────────────
+    # Cell-type colours
 
     def load_celltype_colors(self, filepath: str) -> None:
         """
@@ -189,7 +189,7 @@ class ColorService:
                 f"Failed to load cell type colors:\n{exc}",
             )
 
-    # ── Helpers ─────────────────────────────────────────────────────────────
+    # Helpers
 
     def _read_color_file(self, filepath: str) -> "pd.DataFrame | None":
         """Return a DataFrame from *filepath* (CSV or XLSX)."""

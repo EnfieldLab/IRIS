@@ -6,15 +6,15 @@ boundary geometry, neighborhood analytics, batch execution, and interactive revi
 """
 from __future__ import annotations
 
+from .annotation_service import AnnotationService
+from .batch_service import BatchService
+from .boundary_service import BoundaryService
+from .color_service import ColorService
+from .curation_service import CurationService
 from .image_service import ImageService
 from .multi_sample_service import MultiSampleService
-from .annotation_service import AnnotationService
-from .color_service import ColorService
-from .boundary_service import BoundaryService
 from .neighborhood_service import NeighborhoodService
-from .batch_service import BatchService
 from .review_service import ReviewService
-from .curation_service import CurationService
 
 __all__ = [
     "ImageService",

@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-# ── Model Storage Paths ────────────────────────────────────────────────────────
+# Model Storage Paths
 # Use standard user cache directory ~/.cache/iris (or IRIS_DATA_DIR) for downloaded weights,
 # preserving bundled static resources within package data.
 
@@ -31,8 +31,9 @@ _setenv("INSTANSEG_BIOIMAGEIO_PATH",  _bioimageio_dir)
 _setenv("TORCH_HOME",                 _user_cache_dir / "torch")
 _setenv("HF_HOME",                    _user_cache_dir / "huggingface")
 
-# ── Deferred imports (after env vars are in place) ─────────────────────────────
+# Deferred imports (after env vars are in place)
 import napari
+
 from iris_viewer.app.controller import ViewerController
 
 

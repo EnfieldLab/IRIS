@@ -7,6 +7,7 @@ napari canvas overlay coloration, and legend synchronization.
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
@@ -14,8 +15,8 @@ from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
-from iris_viewer.engine.neighborhood import identify_cellular_neighborhoods
 from iris_viewer.app.services.multi_sample_service import get_sample_sub_df
+from iris_viewer.engine.neighborhood import identify_cellular_neighborhoods
 from iris_viewer.io.data_adapter import IrisPhenotypeMapper
 
 

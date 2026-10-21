@@ -2,7 +2,6 @@
 Tests for core/state.py — session persistence and override undo stack.
 No Qt or napari required.
 """
-import json
 import tempfile
 from pathlib import Path
 
@@ -11,8 +10,7 @@ import pytest
 
 from iris_viewer.core.state import ViewerAppState
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# Helpers
 
 def _make_populated_state() -> ViewerAppState:
     st = ViewerAppState()
@@ -27,7 +25,7 @@ def _make_populated_state() -> ViewerAppState:
     return st
 
 
-# ── Session Serialisation ──────────────────────────────────────────────────────
+# Session Serialisation
 
 class TestSessionPersistence:
 
@@ -105,7 +103,7 @@ class TestSessionPersistence:
         assert restored.per_cell_confidence == {}
 
 
-# ── Override Undo Stack ────────────────────────────────────────────────────────
+# Override Undo Stack
 
 class TestOverrideHistory:
 
@@ -145,7 +143,7 @@ class TestOverrideHistory:
         assert st.undo_override() is False
 
 
-# ── Reset Behaviour ────────────────────────────────────────────────────────────
+# Reset Behaviour
 
 class TestStateReset:
 

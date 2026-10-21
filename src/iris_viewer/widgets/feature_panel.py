@@ -3,21 +3,28 @@ IRIS-Viewer Feature Extraction Panel Widget
 Controls for selecting which morphological and intensity features to compute,
 previewing extracted data, and exporting the results.
 """
-from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
-    QPushButton, QGroupBox, QFrame, QTableWidget, QTableWidgetItem,
-    QHeaderView, QScrollArea, QSizePolicy
-)
-from qtpy.QtCore import Qt, Signal
 import pandas as pd
-from iris_viewer.widgets.styles import SHARED_DARK_THEME, BUTTON_SUCCESS
-from iris_viewer.engine.feature_extraction import MORPHOLOGY_FEATURES, INTENSITY_FEATURES
+from qtpy.QtCore import Signal
+from qtpy.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from iris_viewer.engine.feature_extraction import INTENSITY_FEATURES, MORPHOLOGY_FEATURES
+from iris_viewer.widgets.styles import BUTTON_SUCCESS, SHARED_DARK_THEME
 
 
 class FeaturePanelWidget(QWidget):
     """Dock widget for cell feature extraction configuration and data preview."""
 
-    # ── Signals ──────────────────────────────────────────────────────
+    # Signals
     extractTriggered = Signal(list, list)   # selected_morphology, selected_intensity
     exportTriggered = Signal()
     dataExtracted = Signal(object)          # df
@@ -26,19 +33,19 @@ class FeaturePanelWidget(QWidget):
         super().__init__(parent)
         self.setStyleSheet(SHARED_DARK_THEME)
         self.cached_df = None
-        
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        
+
         self.content_widget = QWidget()
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(5, 5, 5, 5)
         self.main_layout.setSpacing(6)
         self.content_widget.setLayout(self.main_layout)
-        
+
         self.scroll_area.setWidget(self.content_widget)
-        
+
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(self.scroll_area)
@@ -49,7 +56,7 @@ class FeaturePanelWidget(QWidget):
         self._build_run_controls()
         self.main_layout.addStretch()
 
-    # ── Morphology Features ──────────────────────────────────────────
+    # Morphology Features
     def _build_morphology_group(self):
         group = QGroupBox()
         gl = QVBoxLayout()
@@ -86,7 +93,7 @@ class FeaturePanelWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Intensity Features ───────────────────────────────────────────
+    # Intensity Features
     def _build_intensity_group(self):
         group = QGroupBox()
         gl = QVBoxLayout()
@@ -136,7 +143,7 @@ class FeaturePanelWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Run Controls ─────────────────────────────────────────────────
+    # Run Controls
     def _build_run_controls(self):
         row = QHBoxLayout()
 
@@ -162,7 +169,7 @@ class FeaturePanelWidget(QWidget):
 
 
 
-    # ── Utility ──────────────────────────────────────────────────────
+    # Utility
     def _add_separator(self, layout):
         pass
 

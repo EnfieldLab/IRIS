@@ -7,13 +7,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from iris_viewer.engine.phenotyping.ensemble import PhenotypingEnsemble
+from iris_viewer.core.types import CellTypePanel, CellTypeRule
 from iris_viewer.engine.phenotyping.astir_backend import ASTIRBackend
+from iris_viewer.engine.phenotyping.ensemble import PhenotypingEnsemble
 from iris_viewer.engine.phenotyping.maps_backend import MAPSBackend
-from iris_viewer.core.types import CellTypePanel, CellTypeRule, MarkerPanel
 
 
-def _make_predictions(n_cells: int = 10, cell_types: list = None) -> dict:
+def _make_predictions(n_cells: int = 10, cell_types: list[str] | None = None) -> dict:
     """Generate synthetic predictions for testing ensemble voting."""
     if cell_types is None:
         cell_types = ["Tumor", "T cell", "Macrophage"]
@@ -39,7 +39,7 @@ class TestPhenotypingEnsemble:
     def test_soft_vote_returns_all_cells(self):
         preds = _make_predictions(20)
         ens = self._ensemble()
-        final, conf, per_method = ens.vote(preds, strategy="soft_vote")
+        final, conf, _per_method = ens.vote(preds, strategy="soft_vote")
         assert set(final.keys()) == set(range(1, 21))
         assert set(conf.keys()) == set(range(1, 21))
 
@@ -65,7 +65,7 @@ class TestPhenotypingEnsemble:
     def test_borda_count_returns_all_cells(self):
         preds = _make_predictions(10)
         ens = self._ensemble()
-        final, conf, _ = ens.vote(preds, strategy="borda_count")
+        final, _conf, _ = ens.vote(preds, strategy="borda_count")
         assert len(final) == 10
 
     def test_min_probability_threshold_produces_unresolved(self):
@@ -90,7 +90,7 @@ class TestPhenotypingEnsemble:
         preds = _make_predictions(5)
         ens = self._ensemble()
         _, _, per_method = ens.vote(preds, strategy="soft_vote")
-        for cid, breakdown in per_method.items():
+        for breakdown in per_method.values():
             assert "MethodA" in breakdown
             assert "MethodB" in breakdown
 
@@ -122,6 +122,28 @@ class TestASTIRBackend:
         assert isinstance(result, dict)
         assert set(result.keys()) == {1, 2}
 
+    def test_astir_multiclass_inference(self):
+        b = ASTIRBackend()
+        if not b.is_available():
+            pytest.skip("astir not installed")
+        df = pd.DataFrame({
+            "ObjectNumber": [1, 2, 3, 4, 5, 6],
+            "CD3_mean": [5.0, 0.1, 4.2, 0.05, 4.8, 0.1],
+            "CD8_mean": [4.0, 0.05, 3.8, 0.02, 4.1, 0.08],
+            "CD20_mean": [0.1, 4.5, 0.08, 4.2, 0.15, 3.9],
+        })
+        panel = CellTypePanel(rules=[
+            CellTypeRule("CD8_T_cell", markers_positive=["CD3", "CD8"]),
+            CellTypeRule("B_cell", markers_positive=["CD20"]),
+        ])
+        result = b.predict(df, panel, max_epochs=5)
+        assert isinstance(result, dict)
+        assert len(result) == 6
+        for cid in range(1, 7):
+            assert "CD8_T_cell" in result[cid]
+            assert "B_cell" in result[cid]
+            assert sum(result[cid].values()) > 0.0
+
 
 class TestMAPSFallback:
     """Tests for MAPS deep learning architecture."""
@@ -148,3 +170,162 @@ class TestMAPSFallback:
         preds = b.predict(df, panel)
         assert isinstance(preds, dict)
         assert len(preds) == 3
+
+
+class TestUnsupervisedClusteringAndMarkerExpression:
+    """Tests for cluster marker selection, cluster preservation, and robust expression profiling."""
+
+    def test_technical_marker_detection(self):
+        from iris_viewer.widgets.phenotyping_panel import PhenotyperPanelWidget
+        assert PhenotyperPanelWidget._is_technical_channel("DAPI") is True
+        assert PhenotyperPanelWidget._is_technical_channel("dapi_nuclei") is True
+        assert PhenotyperPanelWidget._is_technical_channel("TRITC") is True
+        assert PhenotyperPanelWidget._is_technical_channel("Cy5") is True
+        assert PhenotyperPanelWidget._is_technical_channel("Hoechst") is True
+        assert PhenotyperPanelWidget._is_technical_channel("Area") is True
+        assert PhenotyperPanelWidget._is_technical_channel("Eccentricity") is True
+        assert PhenotyperPanelWidget._is_technical_channel("CD3") is False
+        assert PhenotyperPanelWidget._is_technical_channel("CD8a") is False
+        assert PhenotyperPanelWidget._is_technical_channel("CD20") is False
+        assert PhenotyperPanelWidget._is_technical_channel("PanCK") is False
+        assert PhenotyperPanelWidget._is_technical_channel("FoxP3") is False
+
+    def test_marker_expression_clustering_preservation(self, qapp):
+        from iris_viewer.widgets.marker_expression import MarkerExpressionDialog
+        # 8 clusters with multiple samples
+        df = pd.DataFrame({
+            "Cluster": [f"Cluster {i % 8}" for i in range(160)],
+            "Sample": ["Sample_1"] * 80 + ["Sample_2"] * 80,
+            "CD3": np.random.rand(160),
+            "CD8": np.random.rand(160),
+            "CD20": np.random.rand(160),
+        })
+        dialog = MarkerExpressionDialog(
+            df=df,
+            markers=["CD3", "CD8", "CD20"],
+            celltype_col="Cluster",
+            current_dataset="All Samples",
+        )
+        assert dialog.cached_matrix is not None
+        assert len(dialog.cached_matrix) == 8
+        for i in range(8):
+            assert f"Cluster {i}" in dialog.cached_matrix.index
+        # Test dataset scope switching
+        dialog.set_current_dataset("All Samples")
+        assert len(dialog.cached_matrix) == 8
+        dialog.close()
+
+    def test_phenotyping_module_subpanel_navigation_order(self, qapp):
+        from iris_viewer.widgets.phenotyping_panel import PhenotyperPanelWidget
+        panel = PhenotyperPanelWidget(ctx=None)
+
+        # Order must be: Manual Gating, Clustering, ASTIR, MAPS
+        expected_labels = ["Manual Gating", "Clustering", "ASTIR", "MAPS"]
+        actual_labels = [btn.text() for btn in panel.nav_buttons]
+        assert actual_labels == expected_labels
+
+        assert panel.stack.widget(0) == panel.manual_gating
+        assert panel.stack.widget(1) == panel.cluster_widget
+        assert panel.stack.widget(2) == panel.astir_widget
+        assert panel.stack.widget(3) == panel.maps_widget
+        panel.close()
+
+    def test_interactive_phenotype_assignment_studio(self, qapp):
+        from iris_viewer.widgets.marker_expression import MarkerExpressionDialog
+        df = pd.DataFrame({
+            "Cluster": [f"Cluster {i % 4}" for i in range(80)],
+            "Sample": ["Sample_A"] * 80,
+            "CD3": np.random.rand(80),
+            "CD8": np.random.rand(80),
+            "CD20": np.random.rand(80),
+        })
+
+        assigned = []
+
+        def on_assigned(clusters, label):
+            assigned.append((clusters, label))
+
+        dialog = MarkerExpressionDialog(
+            df=df,
+            markers=["CD3", "CD8", "CD20"],
+            celltype_col="Cluster",
+            current_dataset="All Samples",
+            assignment_callback=on_assigned,
+        )
+
+        # Check cluster dropdown populated
+        assert dialog.combo_active_row.count() == 4
+        # Defaults to the first cluster
+        assert dialog.combo_active_row.currentData() == "Cluster 0"
+        assert dialog._active_row == "Cluster 0"
+        assert "20 cells" in dialog.lbl_active_cell_count.text()
+        assert dialog._active_row_patch is not None
+
+        # Test stepping next and previous
+        dialog._select_next_row()
+        assert dialog._active_row == "Cluster 1"
+        assert dialog.combo_active_row.currentData() == "Cluster 1"
+
+        dialog._select_prev_row()
+        assert dialog._active_row == "Cluster 0"
+
+        # Test selecting a specific cluster
+        dialog._set_active_row("Cluster 2", sync_combo=True)
+        assert dialog.combo_active_row.currentData() == "Cluster 2"
+        assert "Cluster 2" in dialog._active_row
+        assert dialog._suggested_phenotype != ""
+
+        # Test using suggestion chip
+        dialog._use_suggested_label()
+        assert dialog.txt_dialog_pheno.text() == dialog._suggested_phenotype
+
+        # Test applying phenotype
+        dialog._apply_phenotype_from_dialog()
+        assert len(assigned) == 1
+        assert assigned[0][0] == ["Cluster 2"]
+        assert assigned[0][1] == dialog._suggested_phenotype
+        assert "✓ Assigned" in dialog.lbl_dialog_assign_feedback.text()
+
+        # Test click-on-heatmap row selection simulation
+        # Simulate click on row 3 (Cluster 3)
+        class DummyMouseEvent:
+            inaxes = dialog.ax_heatmap
+            button = 1
+            x = 100
+            y = 100
+            xdata = 1.0
+            ydata = 3.0
+
+        press_evt = DummyMouseEvent()
+        dialog._on_mouse_press(press_evt)
+        assert dialog._mouse_click_candidate is not None
+
+        release_evt = DummyMouseEvent()
+        dialog._on_mouse_release(release_evt)
+        assert dialog._active_row == "Cluster 3"
+        assert dialog.combo_active_row.currentData() == "Cluster 3"
+
+        dialog.close()
+
+    def test_leiden_igraph_parameters(self):
+        """Verify scanpy leiden executes cleanly with flavor='igraph', n_iterations=2, directed=False or fallback."""
+        try:
+            import anndata as ad
+            import scanpy as sc
+        except ImportError:
+            pytest.skip("Scanpy/AnnData not installed in test environment")
+
+        import importlib.util
+        if not (importlib.util.find_spec("igraph") or importlib.util.find_spec("leidenalg")):
+            pytest.skip("Neither igraph nor leidenalg installed in this environment")
+
+        X = np.random.rand(40, 5)
+        adata = ad.AnnData(X=X)
+        sc.pp.neighbors(adata, n_neighbors=5)
+        try:
+            sc.tl.leiden(adata, resolution=0.5, flavor="igraph", n_iterations=2, directed=False)
+        except (TypeError, ValueError, Exception):
+            sc.tl.leiden(adata, resolution=0.5)
+        assert "leiden" in adata.obs.columns
+
+

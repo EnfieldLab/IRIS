@@ -1,7 +1,10 @@
 """ InstanSeg Segmentation Backend """
+from typing import Any, Dict, Optional
+
 import numpy as np
-from typing import Dict, Optional, Any
+
 from .base import SegmentationBackend
+
 
 class InstanSegBackend(SegmentationBackend):
     name = "InstanSeg"
@@ -14,8 +17,7 @@ class InstanSegBackend(SegmentationBackend):
 
     def is_available(self) -> bool:
         try:
-            import instanseg
-            from instanseg import InstanSeg
+            import instanseg  # noqa: F401
             return True
         except ImportError:
             return False
@@ -24,10 +26,11 @@ class InstanSegBackend(SegmentationBackend):
         return {'model_name': 'fluorescence_nuclei_and_cells', 'pixel_size': 0.5}
 
     def segment(self, image: np.ndarray, nuclear_channel: int, membrane_channel: Optional[int], diameter: Optional[float], device: str, expand_radius: int = 0, **kwargs) -> Dict[str, Optional[np.ndarray]]:
-        from instanseg import InstanSeg
-        import torch
         import gc
-        
+
+        import torch
+        from instanseg import InstanSeg
+
         model_name = kwargs.get('model_name', 'fluorescence_nuclei_and_cells')
         pixel_size = kwargs.get('pixel_size', 0.5)
         if pixel_size <= 0:
@@ -57,7 +60,7 @@ class InstanSegBackend(SegmentationBackend):
             if p_high <= p_low:
                 p_high = p_low + 1.0
             normalized_img[c] = np.clip((ch - p_low) / (p_high - p_low), 0, 1)
-        
+
         input_tensor = torch.from_numpy(normalized_img).unsqueeze(0)
 
         original_quantile = torch.quantile
@@ -68,15 +71,15 @@ class InstanSegBackend(SegmentationBackend):
                 res = original_quantile(cpu_tensor, q_cast, dim=dim, keepdim=keepdim, interpolation=interpolation, out=out)
                 return res.to(torch.float32).to(input.device)
             return original_quantile(input, q, dim=dim, keepdim=keepdim, interpolation=interpolation, out=out)
-        
+
         torch.quantile = safe_quantile
 
         try:
             print(f"[IRIS-Viewer] InstanSeg Execution: Running '{model_name}'...")
             eval_result = self._cached_model.eval_medium_image(
-                input_tensor, 
-                pixel_size=pixel_size, 
-                resolve_cell_and_nucleus=True, 
+                input_tensor,
+                pixel_size=pixel_size,
+                resolve_cell_and_nucleus=True,
                 cleanup_fragments=True
             )
             labeled_output = eval_result[0]
@@ -88,21 +91,21 @@ class InstanSegBackend(SegmentationBackend):
 
         if isinstance(labeled_output, torch.Tensor):
             labeled_output = labeled_output.cpu().numpy()
-            
+
         if labeled_output.ndim == 4:
             labeled_output = labeled_output[0]
 
         orig_h, orig_w = image.shape[-2:]
         mask_h, mask_w = labeled_output.shape[-2:]
 
-        # FIX: Replace destructive tensor interpolation with mathematically safe zero-padding and cropping 
+        # FIX: Replace destructive tensor interpolation with mathematically safe zero-padding and cropping
         if (mask_h, mask_w) != (orig_h, orig_w):
             if mask_h > orig_h: labeled_output = labeled_output[..., :orig_h, :]
             if mask_w > orig_w: labeled_output = labeled_output[..., :, :orig_w]
-            
+
             pad_h = max(0, orig_h - labeled_output.shape[-2])
             pad_w = max(0, orig_w - labeled_output.shape[-1])
-            
+
             if pad_h > 0 or pad_w > 0:
                 pad_width = [(0, 0)] * labeled_output.ndim
                 pad_width[-2] = (0, pad_h)

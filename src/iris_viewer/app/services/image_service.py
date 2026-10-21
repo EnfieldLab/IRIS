@@ -9,9 +9,8 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
-import numpy as np
 import matplotlib.colors as mcolors
-
+import numpy as np
 from napari.qt import thread_worker
 from qtpy.QtWidgets import QMessageBox
 
@@ -38,7 +37,7 @@ class ImageService:
     def __init__(self, ctx: types.SimpleNamespace) -> None:
         self.ctx = ctx
 
-    # ── Directory & Sample Loading ────────────────────────────────────────
+    # Directory & Sample Loading
 
     def on_load_directory(self, dir_path: str) -> None:
         """Discover images and prompt the user to assign marker channels."""
@@ -79,7 +78,7 @@ class ImageService:
         ctx.control_widget.update_sample_list(sample_names)
         if hasattr(ctx, 'comparison_widget'):
             ctx.comparison_widget.update_sample_list(sample_names)
-        
+
         if sample_names:
             ctx.control_widget.combo_sample.setCurrentIndex(0)
             self.on_sample_selected(sample_names[0])
@@ -224,7 +223,7 @@ class ImageService:
                 selected_samples=[sample_name],
             )
 
-    # ── Mask Loading ───────────────────────────────────────────────────────
+    # Mask Loading
 
     def on_load_existing_mask(self, filepath: str) -> None:
         """Public slot — load a mask chosen by the user via the file dialog."""
@@ -292,13 +291,14 @@ class ImageService:
             total_cells=f"{n_cells:,}",
         )
 
-    # ── Channel Colours ────────────────────────────────────────────────────
+    # Channel Colours
 
     def load_channel_colors(self, filepath: str) -> None:
         """Import a marker→colour mapping from a CSV/XLSX and update legend rows and canvas layers."""
         ctx = self.ctx
         try:
             import re
+
             import pandas as pd
             path_obj = Path(filepath)
             df = (
@@ -357,7 +357,7 @@ class ImageService:
                 f"Failed to load marker colours:\n{exc}"
             )
 
-    # ── Scale ──────────────────────────────────────────────────────────────
+    # Scale
 
     def update_scale(self, scale_val: float) -> None:
         """Apply a new physical scale (µm/px) to all existing viewer layers."""

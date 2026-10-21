@@ -6,10 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-
-# ── Marker Panel ──────────────────────────────────────────────────────────────
+# Marker Panel
 
 @dataclass
 class MarkerPanel:
@@ -47,7 +46,7 @@ class MarkerPanel:
         )]
 
 
-# ── Cell Type Mapping ─────────────────────────────────────────────────────────
+# Cell Type Mapping
 
 @dataclass
 class CellTypeRule:
@@ -81,19 +80,18 @@ class CellTypePanel:
     def cell_types(self) -> List[str]:
         return [r.cell_type for r in self.rules]
 
-    def to_astir_dict(self, marker_panel: MarkerPanel) -> Dict[str, List[str]]:
-        """
-        Convert to the ASTIR ``marker_dict`` format:
-            {cell_type: [marker, ...]}
-        Only includes markers present in the panel.
+    def to_astir_dict(self, marker_panel: MarkerPanel) -> Dict[str, Any]:
+        """Convert to the ASTIR ``marker_dict`` format: ``{'cell_types': {cell_type: [marker, ...]}}``.
+
+        Only includes markers present in the panel, matching the panel's exact casing.
         """
         result: Dict[str, List[str]] = {}
-        panel_lower = {m.lower() for m in marker_panel.markers}
+        panel_map = {m.lower(): m for m in marker_panel.markers}
         for rule in self.rules:
-            valid = [m for m in rule.markers_positive if m.lower() in panel_lower]
+            valid = [panel_map[m.lower()] for m in rule.markers_positive if m.lower() in panel_map]
             if valid:
                 result[rule.cell_type] = valid
-        return result
+        return {"cell_types": result}
 
     def to_celesta_anchor_matrix(self, marker_panel: MarkerPanel):
         """
@@ -123,7 +121,7 @@ class CellTypePanel:
         return df
 
 
-# ── Segmentation / Pipeline types (re-exported from here for phenotyper use) ──
+# Segmentation / Pipeline types (re-exported from here for phenotyper use)
 
 @dataclass
 class BoundingBox:

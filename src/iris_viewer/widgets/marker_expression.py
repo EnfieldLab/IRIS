@@ -7,21 +7,24 @@ hierarchical clustering dendrograms and dynamic dataset filtering.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, List, Optional, Set
 
 import matplotlib.gridspec as gridspec
+import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
 try:
     from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 except ImportError:
     NavigationToolbar = None
 
 from matplotlib.figure import Figure
-from qtpy.QtCore import Qt, Signal
+from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -32,11 +35,11 @@ from qtpy.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -130,6 +133,7 @@ class MarkerExpressionDialog(QDialog):
         current_cmap: str = "coolwarm",
         selected_subset: Optional[Set[str]] = None,
         selected_samples: Optional[List[str]] = None,
+        assignment_callback: Optional[Callable[[List[str], str], None]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -146,6 +150,12 @@ class MarkerExpressionDialog(QDialog):
         self.current_cmap = current_cmap
         self.selected_subset: Set[str] = set(selected_subset) if selected_subset else set()
         self.selected_samples: List[str] = list(selected_samples or [])
+        self.assignment_callback = assignment_callback
+        self._active_row: Optional[str] = None
+        self._active_row_patch = None
+        self._suggested_phenotype: str = ""
+        self.cached_row_counts: dict = {}
+        self.cached_total_cells: int = 0
 
         # Custom user order and visibility sets
         self.ordered_cell_types: List[str] = []
@@ -186,6 +196,7 @@ class MarkerExpressionDialog(QDialog):
 
         self._build_ui()
         self._sync_available_samples()
+        self._sync_grouping_dropdown()
         self.recompute_and_render()
 
     def _get_image_col(self, df: Optional[pd.DataFrame]) -> Optional[str]:
@@ -205,7 +216,7 @@ class MarkerExpressionDialog(QDialog):
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(8)
 
-        # ── Top Toolbar: Row 1 (Parameters & Settings) ───────────────────
+        # Top Toolbar: Row 1 (Parameters & Settings)
         top_bar1 = QHBoxLayout()
         top_bar1.setSpacing(10)
 
@@ -217,6 +228,11 @@ class MarkerExpressionDialog(QDialog):
         self.btn_subset = QPushButton("Filter Subsets...")
         self.btn_subset.clicked.connect(self._open_subset_dialog)
         top_bar1.addWidget(self.btn_subset)
+
+        top_bar1.addWidget(QLabel("Group By:"))
+        self.combo_group_by = QComboBox()
+        self.combo_group_by.currentIndexChanged.connect(self._on_group_by_changed)
+        top_bar1.addWidget(self.combo_group_by)
 
         top_bar1.addWidget(QLabel("Mode:"))
         self.combo_mode = QComboBox()
@@ -259,7 +275,7 @@ class MarkerExpressionDialog(QDialog):
         top_bar1.addStretch(1)
         main_layout.addLayout(top_bar1)
 
-        # ── Top Toolbar: Row 2 (Actions & Export) ────────────────────────
+        # Top Toolbar: Row 2 (Actions & Export)
         top_bar2 = QHBoxLayout()
         top_bar2.setSpacing(10)
 
@@ -315,12 +331,12 @@ class MarkerExpressionDialog(QDialog):
 
         main_layout.addLayout(top_bar2)
 
-        # ── Hover Details Status Bar ──────────────────────────────────────
+        # Hover Details Status Bar
         self.lbl_hover = QLabel("Hover over any cell in the heatmap for values. Scroll mouse wheel to zoom, click and drag to pan.")
         self.lbl_hover.setStyleSheet("color: #AAA; font-size: 12px; font-style: italic; padding: 2px 4px;")
         main_layout.addWidget(self.lbl_hover)
 
-        # ── Main Splitter: Canvas & Reorder Organizer ─────────────────────
+        # Main Splitter: Canvas & Reorder Organizer
         self.splitter = QSplitter(Qt.Horizontal)
 
         # Canvas container
@@ -351,7 +367,7 @@ class MarkerExpressionDialog(QDialog):
 
         self.splitter.addWidget(canvas_container)
 
-        # ── Organize Drawer Panel ─────────────────────────────────────────
+        # Organize Drawer Panel
         self.organizer_panel = QGroupBox()
         op_layout = QVBoxLayout(self.organizer_panel)
         op_layout.setContentsMargins(10, 4, 10, 10)
@@ -388,6 +404,8 @@ class MarkerExpressionDialog(QDialog):
         self.list_rows.setDragDropMode(QAbstractItemView.InternalMove)
         self.list_rows.model().rowsMoved.connect(self._on_rows_drag_moved)
         self.list_rows.itemChanged.connect(self._on_row_item_changed)
+        self.list_rows.currentItemChanged.connect(self._on_row_selection_changed)
+        self.list_rows.itemClicked.connect(self._on_row_selection_changed)
         row_box.addWidget(self.list_rows)
 
         r_btn_row = QHBoxLayout()
@@ -448,9 +466,426 @@ class MarkerExpressionDialog(QDialog):
 
         main_layout.addWidget(self.splitter, 1)
 
+        # Directed Phenotype Assignment Studio
+        self.assign_bar = QGroupBox("Assign Phenotype from Expression Profile")
+        self.assign_bar.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #3A6A9A; border-radius: 6px;
+                margin-top: 6px; font-weight: bold; color: #EEE; font-size: 12px;
+                background-color: #171a21;
+            }
+        """)
+        ab_layout = QVBoxLayout(self.assign_bar)
+        ab_layout.setContentsMargins(10, 8, 10, 8)
+        ab_layout.setSpacing(6)
+
+        # Row 1: Target Cluster Selection & Marker Profile Characterization
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
+        lbl_target = QLabel("Target Cluster / Row:")
+        lbl_target.setStyleSheet("font-weight: bold; color: #FFF; font-size: 11px;")
+        row1.addWidget(lbl_target)
+
+        self.btn_prev_row = QPushButton("◀")
+        self.btn_prev_row.setToolTip("Previous Cluster / Row")
+        self.btn_prev_row.setFixedWidth(28)
+        self.btn_prev_row.setStyleSheet("""
+            QPushButton {
+                background-color: #2D3748; color: #FFF; font-weight: bold;
+                border: 1px solid #4A5568; border-radius: 4px; padding: 3px; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #4A5568; }
+        """)
+        self.btn_prev_row.clicked.connect(self._select_prev_row)
+        row1.addWidget(self.btn_prev_row)
+
+        self.combo_active_row = QComboBox()
+        self.combo_active_row.setMinimumWidth(200)
+        self.combo_active_row.setToolTip("Select the active cluster or click directly on any heatmap row")
+        self.combo_active_row.setStyleSheet("""
+            QComboBox {
+                background-color: #1F2937; color: #00E5FF; font-weight: bold;
+                border: 1px solid #3B82F6; border-radius: 4px; padding: 3px 8px; font-size: 11px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1F2937; color: white; selection-background-color: #3B82F6;
+            }
+        """)
+        self.combo_active_row.currentIndexChanged.connect(self._on_combo_active_row_changed)
+        row1.addWidget(self.combo_active_row)
+
+        self.btn_next_row = QPushButton("▶")
+        self.btn_next_row.setToolTip("Next Cluster / Row")
+        self.btn_next_row.setFixedWidth(28)
+        self.btn_next_row.setStyleSheet("""
+            QPushButton {
+                background-color: #2D3748; color: #FFF; font-weight: bold;
+                border: 1px solid #4A5568; border-radius: 4px; padding: 3px; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #4A5568; }
+        """)
+        self.btn_next_row.clicked.connect(self._select_next_row)
+        row1.addWidget(self.btn_next_row)
+
+        self.lbl_selected_row = QLabel("Active: None")
+        self.lbl_selected_row.setVisible(False)  # Backward-compatibility alias
+
+        self.lbl_active_cell_count = QLabel("")
+        self.lbl_active_cell_count.setStyleSheet("color: #FFD54F; font-size: 11px; font-weight: bold; margin-left: 4px;")
+        row1.addWidget(self.lbl_active_cell_count)
+
+        self.lbl_enriched_profile = QLabel("")
+        self.lbl_enriched_profile.setStyleSheet("color: #64B5F6; font-size: 11px; font-style: italic; margin-left: 6px;")
+        row1.addWidget(self.lbl_enriched_profile, 1)
+
+        ab_layout.addLayout(row1)
+
+        # Row 2: Phenotype Annotation Input, Suggestion Chip, & Application Button
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+
+        lbl_new_pheno = QLabel("Phenotype Label:")
+        lbl_new_pheno.setStyleSheet("font-weight: bold; color: #FFF; font-size: 11px;")
+        row2.addWidget(lbl_new_pheno)
+
+        self.txt_dialog_pheno = QLineEdit()
+        self.txt_dialog_pheno.setPlaceholderText("Enter phenotype name (e.g., CD8+ T cells)...")
+        self.txt_dialog_pheno.setStyleSheet("""
+            QLineEdit {
+                background-color: #2A2A2A; color: white; border: 1px solid #555;
+                border-radius: 4px; padding: 4px 8px; font-size: 11px;
+            }
+            QLineEdit:focus { border: 1px solid #00E5FF; }
+        """)
+        self.txt_dialog_pheno.returnPressed.connect(self._apply_phenotype_from_dialog)
+        row2.addWidget(self.txt_dialog_pheno, 1)
+
+        self.btn_suggest_label = QPushButton("✨ Use Suggestion")
+        self.btn_suggest_label.setToolTip("Insert the auto-suggested marker signature into the phenotype field")
+        self.btn_suggest_label.setStyleSheet("""
+            QPushButton {
+                background-color: #374151; color: #E0E7FF; font-weight: bold;
+                border: 1px solid #4B5563; border-radius: 4px; padding: 4px 10px; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #4B5563; color: #FFF; }
+        """)
+        self.btn_suggest_label.clicked.connect(self._use_suggested_label)
+        row2.addWidget(self.btn_suggest_label)
+
+        self.btn_dialog_assign = QPushButton("✓ Apply Phenotype to Cluster")
+        self.btn_dialog_assign.setStyleSheet("""
+            QPushButton {
+                background-color: #10B981; color: white; font-weight: bold;
+                border: 1px solid #059669; border-radius: 4px; padding: 5px 14px; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #059669; }
+        """)
+        self.btn_dialog_assign.clicked.connect(self._apply_phenotype_from_dialog)
+        row2.addWidget(self.btn_dialog_assign)
+
+        self.lbl_dialog_assign_feedback = QLabel("")
+        self.lbl_dialog_assign_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px; margin-left: 4px;")
+        row2.addWidget(self.lbl_dialog_assign_feedback)
+
+        ab_layout.addLayout(row2)
+
+        main_layout.addWidget(self.assign_bar)
+
     def _toggle_organizer_panel(self) -> None:
         is_visible = self.btn_toggle_drawer.isChecked()
         self.organizer_panel.setVisible(is_visible)
+
+    def _sync_grouping_dropdown(self) -> None:
+        if not hasattr(self, 'combo_group_by'):
+            return
+        curr = self.combo_group_by.currentText() if self.combo_group_by.count() > 0 else self.celltype_col
+        self.combo_group_by.blockSignals(True)
+        self.combo_group_by.clear()
+
+        candidates = []
+        if self.df is not None:
+            priority = ["Cluster", "cell_type", "Verified_CellType", "CellType", "Phenotype", "GROUP", "Label"]
+            for col in priority:
+                if col in self.df.columns and col not in candidates:
+                    candidates.append(col)
+            skip_terms = {"x", "y", "z", "pos_x", "pos_y", "area", "eccentricity", "objectnumber", "cell_id"}
+            for col in self.df.columns:
+                if col.lower() in skip_terms or col in self.markers or col in candidates:
+                    continue
+                if (
+                    self.df[col].dtype == 'object'
+                    or self.df[col].dtype.name == 'category'
+                    or self.df[col].dtype.name == 'string'
+                ):
+                    candidates.append(col)
+                elif pd.api.types.is_integer_dtype(self.df[col]) and self.df[col].nunique() <= 60:
+                    candidates.append(col)
+
+        if not candidates:
+            candidates = [self.celltype_col or "Cluster"]
+
+        self.combo_group_by.addItems(candidates)
+        idx = self.combo_group_by.findText(curr)
+        if idx >= 0:
+            self.combo_group_by.setCurrentIndex(idx)
+        else:
+            idx2 = self.combo_group_by.findText(self.celltype_col)
+            self.combo_group_by.setCurrentIndex(idx2 if idx2 >= 0 else 0)
+        self.celltype_col = self.combo_group_by.currentText()
+        self.combo_group_by.blockSignals(False)
+
+    def _on_group_by_changed(self) -> None:
+        col = self.combo_group_by.currentText().strip()
+        if col:
+            self.celltype_col = col
+            self.row_linkage = None
+            self.recompute_and_render()
+
+    def set_group_by(self, col: str) -> None:
+        self.celltype_col = col
+        if hasattr(self, 'combo_group_by'):
+            idx = self.combo_group_by.findText(col)
+            if idx >= 0:
+                self.combo_group_by.blockSignals(True)
+                self.combo_group_by.setCurrentIndex(idx)
+                self.combo_group_by.blockSignals(False)
+            else:
+                self.combo_group_by.addItem(col)
+                self.combo_group_by.setCurrentText(col)
+        self.row_linkage = None
+        self.recompute_and_render()
+
+    def set_assignment_callback(self, cb: Callable[[List[str], str], None]) -> None:
+        self.assignment_callback = cb
+
+    def _select_prev_row(self) -> None:
+        if not hasattr(self, "combo_active_row") or self.combo_active_row.count() == 0:
+            return
+        cur = self.combo_active_row.currentIndex()
+        new_idx = max(0, cur - 1)
+        self.combo_active_row.setCurrentIndex(new_idx)
+
+    def _select_next_row(self) -> None:
+        if not hasattr(self, "combo_active_row") or self.combo_active_row.count() == 0:
+            return
+        cur = self.combo_active_row.currentIndex()
+        new_idx = min(self.combo_active_row.count() - 1, cur + 1)
+        self.combo_active_row.setCurrentIndex(new_idx)
+
+    def _on_combo_active_row_changed(self, index: int) -> None:
+        if index < 0 or not hasattr(self, "combo_active_row"):
+            return
+        row_key = self.combo_active_row.itemData(index)
+        if not row_key:
+            full_txt = self.combo_active_row.itemText(index)
+            row_key = full_txt.split('(')[0].strip() if '(' in full_txt else full_txt.strip()
+        if row_key:
+            self._set_active_row(str(row_key), sync_combo=False)
+
+    def _sync_active_rows_combo(self) -> None:
+        if not hasattr(self, "combo_active_row"):
+            return
+        self.combo_active_row.blockSignals(True)
+        self.combo_active_row.clear()
+
+        rows = [r for r in self.ordered_cell_types if r in self.cached_matrix.index and r in self.visible_cell_types] if self.cached_matrix is not None else []
+        counts = getattr(self, "cached_row_counts", {})
+        total = getattr(self, "cached_total_cells", 0)
+
+        for r in rows:
+            cnt = counts.get(r, 0)
+            if total > 0 and cnt > 0:
+                pct = (cnt / total) * 100.0
+                label = f"{r}  ({cnt:,} cells, {pct:.1f}%)"
+            elif cnt > 0:
+                label = f"{r}  ({cnt:,} cells)"
+            else:
+                label = str(r)
+            self.combo_active_row.addItem(label, userData=r)
+
+        self.combo_active_row.blockSignals(False)
+
+        # Retain current active row or select the first row
+        active = getattr(self, "_active_row", None)
+        if active in rows:
+            self._set_active_row(active, sync_combo=True)
+        elif rows:
+            self._set_active_row(rows[0], sync_combo=True)
+        else:
+            self._set_active_row("", sync_combo=True)
+
+    def _use_suggested_label(self) -> None:
+        sugg = getattr(self, '_suggested_phenotype', '')
+        if not sugg:
+            sugg = self.txt_dialog_pheno.placeholderText().strip()
+        if sugg:
+            self.txt_dialog_pheno.setText(sugg)
+
+    def _on_row_selection_changed(self, current, previous=None) -> None:
+        if current is not None:
+            self._set_active_row(current.text().strip(), sync_combo=True)
+
+    def _set_active_row(self, row_name: str, sync_combo: bool = True) -> None:
+        self._active_row = row_name
+        self.lbl_selected_row.setText(f"Active: {row_name}" if row_name else "Active: None")
+        self.lbl_dialog_assign_feedback.setText("")
+
+        if sync_combo and hasattr(self, "combo_active_row"):
+            self.combo_active_row.blockSignals(True)
+            for i in range(self.combo_active_row.count()):
+                ud = self.combo_active_row.itemData(i)
+                if ud == row_name or (ud is None and self.combo_active_row.itemText(i).startswith(row_name)):
+                    self.combo_active_row.setCurrentIndex(i)
+                    break
+            self.combo_active_row.blockSignals(False)
+
+        # Synchronize list_rows in drawer if present
+        if hasattr(self, "list_rows"):
+            self.list_rows.blockSignals(True)
+            for i in range(self.list_rows.count()):
+                item = self.list_rows.item(i)
+                if item.text().strip() == row_name:
+                    self.list_rows.setCurrentItem(item)
+                    break
+            self.list_rows.blockSignals(False)
+
+        # Update cell count & percentage badge
+        counts = getattr(self, "cached_row_counts", {})
+        total = getattr(self, "cached_total_cells", 0)
+        cnt = counts.get(row_name, 0)
+        if total > 0 and cnt > 0:
+            pct = (cnt / total) * 100.0
+            self.lbl_active_cell_count.setText(f"{cnt:,} cells ({pct:.1f}%)")
+        elif cnt > 0:
+            self.lbl_active_cell_count.setText(f"{cnt:,} cells")
+        else:
+            self.lbl_active_cell_count.setText("")
+
+        # Update top enriched markers profile
+        if self.cached_matrix is not None and row_name in self.cached_matrix.index:
+            row_vals = self.cached_matrix.loc[row_name]
+            top_m = row_vals.sort_values(ascending=False).head(4)
+            desc = ", ".join([f"{m}+" for m in top_m.index[:2]])
+            raw_str = ", ".join([f"{m}: {v:.1f}" for m, v in top_m.head(3).items()])
+            self.lbl_enriched_profile.setText(f"Top Markers: {desc} ({raw_str})")
+            sugg = f"{desc} Population" if desc else f"{row_name} Population"
+            self._suggested_phenotype = sugg
+            self.txt_dialog_pheno.setPlaceholderText(sugg)
+        else:
+            self.lbl_enriched_profile.setText("")
+            self._suggested_phenotype = ""
+
+        # Draw highlight border and axis tick glow on heatmap
+        self._highlight_active_row_on_heatmap(row_name)
+
+    def _highlight_active_row_on_heatmap(self, row_name: str) -> None:
+        if not hasattr(self, "ax_heatmap") or self.ax_heatmap is None:
+            return
+        if not hasattr(self, "hover_info") or not self.hover_info:
+            return
+
+        rows = self.hover_info.get("rows", [])
+        if not rows:
+            return
+
+        r = None
+        if row_name in rows:
+            r = rows.index(row_name)
+        else:
+            for i, r_cand in enumerate(rows):
+                if str(r_cand).strip() == str(row_name).strip():
+                    r = i
+                    break
+
+        # Remove previous highlight rectangle if present
+        if hasattr(self, "_active_row_patch") and self._active_row_patch is not None:
+            try:
+                self._active_row_patch.remove()
+            except Exception:
+                pass
+            self._active_row_patch = None
+
+        if r is not None and 0 <= r < len(rows):
+            n_cols = len(self.hover_info.get("cols", []))
+            if n_cols > 0:
+                rect = patches.Rectangle(
+                    (-0.49, r - 0.49),
+                    n_cols - 0.02,
+                    0.98,
+                    linewidth=2.5,
+                    edgecolor='#00E5FF',
+                    facecolor='none',
+                    linestyle='-',
+                    zorder=20,
+                )
+                self.ax_heatmap.add_patch(rect)
+                self._active_row_patch = rect
+
+            # Highlight the matching y-tick label in cyan, others in white
+            try:
+                for i, tick_label in enumerate(self.ax_heatmap.get_yticklabels()):
+                    if i == r:
+                        tick_label.set_color('#00E5FF')
+                        tick_label.set_fontweight('bold')
+                    else:
+                        tick_label.set_color('white')
+                        tick_label.set_fontweight('normal')
+            except Exception:
+                pass
+
+            self.canvas.draw_idle()
+
+    def _apply_phenotype_from_dialog(self) -> None:
+        row_name = getattr(self, '_active_row', None)
+        if not row_name and hasattr(self, 'combo_active_row') and self.combo_active_row.count() > 0:
+            row_name = self.combo_active_row.itemData(self.combo_active_row.currentIndex())
+            if not row_name:
+                txt = self.combo_active_row.currentText()
+                row_name = txt.split('(')[0].strip() if '(' in txt else txt.strip()
+        if not row_name:
+            curr = self.list_rows.currentItem()
+            if curr:
+                row_name = curr.text().strip()
+        if not row_name:
+            self.lbl_dialog_assign_feedback.setText("⚠ Select a cluster or row first.")
+            self.lbl_dialog_assign_feedback.setStyleSheet("color: #FF5252; font-size: 11px;")
+            return
+
+        label_name = self.txt_dialog_pheno.text().strip() or self.txt_dialog_pheno.placeholderText().strip()
+        if not label_name:
+            self.lbl_dialog_assign_feedback.setText("⚠ Enter a phenotype name.")
+            self.lbl_dialog_assign_feedback.setStyleSheet("color: #FF5252; font-size: 11px;")
+            return
+
+        if self.assignment_callback is not None:
+            self.assignment_callback([row_name], label_name)
+            self.lbl_dialog_assign_feedback.setText(f"✓ Assigned {row_name} -> '{label_name}'")
+            self.lbl_dialog_assign_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+            if hasattr(self, "combo_active_row"):
+                idx = self.combo_active_row.currentIndex()
+                if idx >= 0:
+                    c_txt = self.combo_active_row.itemText(idx)
+                    if " -> " not in c_txt:
+                        self.combo_active_row.setItemText(idx, f"{c_txt} -> '{label_name}'")
+        else:
+            if self.df is not None:
+                ct_col = self.celltype_col
+                target_col = "CellType" if "CellType" in self.df.columns else ct_col
+                m = (self.df[ct_col].astype(str).str.strip() == row_name)
+                if not m.any() and re.findall(r'\d+', row_name):
+                    c_num = int(re.findall(r'\d+', row_name)[0])
+                    m = (self.df[ct_col] == c_num)
+                if m.any():
+                    if target_col not in self.df.columns:
+                        self.df[target_col] = "Unassigned"
+                    if self.df[target_col].dtype.name == 'category':
+                        if label_name not in self.df[target_col].cat.categories:
+                            self.df[target_col] = self.df[target_col].cat.add_categories([label_name])
+                    self.df.loc[m, target_col] = label_name
+                    self.lbl_dialog_assign_feedback.setText(f"✓ Assigned {int(m.sum()):,} cells -> '{label_name}'")
+                    self.lbl_dialog_assign_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+                    self.recompute_and_render()
 
     def _sync_available_samples(self) -> None:
         prev = self.combo_dataset.currentText() if self.combo_dataset.count() > 0 else self.current_dataset
@@ -493,6 +928,31 @@ class MarkerExpressionDialog(QDialog):
             self.combo_dataset.setCurrentIndex(idx)
             self.current_dataset = custom_txt
             self.recompute_and_render()
+
+    def set_current_dataset(self, dataset_name: str, subset_samples: Optional[List[str]] = None) -> None:
+        """Sets the active dataset or cohort sample filter and triggers recomputation."""
+        if subset_samples:
+            self.selected_subset = set(subset_samples)
+            n_sel = len(self.selected_subset)
+            custom_txt = f"Subset ({n_sel} samples)"
+            idx = self.combo_dataset.findText(custom_txt)
+            if idx < 0:
+                self.combo_dataset.addItem(custom_txt)
+                idx = self.combo_dataset.count() - 1
+            self.combo_dataset.blockSignals(True)
+            self.combo_dataset.setCurrentIndex(idx)
+            self.combo_dataset.blockSignals(False)
+            self.current_dataset = custom_txt
+        else:
+            idx = self.combo_dataset.findText(dataset_name)
+            if idx >= 0:
+                self.combo_dataset.blockSignals(True)
+                self.combo_dataset.setCurrentIndex(idx)
+                self.combo_dataset.blockSignals(False)
+            self.current_dataset = self.combo_dataset.currentText()
+        self.row_linkage = None
+        self.col_linkage = None
+        self.recompute_and_render()
 
     def _on_dataset_changed(self) -> None:
         self.current_dataset = self.combo_dataset.currentText()
@@ -562,17 +1022,19 @@ class MarkerExpressionDialog(QDialog):
             self._render_empty_canvas(f"No cells found for selection: {ds}")
             return
 
-        # Identify cell type column
-        ct_col = self.celltype_col
-        if ct_col not in df_work.columns:
-            for fallback in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
+        # Identify grouping column
+        ct_col = self.combo_group_by.currentText().strip() if hasattr(self, 'combo_group_by') and self.combo_group_by.count() > 0 else self.celltype_col
+        if not ct_col or ct_col not in df_work.columns:
+            for fallback in ("Cluster", "cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
                 if fallback in df_work.columns:
                     ct_col = fallback
                     break
 
         if ct_col not in df_work.columns:
-            self._render_empty_canvas("Cell type column not found in data.")
+            self._render_empty_canvas("Grouping column not found in data.")
             return
+
+        self.celltype_col = ct_col
 
         # Filter valid numeric markers
         valid_markers = [m for m in self.markers if m in df_work.columns and pd.api.types.is_numeric_dtype(df_work[m])]
@@ -580,35 +1042,61 @@ class MarkerExpressionDialog(QDialog):
             self._render_empty_canvas("No valid numeric marker columns found.")
             return
 
+        # Format cluster column labels if numeric or digit-string
+        if ct_col.lower() == "cluster":
+            if pd.api.types.is_numeric_dtype(df_work[ct_col]):
+                df_work[ct_col] = df_work[ct_col].apply(
+                    lambda v: f"Cluster {int(v)}" if pd.notnull(v) and v >= 0 else ("Noise / Outlier" if v == -1 else "Unassigned")
+                )
+            else:
+                def _fmt_cluster_val(v):
+                    if pd.isnull(v):
+                        return "Unassigned"
+                    s = str(v).strip()
+                    if s.isdigit():
+                        return f"Cluster {int(s)}"
+                    return s
+                df_work[ct_col] = df_work[ct_col].apply(_fmt_cluster_val)
+
+            # Exclude unclustered cells from the cluster profile heatmap
+            df_work = df_work[df_work[ct_col] != "Unassigned"]
+
+        if df_work.empty:
+            self._render_empty_canvas(f"No clustered cells found for selection: {ds}")
+            return
+
         # Aggregate expression across phenotypes by mean
-        raw_matrix = df_work.groupby(ct_col)[valid_markers].mean()
-        raw_matrix = raw_matrix.dropna(how='all').fillna(0)
+        raw_matrix = df_work.groupby(ct_col, observed=True)[valid_markers].mean().fillna(0)
+        raw_matrix.index = raw_matrix.index.astype(str)
+
+        # If grouping by cluster, sort rows numerically
+        if ct_col.lower() == "cluster":
+            sorted_idx = sorted(
+                raw_matrix.index,
+                key=lambda s: (0, int(re.search(r'\d+', s).group())) if re.search(r'\d+', s) else (1, s)
+            )
+            raw_matrix = raw_matrix.reindex(sorted_idx)
 
         self.cached_matrix = raw_matrix
+        self.cached_row_counts = df_work[ct_col].astype(str).value_counts().to_dict()
+        self.cached_total_cells = len(df_work)
 
-        # Sync ordering and visibility
-        cell_types = list(raw_matrix.index.astype(str))
-        common_types = [ct for ct in self.ordered_cell_types if ct in cell_types]
-        new_types = [ct for ct in cell_types if ct not in common_types]
-        self.ordered_cell_types = common_types + new_types
+        # Sync ordering and visibility: ensure all clusters in raw_matrix are visible and ordered
+        cell_types = list(raw_matrix.index)
+        self.ordered_cell_types = cell_types
+        self.visible_cell_types = set(cell_types)
 
-        if not self.visible_cell_types:
-            self.visible_cell_types = set(cell_types)
-        else:
-            self.visible_cell_types.update(new_types)
-
-        if not self.ordered_markers or set(self.ordered_markers) != set(valid_markers):
-            self.ordered_markers = valid_markers
-            self.visible_markers = set(valid_markers)
-
-        if not self.visible_markers:
-            self.visible_markers = set(self.ordered_markers)
+        self.ordered_markers = valid_markers
+        self.visible_markers = set(valid_markers)
 
         if self.chk_dendrograms.isChecked():
             self._perform_hierarchical_clustering()
+            self.render_heatmap()
         else:
             self._populate_list_widgets()
             self.render_heatmap()
+
+        self._sync_active_rows_combo()
 
         # Display active dataset stats in hover label
         self.lbl_hover.setText(f"Showing {ds} ({len(df_work):,} cells across {len(cell_types)} phenotypes). Hover for values.")
@@ -730,11 +1218,11 @@ class MarkerExpressionDialog(QDialog):
             is_zscore = "Z-Score" in self.current_mode
             if is_zscore:
                 col_mean = mat_df.mean(axis=0)
-                col_std = mat_df.std(axis=0)
+                col_std = mat_df.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
                 col_std[col_std == 0] = 1e-8
-                mat = ((mat_df - col_mean) / col_std).values
+                mat = np.nan_to_num(((mat_df - col_mean) / col_std).values, nan=0.0)
             else:
-                mat = mat_df.values
+                mat = np.nan_to_num(mat_df.values, nan=0.0)
 
             # Cluster rows
             row_link = hierarchy.linkage(mat, method='average', metric='euclidean')
@@ -765,6 +1253,7 @@ class MarkerExpressionDialog(QDialog):
             if self.row_linkage is None or self.col_linkage is None:
                 self._perform_hierarchical_clustering()
         self.render_heatmap()
+        self._sync_active_rows_combo()
 
     def cluster_both(self) -> None:
         """Applies hierarchical clustering to order both rows and columns and generates dendrograms."""
@@ -773,6 +1262,7 @@ class MarkerExpressionDialog(QDialog):
         self.chk_dendrograms.blockSignals(False)
         self._perform_hierarchical_clustering()
         self.render_heatmap()
+        self._sync_active_rows_combo()
 
     def _reset_order(self) -> None:
         if self.cached_matrix is not None:
@@ -785,6 +1275,7 @@ class MarkerExpressionDialog(QDialog):
             self.chk_dendrograms.setChecked(False)
             self._populate_list_widgets()
             self.render_heatmap()
+            self._sync_active_rows_combo()
             self.lbl_hover.setText("Reset order and visibility to default.")
 
     def _render_empty_canvas(self, msg: str) -> None:
@@ -818,17 +1309,22 @@ class MarkerExpressionDialog(QDialog):
 
         if is_zscore:
             col_mean = matrix.mean(axis=0)
-            col_std = matrix.std(axis=0)
+            col_std = matrix.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
             col_std[col_std == 0] = 1e-8
-            plot_values = ((matrix - col_mean) / col_std).values
+            plot_values = np.nan_to_num(((matrix - col_mean) / col_std).values, nan=0.0)
             cbar_label = "Z-Score (Per Marker)"
-            max_abs = max(1.0, float(np.nanmax(np.abs(plot_values))))
+            finite_abs = np.abs(plot_values)[np.isfinite(plot_values)]
+            max_abs = max(1.0, float(np.max(finite_abs))) if finite_abs.size > 0 else 1.0
             vmin, vmax = -min(3.0, max_abs), min(3.0, max_abs)
         else:
-            plot_values = matrix.values
+            plot_values = np.nan_to_num(matrix.values, nan=0.0)
             cbar_label = "Mean Intensity"
-            vmin = float(np.nanmin(plot_values))
-            vmax = float(np.nanmax(plot_values))
+            finite_vals = plot_values[np.isfinite(plot_values)]
+            if finite_vals.size > 0:
+                vmin = float(np.min(finite_vals))
+                vmax = float(np.max(finite_vals))
+            else:
+                vmin, vmax = 0.0, 1.0
             if vmin == vmax:
                 vmax += 1.0
 
@@ -852,11 +1348,11 @@ class MarkerExpressionDialog(QDialog):
                 matrix = self.cached_matrix.loc[safe_rows, safe_cols].copy()
                 if is_zscore:
                     col_mean = matrix.mean(axis=0)
-                    col_std = matrix.std(axis=0)
+                    col_std = matrix.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
                     col_std[col_std == 0] = 1e-8
-                    plot_values = ((matrix - col_mean) / col_std).values
+                    plot_values = np.nan_to_num(((matrix - col_mean) / col_std).values, nan=0.0)
                 else:
-                    plot_values = matrix.values
+                    plot_values = np.nan_to_num(matrix.values, nan=0.0)
                 n_rows, n_cols = plot_values.shape
 
             show_dendro = (
@@ -1021,6 +1517,9 @@ class MarkerExpressionDialog(QDialog):
         # Auto-sync dendrograms whenever heatmap axis bounds change
         ax.callbacks.connect('xlim_changed', lambda a: self._sync_dendrogram_axes())
         ax.callbacks.connect('ylim_changed', lambda a: self._sync_dendrogram_axes())
+        # Highlight active row if selected
+        if getattr(self, '_active_row', None):
+            self._highlight_active_row_on_heatmap(self._active_row)
 
         self.canvas.draw()
 
@@ -1095,15 +1594,30 @@ class MarkerExpressionDialog(QDialog):
         self.canvas.draw_idle()
 
     def _on_mouse_press(self, event) -> None:
-        """Initiates click-and-drag panning on the heatmap."""
+        """Initiates click-and-drag panning on the heatmap, tracking start point for row click selection."""
         if self.ax_heatmap is not None and event.inaxes == self.ax_heatmap and event.button in (1, 2, 3):
             self._pan_start = (event.x, event.y)
             self._pan_xlim = self.ax_heatmap.get_xlim()
             self._pan_ylim = self.ax_heatmap.get_ylim()
+            self._mouse_click_candidate = (event.x, event.y, event.ydata)
 
     def _on_mouse_release(self, event) -> None:
-        """Ends click-and-drag panning."""
+        """Ends click-and-drag panning, or selects row on single click."""
+        cand = getattr(self, "_mouse_click_candidate", None)
+        if cand is not None and event.x is not None and event.y is not None:
+            dx = abs(event.x - cand[0])
+            dy = abs(event.y - cand[1])
+            # If mouse didn't drag more than 5 pixels, treat as a row selection click!
+            if dx <= 5 and dy <= 5 and hasattr(self, "hover_info") and self.hover_info:
+                y_val = cand[2]
+                if y_val is not None:
+                    r = int(round(y_val))
+                    rows = self.hover_info.get("rows", [])
+                    if 0 <= r < len(rows):
+                        clicked_row = rows[r]
+                        self._set_active_row(str(clicked_row), sync_combo=True)
         self._pan_start = None
+        self._mouse_click_candidate = None
 
     def _on_mouse_motion(self, event) -> None:
         """Handles panning motion or hover inspection."""
@@ -1232,6 +1746,7 @@ class IrisMarkerExpressionWidget(QWidget):
         self.popup_dialog: Optional[MarkerExpressionDialog] = None
         self.selected_subset: Set[str] = set()
         self.selected_samples: List[str] = []
+        self.assignment_callback: Optional[Callable[[List[str], str], None]] = None
 
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(5, 5, 5, 5)
@@ -1269,7 +1784,7 @@ class IrisMarkerExpressionWidget(QWidget):
         return None
 
     def _build_ui(self) -> None:
-        # ── Configuration Box ─────────────────────────────────────────────
+        # Configuration Box
         config_box = QGroupBox()
         cb = QVBoxLayout()
         cb.setContentsMargins(10, 3, 10, 10)
@@ -1280,7 +1795,7 @@ class IrisMarkerExpressionWidget(QWidget):
         title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
         cb.addWidget(title)
 
-        # Row 1: Dataset & Filter
+        # Row 1: Dataset, Filter & Group By
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Dataset:"))
         self.combo_dataset = QComboBox()
@@ -1294,6 +1809,11 @@ class IrisMarkerExpressionWidget(QWidget):
         self.btn_subset.setToolTip("Select custom subset of samples")
         self.btn_subset.clicked.connect(self._open_subset_dialog)
         row1.addWidget(self.btn_subset)
+
+        row1.addWidget(QLabel("Group By:"))
+        self.combo_group_by = QComboBox()
+        self.combo_group_by.currentIndexChanged.connect(self._on_group_by_changed)
+        row1.addWidget(self.combo_group_by, 1)
         cb.addLayout(row1)
 
         # Row 2: Mode & Colormap
@@ -1313,7 +1833,7 @@ class IrisMarkerExpressionWidget(QWidget):
 
         self.main_layout.addWidget(config_box, 0)
 
-        # ── Heatmap Plot Group ────────────────────────────────────────────
+        # Heatmap Plot Group
         self.plot_group = QGroupBox()
         pg = QVBoxLayout()
         pg.setContentsMargins(6, 6, 6, 6)
@@ -1377,6 +1897,7 @@ class IrisMarkerExpressionWidget(QWidget):
             self.selected_samples = list(selected_samples)
 
         self._sync_sample_dropdown()
+        self._sync_grouping_dropdown()
         self.update_plot()
 
         if self.popup_dialog is not None and self.popup_dialog.isVisible() and self.df is not None:
@@ -1386,6 +1907,95 @@ class IrisMarkerExpressionWidget(QWidget):
                 celltype_col=self.celltype_col,
                 selected_samples=self.selected_samples,
             )
+            if hasattr(self, 'assignment_callback') and self.assignment_callback:
+                self.popup_dialog.set_assignment_callback(self.assignment_callback)
+            self.popup_dialog.set_group_by(self.celltype_col)
+
+    def _sync_grouping_dropdown(self) -> None:
+        if not hasattr(self, 'combo_group_by'):
+            return
+        curr = self.combo_group_by.currentText() if self.combo_group_by.count() > 0 else self.celltype_col
+        self.combo_group_by.blockSignals(True)
+        self.combo_group_by.clear()
+
+        candidates = []
+        if self.df is not None:
+            priority = ["Cluster", "cell_type", "Verified_CellType", "CellType", "Phenotype", "GROUP", "Label"]
+            for col in priority:
+                if col in self.df.columns and col not in candidates:
+                    candidates.append(col)
+            skip_terms = {"x", "y", "z", "pos_x", "pos_y", "area", "eccentricity", "objectnumber", "cell_id"}
+            for col in self.df.columns:
+                if col.lower() in skip_terms or col in self.markers or col in candidates:
+                    continue
+                if (
+                    self.df[col].dtype == 'object'
+                    or self.df[col].dtype.name == 'category'
+                    or self.df[col].dtype.name == 'string'
+                ):
+                    candidates.append(col)
+                elif pd.api.types.is_integer_dtype(self.df[col]) and self.df[col].nunique() <= 60:
+                    candidates.append(col)
+
+        if not candidates:
+            candidates = [self.celltype_col or "Cluster"]
+
+        self.combo_group_by.addItems(candidates)
+        idx = self.combo_group_by.findText(curr)
+        if idx >= 0:
+            self.combo_group_by.setCurrentIndex(idx)
+        else:
+            idx2 = self.combo_group_by.findText(self.celltype_col)
+            self.combo_group_by.setCurrentIndex(idx2 if idx2 >= 0 else 0)
+        self.celltype_col = self.combo_group_by.currentText()
+        self.combo_group_by.blockSignals(False)
+
+    def _on_group_by_changed(self) -> None:
+        col = self.combo_group_by.currentText().strip()
+        if col:
+            self.celltype_col = col
+            self.update_plot()
+
+    def set_group_by(self, col: str) -> None:
+        self.celltype_col = col
+        if hasattr(self, 'combo_group_by'):
+            idx = self.combo_group_by.findText(col)
+            if idx >= 0:
+                self.combo_group_by.blockSignals(True)
+                self.combo_group_by.setCurrentIndex(idx)
+                self.combo_group_by.blockSignals(False)
+            else:
+                self.combo_group_by.addItem(col)
+                self.combo_group_by.setCurrentText(col)
+        self.update_plot()
+
+    def set_current_dataset(self, dataset_name: str, subset_samples: Optional[List[str]] = None) -> None:
+        """Sets the active dataset or cohort sample filter and updates the plot."""
+        if subset_samples:
+            self.selected_subset = set(subset_samples)
+            n_sel = len(self.selected_subset)
+            custom_txt = f"Subset ({n_sel} samples)"
+            idx = self.combo_dataset.findText(custom_txt)
+            if idx < 0:
+                self.combo_dataset.addItem(custom_txt)
+                idx = self.combo_dataset.count() - 1
+            self.combo_dataset.blockSignals(True)
+            self.combo_dataset.setCurrentIndex(idx)
+            self.combo_dataset.blockSignals(False)
+        else:
+            idx = self.combo_dataset.findText(dataset_name)
+            if idx >= 0:
+                self.combo_dataset.blockSignals(True)
+                self.combo_dataset.setCurrentIndex(idx)
+                self.combo_dataset.blockSignals(False)
+        if self.popup_dialog is not None and self.popup_dialog.isVisible():
+            self.popup_dialog.set_current_dataset(dataset_name, subset_samples=subset_samples)
+        self.update_plot()
+
+    def set_assignment_callback(self, cb: Callable[[List[str], str], None]) -> None:
+        self.assignment_callback = cb
+        if self.popup_dialog is not None:
+            self.popup_dialog.set_assignment_callback(cb)
 
     def _sync_sample_dropdown(self) -> None:
         curr = self.combo_dataset.currentText() if self.combo_dataset.count() > 0 else "Selected Samples"
@@ -1484,9 +2094,9 @@ class IrisMarkerExpressionWidget(QWidget):
                 if match_mask.any():
                     df_work = df_work[match_mask]
 
-        ct_col = self.celltype_col
-        if ct_col not in df_work.columns:
-            for fallback in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
+        ct_col = self.combo_group_by.currentText().strip() if hasattr(self, 'combo_group_by') and self.combo_group_by.count() > 0 else self.celltype_col
+        if not ct_col or ct_col not in df_work.columns:
+            for fallback in ("Cluster", "cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
                 if fallback in df_work.columns:
                     ct_col = fallback
                     break
@@ -1494,26 +2104,60 @@ class IrisMarkerExpressionWidget(QWidget):
         if ct_col not in df_work.columns or df_work.empty:
             return
 
+        self.celltype_col = ct_col
+
         valid_markers = [m for m in self.markers if m in df_work.columns and pd.api.types.is_numeric_dtype(df_work[m])]
         if not valid_markers:
             return
 
-        matrix = df_work.groupby(ct_col)[valid_markers].mean().fillna(0)
+        if ct_col.lower() == "cluster":
+            if pd.api.types.is_numeric_dtype(df_work[ct_col]):
+                df_work[ct_col] = df_work[ct_col].apply(
+                    lambda v: f"Cluster {int(v)}" if pd.notnull(v) and v >= 0 else ("Noise / Outlier" if v == -1 else "Unassigned")
+                )
+            else:
+                def _fmt_cluster_val_dock(v):
+                    if pd.isnull(v):
+                        return "Unassigned"
+                    s = str(v).strip()
+                    if s.isdigit():
+                        return f"Cluster {int(s)}"
+                    return s
+                df_work[ct_col] = df_work[ct_col].apply(_fmt_cluster_val_dock)
+            df_work = df_work[df_work[ct_col] != "Unassigned"]
+
+        if df_work.empty:
+            return
+
+        matrix = df_work.groupby(ct_col, observed=True)[valid_markers].mean().fillna(0)
+        matrix.index = matrix.index.astype(str)
+        if ct_col.lower() == "cluster":
+            sorted_idx = sorted(
+                matrix.index,
+                key=lambda s: (0, int(re.search(r'\d+', s).group())) if re.search(r'\d+', s) else (1, s)
+            )
+            matrix = matrix.reindex(sorted_idx)
+
         is_zscore = "Z-Score" in self.combo_mode.currentText()
 
         if is_zscore:
             col_mean = matrix.mean(axis=0)
-            col_std = matrix.std(axis=0)
+            col_std = matrix.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
             col_std[col_std == 0] = 1e-8
-            plot_values = ((matrix - col_mean) / col_std).values
+            plot_values = np.nan_to_num(((matrix - col_mean) / col_std).values, nan=0.0)
             cbar_label = "Z-Score"
-            max_abs = max(1.0, float(np.nanmax(np.abs(plot_values))))
+            finite_abs = np.abs(plot_values)[np.isfinite(plot_values)]
+            max_abs = max(1.0, float(np.max(finite_abs))) if finite_abs.size > 0 else 1.0
             vmin, vmax = -min(3.0, max_abs), min(3.0, max_abs)
         else:
-            plot_values = matrix.values
+            plot_values = np.nan_to_num(matrix.values, nan=0.0)
             cbar_label = "Mean"
-            vmin = float(np.nanmin(plot_values))
-            vmax = float(np.nanmax(plot_values))
+            finite_vals = plot_values[np.isfinite(plot_values)]
+            if finite_vals.size > 0:
+                vmin = float(np.min(finite_vals))
+                vmax = float(np.max(finite_vals))
+            else:
+                vmin, vmax = 0.0, 1.0
             if vmin == vmax:
                 vmax += 1.0
 
@@ -1540,7 +2184,7 @@ class IrisMarkerExpressionWidget(QWidget):
         cbar.ax.yaxis.set_tick_params(color='white', labelcolor='white')
 
         ax.set_xlabel("Markers", color='#DDD', fontsize=9, fontweight='bold', labelpad=4)
-        ax.set_ylabel("Cell Types", color='#DDD', fontsize=9, fontweight='bold', labelpad=4)
+        ax.set_ylabel(ct_col, color='#DDD', fontsize=9, fontweight='bold', labelpad=4)
 
         for spine in ax.spines.values():
             spine.set_color('#444')
@@ -1566,6 +2210,7 @@ class IrisMarkerExpressionWidget(QWidget):
                 current_cmap=self.combo_cmap.currentText(),
                 selected_subset=self.selected_subset,
                 selected_samples=self.selected_samples,
+                assignment_callback=getattr(self, 'assignment_callback', None),
                 parent=self.window(),
             )
         else:
@@ -1574,6 +2219,13 @@ class IrisMarkerExpressionWidget(QWidget):
                 markers=self.markers,
                 celltype_col=self.celltype_col,
                 selected_samples=self.selected_samples,
+            )
+            if hasattr(self, 'assignment_callback') and self.assignment_callback:
+                self.popup_dialog.set_assignment_callback(self.assignment_callback)
+            self.popup_dialog.set_group_by(self.celltype_col)
+            self.popup_dialog.set_current_dataset(
+                self.combo_dataset.currentText(),
+                subset_samples=list(self.selected_subset) if self.selected_subset else None
             )
 
         self.popup_dialog.show()

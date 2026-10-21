@@ -17,8 +17,7 @@ import dask.array as da
 import numpy as np
 import tifffile
 
-
-# ── Discovery ──────────────────────────────────────────────────────────────────
+# Discovery
 
 def discover_image_files(directory: Path) -> Dict[str, Path]:
     """
@@ -48,7 +47,7 @@ def discover_image_files(directory: Path) -> Dict[str, Path]:
     return file_map
 
 
-# ── Multi-channel TIFF Loading ─────────────────────────────────────────────────
+# Multi-channel TIFF Loading
 
 def load_multichannel_tiff(filepath: Path) -> Tuple[Any, int]:
     """
@@ -97,7 +96,7 @@ def load_existing_mask(filepath: Path) -> Optional[np.ndarray]:
     return tifffile.imread(str(filepath)).astype(np.uint32)
 
 
-# ── OME-TIFF Metadata ──────────────────────────────────────────────────────────
+# OME-TIFF Metadata
 
 def probe_channel_count(filepath: Path) -> int:
     """
@@ -154,7 +153,7 @@ def probe_ome_channel_names(filepath: Path) -> List[str]:
         return []
 
 
-# ── Zarr / OME-Zarr (Phase 5 hook) ────────────────────────────────────────────
+# Zarr / OME-Zarr (Phase 5 hook)
 
 def load_zarr_multichannel(path: Path) -> Tuple[Any, int]:
     """

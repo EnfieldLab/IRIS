@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import types
 
-import numpy as np
 import matplotlib.colors as mcolors
+import numpy as np
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries
 
@@ -42,7 +42,7 @@ class ReviewService:
     def __init__(self, ctx: types.SimpleNamespace) -> None:
         self.ctx = ctx
 
-    # ── Confidence Overlay ─────────────────────────────────────────────────
+    # Confidence Overlay
 
     def update_confidence_overlay(self, threshold: float) -> None:
         """
@@ -130,7 +130,7 @@ class ReviewService:
             except Exception:
                 pass
 
-    # ── Issue Navigation ────────────────────────────────────────────────────
+    # Issue Navigation
 
     def next_issue(self) -> None:
         self.jump_to_issue(self.ctx.current_issue_idx + 1)
@@ -214,7 +214,7 @@ class ReviewService:
         ctx.consensus_panel.show_cell_review(cell_id, conf, method_map)
         self.show_competing_masks(method_map)
 
-    # ── Competing Mask Isolation ────────────────────────────────────────────
+    # Competing Mask Isolation
 
     def show_competing_masks(self, method_map: dict) -> None:
         """Render each method's cell footprint in a distinct colour for side-by-side comparison."""
@@ -261,7 +261,7 @@ class ReviewService:
                 ctx.legend_widget.add_consensus_row(lyr, layer_name, '#FFFFFF')
                 ctx.added_legend_entries.add(layer_name)
 
-    # ── Manual Override ─────────────────────────────────────────────────────
+    # Manual Override
 
     def apply_manual_override(self, cell_id: int, preferred_method: str) -> None:
         """
@@ -314,7 +314,7 @@ class ReviewService:
             self.update_confidence_overlay(ctx.consensus_panel.get_threshold())
             ctx.consensus_panel.clear_cell_review()
 
-    # ── Mouse-click Cell Selection ──────────────────────────────────────────
+    # Mouse-click Cell Selection
 
     def on_mouse_click(self, viewer, event) -> None:
         """napari mouse_drag_callback: select a cell in the consensus mask by clicking."""

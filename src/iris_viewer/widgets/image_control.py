@@ -6,19 +6,31 @@ canvas overlays, multi-format export, and system diagnostics.
 from __future__ import annotations
 
 import os
-from typing import Optional, List
+from typing import List, Optional
 
+from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QPushButton, QGroupBox, QFrame,
-    QFileDialog, QMessageBox, QSizePolicy, QScrollArea
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
-from qtpy.QtCore import Qt, Signal
 
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
-from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
 from iris_viewer.widgets.canvas_legend import CanvasLegendOverlay
 from iris_viewer.widgets.canvas_scalebar import CanvasScaleBarOverlay
+from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
+from iris_viewer.widgets.styles import SHARED_DARK_THEME
 
 
 class ImageControlWidget(QWidget):
@@ -81,7 +93,7 @@ class ImageControlWidget(QWidget):
 
         self.main_layout.addStretch(1)
 
-    # ── Image & Sample Input ──────────────────────────────────────────────
+    # Image & Sample Input
     def _build_input_group(self):
         box = QGroupBox()
         layout = QVBoxLayout(box)
@@ -134,7 +146,7 @@ class ImageControlWidget(QWidget):
 
         self.main_layout.addWidget(box)
 
-    # ── Annotations & Phenotyping ─────────────────────────────────────────
+    # Annotations & Phenotyping
     def _build_annotation_group(self):
         box = QGroupBox()
         layout = QVBoxLayout(box)
@@ -197,7 +209,7 @@ class ImageControlWidget(QWidget):
 
         self.main_layout.addWidget(box)
 
-    # ── Canvas Display & Overlays ─────────────────────────────────────────
+    # Canvas Display & Overlays
     def _build_display_group(self):
         box = QGroupBox()
         layout = QVBoxLayout(box)
@@ -390,7 +402,7 @@ class ImageControlWidget(QWidget):
 
         self.main_layout.addWidget(box)
 
-    # ── Export & Output ───────────────────────────────────────────────────
+    # Export & Output
     def _build_output_group(self):
         self.output_group = QGroupBox()
         layout = QVBoxLayout(self.output_group)
@@ -593,8 +605,8 @@ class ImageControlWidget(QWidget):
             try:
                 import numpy as np
                 import PIL.Image
-                from qtpy.QtGui import QImage
                 from napari._qt.qt_viewer import QImg2array
+                from qtpy.QtGui import QImage
 
                 raw_arr = QImg2array(raw_qimg).copy()
                 canvas_pil = PIL.Image.fromarray(raw_arr)
@@ -740,7 +752,7 @@ class ImageControlWidget(QWidget):
         if self.viewer:
             self.viewer.window._screenshot_dialog()
 
-    # ── System & Compute ──────────────────────────────────────────────────
+    # System & Compute
     def _build_compute_group(self):
         box = QGroupBox()
         layout = QVBoxLayout(box)
@@ -775,7 +787,7 @@ class ImageControlWidget(QWidget):
 
         self.main_layout.addWidget(box)
 
-    # ── Utilities ────────────────────────────────────────────────────────────
+    # Utilities
     def _add_divider(self, layout):
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
@@ -811,7 +823,7 @@ class ImageControlWidget(QWidget):
             self.lbl_annotation.setText(os.path.basename(path))
             self.loadAnnotationDataTriggered.emit(path)
 
-    # ── Public API ───────────────────────────────────────────────────────────
+    # Public API
     def update_sample_list(self, sample_names: List[str]):
         """Populate the sample selector dropdown."""
         self.combo_sample.blockSignals(True)

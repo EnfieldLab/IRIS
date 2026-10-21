@@ -15,14 +15,23 @@ masterFileTriggered(str) :
 """
 from __future__ import annotations
 
-import re
 from typing import List, Optional
 
 from qtpy.QtCore import Qt, Signal
 from qtpy.QtWidgets import (
-    QCheckBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout,
-    QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-    QScrollArea, QSpinBox, QVBoxLayout, QWidget, QComboBox
+    QCheckBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
 
 from iris_viewer.widgets.styles import SHARED_DARK_THEME
@@ -68,7 +77,7 @@ class MultiSampleComparisonWidget(QWidget):
         self._build_layout_group()
         self._main_layout.addStretch()
 
-    # ── Groups ────────────────────────────────────────────────────────────────
+    # Groups
 
     def _build_comparison_group(self) -> None:
         box = QGroupBox()
@@ -159,7 +168,7 @@ class MultiSampleComparisonWidget(QWidget):
 
         self._main_layout.addWidget(box)
 
-    # ── Internals ─────────────────────────────────────────────────────────────
+    # Internals
 
     def _add_sep(self, layout: QVBoxLayout) -> None:
         pass
@@ -201,7 +210,7 @@ class MultiSampleComparisonWidget(QWidget):
         self.btn_add.setText("Loading…")
         self.addSamplesTriggered.emit(selected)
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # Public API
 
     def update_sample_list(self, samples: List[str]) -> None:
         """Rebuild the checklist from a list of sample names."""

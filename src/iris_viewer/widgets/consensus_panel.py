@@ -4,14 +4,24 @@ Manages the confidence overlay visualization, threshold adjustment, and
 interactive review of low-confidence cells where the user can pick the
 preferred segmentation method on a per-cell basis.
 """
-from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
-    QCheckBox, QPushButton, QGroupBox, QFrame, QSizePolicy, QScrollArea
-)
 from qtpy.QtCore import Qt, Signal
+from qtpy.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
+
 from iris_viewer.widgets.styles import (
-    SHARED_DARK_THEME, CONFIDENCE_HIGH_COLOR,
-    CONFIDENCE_MEDIUM_COLOR, CONFIDENCE_LOW_COLOR
+    CONFIDENCE_HIGH_COLOR,
+    CONFIDENCE_LOW_COLOR,
+    SHARED_DARK_THEME,
 )
 
 
@@ -32,19 +42,19 @@ class ConsensusPanelWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(SHARED_DARK_THEME)
-        
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        
+
         self.content_widget = QWidget()
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(5, 5, 5, 5)
         self.main_layout.setSpacing(6)
         self.content_widget.setLayout(self.main_layout)
-        
+
         self.scroll_area.setWidget(self.content_widget)
-        
+
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.addWidget(self.scroll_area)
@@ -69,11 +79,11 @@ class ConsensusPanelWidget(QWidget):
         )
         self.btn_generate.clicked.connect(lambda: self.generateConsensusRequested.emit())
         gl.addWidget(self.btn_generate)
-        
+
         self.lbl_gen_status = QLabel("Pending Masks")
         self.lbl_gen_status.setStyleSheet("color: #AAA; font-size: 11px;")
         gl.addWidget(self.lbl_gen_status)
-        
+
         row_compare = QHBoxLayout()
         row_compare.addWidget(QLabel("Compare:"))
         from qtpy.QtWidgets import QComboBox
@@ -81,7 +91,7 @@ class ConsensusPanelWidget(QWidget):
         self.combo_compare.addItems(["Nuclear Masks", "Cytoplasm Masks", "Both"])
         row_compare.addWidget(self.combo_compare, stretch=1)
         gl.addLayout(row_compare)
-        
+
         self.main_layout.addWidget(group)
 
     def set_generating_state(self, is_generating: bool):
@@ -93,7 +103,7 @@ class ConsensusPanelWidget(QWidget):
         else:
             self.lbl_gen_status.setText("Consensus Generated")
             self.lbl_gen_status.setStyleSheet("color: #44AA66; font-weight: bold; font-size: 11px;")
-    
+
     # Confidence Threshold
     def _build_threshold_controls(self):
         group = QGroupBox()
@@ -132,9 +142,9 @@ class ConsensusPanelWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Removed Overlay Controls ─────────────────────────────────────
+    # Removed Overlay Controls
 
-    # ── Review Controls ──────────────────────────────────────────────
+    # Review Controls
     def _build_review_controls(self):
         group = QGroupBox()
         gl = QVBoxLayout()
@@ -160,7 +170,7 @@ class ConsensusPanelWidget(QWidget):
         row_nav = QHBoxLayout()
         self.btn_prev_issue = QPushButton("Prev Issue")
         self.btn_next_issue = QPushButton("Next Issue")
-        
+
         # Define new signals at class level later, but for now we can just emit custom signals
         # Or better, we define them in __init__ dynamically, or we use existing mechanisms.
         # Actually, let's just create these buttons and we will connect them in controller.py
@@ -169,7 +179,7 @@ class ConsensusPanelWidget(QWidget):
         row_nav.addWidget(self.btn_prev_issue)
         row_nav.addWidget(self.btn_next_issue)
         gl.addLayout(row_nav)
-        
+
         self.lbl_issue_count = QLabel("0 issues found")
         self.lbl_issue_count.setAlignment(Qt.AlignCenter)
         self.lbl_issue_count.setStyleSheet("color: #FFAA00; font-size: 11px; font-weight: bold;")
@@ -199,7 +209,7 @@ class ConsensusPanelWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Statistics ───────────────────────────────────────────────────
+    # Statistics
     def _build_statistics(self):
         group = QGroupBox()
         gl = QVBoxLayout()
@@ -231,7 +241,7 @@ class ConsensusPanelWidget(QWidget):
 
         self.main_layout.addWidget(group)
 
-    # ── Utility ──────────────────────────────────────────────────────
+    # Utility
     def _add_separator(self, layout):
         pass
 
@@ -240,7 +250,7 @@ class ConsensusPanelWidget(QWidget):
         self.lbl_threshold_value.setText(f"{val:.2f}")
         self.thresholdChanged.emit(val)
 
-    # ── Public API ───────────────────────────────────────────────────
+    # Public API
     def get_threshold(self) -> float:
         return self.slider_threshold.value() / 100.0
 
@@ -297,7 +307,7 @@ class ConsensusPanelWidget(QWidget):
         for i, method_name in enumerate(sorted(method_map.keys())):
             bg_color = palette_hex[i % len(palette_hex)]
             hover_color = palette_hover[i % len(palette_hover)]
-            
+
             btn = QPushButton(f"Use {method_name} mask")
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: {bg_color}; color: black; padding: 4px; font-size: 11px; font-weight: bold; border-radius: 2px; }}"

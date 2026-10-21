@@ -59,7 +59,7 @@ class PhenotypeBackend(ABC):
         ...
 
     @abstractmethod
-    def fit(self, features: pd.DataFrame, **kwargs) -> None:
+    def fit(self, features: pd.DataFrame, cell_type_panel: Optional[Any] = None, **kwargs) -> None:
         """
         Train the model.
 
@@ -69,9 +69,11 @@ class PhenotypeBackend(ABC):
             Cell-level feature table as exported by the Viewer
             (rows = cells, columns include ``ObjectNumber``, ``Pos_X``,
             ``Pos_Y``, and ``<Marker>_mean`` intensity columns).
+        cell_type_panel : CellTypePanel, optional
+            Marker-to-type mapping schema.
         **kwargs
-            Backend-specific keyword arguments (e.g. ``cell_type_panel``,
-            ``reference_adata``, ``annotations_csv``).
+            Backend-specific keyword arguments (e.g. ``reference_adata``,
+            ``annotations_csv``).
         """
         ...
 
@@ -79,6 +81,7 @@ class PhenotypeBackend(ABC):
     def predict(
         self,
         features: pd.DataFrame,
+        cell_type_panel: Optional[Any] = None,
         **kwargs,
     ) -> Dict[int, Dict[str, float]]:
         """
@@ -104,7 +107,7 @@ class PhenotypeBackend(ABC):
         """Return a dict of default parameters for UI population."""
         ...
 
-    # ── Utility ──────────────────────────────────────────────────────────────
+    # Utility
 
     @staticmethod
     def _extract_intensity_matrix(
@@ -125,7 +128,7 @@ class PhenotypeBackend(ABC):
         """
         suffix = f"_{stat}"
         cols = [c for c in features.columns if c.endswith(suffix)]
-        
+
         # If no suffix found, assume the user provided raw marker columns without suffixes
         if not cols:
             # We filter out typical non-marker numeric columns or metadata
@@ -135,13 +138,13 @@ class PhenotypeBackend(ABC):
             markers = cols
         else:
             markers = [c.replace(suffix, '') for c in cols]
-            
+
         if not cols:
             raise ValueError(
                 f"No suitable intensity columns found in features DataFrame. "
                 f"Available columns: {list(features.columns)[:20]}"
             )
-            
+
         idx = features['ObjectNumber'].values if 'ObjectNumber' in features.columns else features.index
         df = features[cols].copy()
         df.index = idx

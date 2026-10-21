@@ -25,15 +25,13 @@ IRIS internal schema (output)
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-
-# ── Known column aliases ───────────────────────────────────────────────────────
+# Known column aliases
 
 _COORD_X_ALIASES = {"voron_x", "pos_x", "x", "centroid_x", "x_centroid", "center_x"}
 _COORD_Y_ALIASES = {"voron_y", "pos_y", "y", "centroid_y", "y_centroid", "center_y"}
@@ -114,7 +112,7 @@ class IrisDataAdapter:
 
         self.normalised: pd.DataFrame = self._build_normalised()
 
-    # ── Detection helpers ──────────────────────────────────────────────────────
+    # Detection helpers
 
     def _detect_col(
         self, override: Optional[str], aliases: set, required: bool
@@ -168,14 +166,14 @@ class IrisDataAdapter:
             if lower in _MORPH_COLS
         ]
 
-    # ── Normalisation ──────────────────────────────────────────────────────────
+    # Normalisation
 
     def _build_normalised(self) -> pd.DataFrame:
         """Construct the IRIS internal DataFrame while preserving all original columns."""
         # Start with a full copy to preserve all user columns
         out = self._raw.copy()
 
-        # ── Sample identifier ─────────────────────────────────────────────────
+        # Sample identifier
         if self.sample_col_original:
             out["Image"] = (
                 self._raw[self.sample_col_original]
@@ -194,21 +192,21 @@ class IrisDataAdapter:
                 .str.strip()
             )
 
-        # ── Cell ID ──────────────────────────────────────────────────────────
+        # Cell ID
         if self._id_col:
             out["ObjectNumber"] = self._raw[self._id_col].astype(int)
 
-        # ── Coordinates ───────────────────────────────────────────────────────
+        # Coordinates
         out["Pos_X"] = self._raw[self._x_col].astype(float)
         out["Pos_Y"] = self._raw[self._y_col].astype(float)
 
-        # ── Cell type ─────────────────────────────────────────────────────────
+        # Cell type
         if self.celltype_col_original and "cell_type" not in out.columns:
             out["cell_type"] = self._raw[self.celltype_col_original].astype(str).str.strip()
 
         return out
 
-    # ── Public helpers ─────────────────────────────────────────────────────────
+    # Public helpers
 
     def per_sample(self) -> Dict[str, pd.DataFrame]:
         """Return a dict mapping sample name → normalised DataFrame slice."""
@@ -236,7 +234,7 @@ class IrisDataAdapter:
         s = stat or self._intensity_stat
         suffix = f"_{s}"
         cols = [c for c in self.normalised.columns if c.endswith(suffix)]
-        
+
         if cols:
             marker_names = [c.replace(suffix, "") for c in cols]
             mat = self.normalised[cols].copy()
@@ -245,7 +243,7 @@ class IrisDataAdapter:
             # Fallback to base markers if no suffix is found
             cols = [m for m in self.markers if m in self.normalised.columns]
             mat = self.normalised[cols].copy()
-            
+
         mat.index = self.normalised["ObjectNumber"].values
         return mat
 
@@ -255,7 +253,7 @@ class IrisDataAdapter:
             return self.normalised.set_index("ObjectNumber")["cell_type"]
         return None
 
-    # ── AnnData bridge ───────────────────────────────────────────────
+    # AnnData bridge
 
     def to_anndata(self, sample_name: Optional[str] = None):
         """
@@ -295,7 +293,7 @@ class IrisDataAdapter:
         adata.var_names = marker_names
         return adata
 
-    # ── Factory classmethod ────────────────────────────────────────────────────
+    # Factory classmethod
 
     @classmethod
     def from_file(
@@ -325,7 +323,7 @@ class IrisDataAdapter:
         return cls(df, **kwargs)
 
 
-# ── IrisPhenotypeMapper ────────────────────────────────────────────────────────
+# IrisPhenotypeMapper
 
 class IrisPhenotypeMapper:
     """
@@ -366,12 +364,12 @@ class IrisPhenotypeMapper:
         for c in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label"):
             if c in df.columns:
                 return c
-        
+
         # If still not found, return the last object/string column or just the first column
         for c in df.columns:
             if df[c].dtype == object or df[c].dtype.name == 'category':
                 return c
-                
+
         return df.columns[0] if len(df.columns) > 0 else "cell_type"
 
     def resolve_ids(self) -> pd.DataFrame:

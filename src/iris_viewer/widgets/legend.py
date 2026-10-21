@@ -3,14 +3,21 @@ IRIS-Viewer Legend Widget
 Layer visibility and color management, adapted from IRIS/widgets/legend.py.
 Extended with segmentation-specific groups: individual method masks and consensus.
 """
-import numpy as np
 import matplotlib.colors as mcolors
-from qtpy.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QCheckBox, QColorDialog, QPushButton, QGroupBox
-)
-from qtpy.QtCore import Qt, Signal
+import numpy as np
 from napari.utils.colormaps import Colormap
+from qtpy.QtCore import Qt, Signal
+from qtpy.QtWidgets import (
+    QCheckBox,
+    QColorDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class ViewerLegendRow(QWidget):
@@ -131,7 +138,7 @@ class ViewerLegendWidget(QWidget):
         self.scroll.setWidget(self.content_widget)
         self.main_layout.addWidget(self.scroll)
 
-        # ── Initialize Groups ────────────────────────────────────────
+        # Initialize Groups
         self.channel_group, self.channel_layout, self.channel_rows = self._create_group("Channels")
         self.seg_group, self.seg_layout, self.seg_rows = self._create_group("Segmentation Masks")
         self.consensus_group, self.consensus_layout, self.consensus_rows = self._create_group("Consensus")
@@ -213,7 +220,6 @@ class ViewerLegendWidget(QWidget):
         def on_ui_col_change(n: str, hex_c: str) -> None:
             if not self.viewer:
                 return
-            rgb = mcolors.to_rgba(hex_c)
             for target_layer in self.viewer.layers:
                 l_base = target_layer.name.split(" [")[0] if " [" in target_layer.name else target_layer.name
                 if l_base == n:
@@ -236,7 +242,7 @@ class ViewerLegendWidget(QWidget):
         target_layout.addWidget(row)
         target_list.append(row)
 
-    # ── Public API ───────────────────────────────────────────────────
+    # Public API
     def add_channel_row(self, layer, name: str, initial_color: str) -> None:
         """Add an imaging channel entry to the channels section."""
         self._add_layer_row(layer, name, initial_color, self.channel_group, self.channel_layout, self.channel_rows)
@@ -253,7 +259,7 @@ class ViewerLegendWidget(QWidget):
         """Add a cellular neighborhood cluster entry to the neighborhood section."""
         self._add_layer_row(layer, name, initial_color, self.cn_group, self.cn_layout, self.cn_rows, layer_type=layer_type)
 
-    # ── Aliases for Services ─────────────────────────────────────────
+    # Aliases for Services
     def add_grouped_channel_row(self, layer, name: str, initial_color: str, group_name: str="Channels"):
         self.add_channel_row(layer, name, initial_color)
 

@@ -23,20 +23,20 @@ import json
 import re
 import types
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
+import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 import tifffile
-import matplotlib.colors as mcolors
 from napari.qt import thread_worker
 from napari.utils.colormaps import Colormap
-from qtpy.QtWidgets import QFileDialog, QMessageBox
 
-from iris_viewer.io.data_adapter import IrisDataAdapter, IrisPhenotypeMapper
-from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
 from iris_viewer.app.services.annotation_service import AnnotationService
 from iris_viewer.app.services.color_service import ColorService
+from iris_viewer.io.data_adapter import IrisPhenotypeMapper
+from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
+
 
 def get_sample_sub_df(df: pd.DataFrame, sample_name: str) -> pd.DataFrame:
     """Extract rows belonging to a sample with tiered name matching.
@@ -106,7 +106,7 @@ class MultiSampleService:
         self._annotation_svc = AnnotationService(ctx)
         self._color_svc = ColorService(ctx, self.DEFAULT_COLORS, self.CELLTYPE_COLORS)
 
-    # ── Master Annotation File ─────────────────────────────────────────────────
+    # Master Annotation File
 
     def set_master_file(self, file_path: str) -> None:
         """Load and normalise *file_path* (CSV/XLSX) into ``ctx.state.master_df``."""
@@ -144,7 +144,7 @@ class MultiSampleService:
                 if ctx.state.master_df is not None and "Image" in ctx.state.master_df.columns:
                     print(f"[IRIS-Viewer] Unique images in master_df: {ctx.state.master_df['Image'].unique()}")
                 continue
-                
+
             # If a bounding box exists, get its translation to align overlays perfectly
             bbox_lyr = next((l for l in sample_layers if l.name == f"Bounds - {sample_name}"), None)
             translation = bbox_lyr.translate if bbox_lyr else (0.0, 0.0)
@@ -172,13 +172,13 @@ class MultiSampleService:
                 l_base = l.name.split(" [")[0]
                 if l.__class__.__name__ == 'Image' and l_base not in base_markers:
                     layers_to_remove.append(l)
-                    
+
             for l in layers_to_remove:
                 if l in ctx.viewer.layers:
                     ctx.viewer.layers.remove(l)
                 if l in sample_layers:
                     sample_layers.remove(l)
-                
+
                 l_base = l.name.split(" [")[0]
                 if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "remove_row"):
                     ctx.legend_widget.remove_row(l_base)
@@ -190,7 +190,7 @@ class MultiSampleService:
             # Check and add Cell Phenotypes via IrisPhenotypeMapper
             mapper = IrisPhenotypeMapper(mask, sub_df, target_col=ref_col)
             layer_data_ref = mapper.get_masks_by_type()
-            
+
             print(f"[IRIS-Viewer] mapper returned layer_data_ref with keys: {list(layer_data_ref.keys())}")
 
             for type_name in sorted(layer_data_ref.keys()):
@@ -201,7 +201,7 @@ class MultiSampleService:
                 mask_bin, hex_color = layer_data_ref[type_name]
                 if type_name.lower() in self.CELLTYPE_COLORS:
                     hex_color = self.CELLTYPE_COLORS[type_name.lower()]
-                
+
                 colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]])
                 lyr = ctx.viewer.add_image(
                     mask_bin, name=type_name, opacity=0.8, visible=True,
@@ -211,7 +211,7 @@ class MultiSampleService:
                 lyr.translate = translation
                 sample_layers.append(lyr)
                 self._register_layer(lyr, type_name)
-                
+
                 try:
                     actual_rgba = (
                         lyr.colormap.colors[-1]
@@ -221,16 +221,16 @@ class MultiSampleService:
                     actual_hex = mcolors.to_hex(actual_rgba)
                 except Exception:
                     actual_hex = hex_color
-                
+
                 if type_name not in self._added_master_legends:
                     ctx.legend_widget.add_ref_ct_row(lyr, type_name, actual_hex)
                     self._added_master_legends.add(type_name)
-                    
+
             # Update the resolved dataframes cache for analytics/export
             resolved_df = mapper.df.copy() if 'mapper' in locals() else sub_df.copy()
             resolved_df["Image"] = sample_name
             ctx.state.resolved_dfs[sample_name] = resolved_df
-            
+
         # Rebuild the unified mapped DataFrame
         all_dfs = [ctx.state.resolved_dfs[sn] for sn in ctx.state.sample_layers_map.keys() if sn in ctx.state.resolved_dfs]
         if all_dfs:
@@ -259,7 +259,7 @@ class MultiSampleService:
                     markers=ctx.state.markers,
                 )
 
-    # ── Add Samples to Canvas ─────────────────────────────────────────────────
+    # Add Samples to Canvas
 
     def add_samples_to_canvas(self, sample_names: List[str]) -> None:
         """
@@ -267,12 +267,12 @@ class MultiSampleService:
         add them to the napari canvas.  Runs pixel I/O in a thread worker.
         """
         ctx = self.ctx
-        
+
         # Skip samples that are already loaded on canvas
         sample_names = [sn for sn in sample_names if sn not in ctx.state.sample_layers_map]
         if not sample_names:
             return
-            
+
         scale_val = ctx.control_widget.spin_scale.value()
 
         # Snapshot everything the worker needs to avoid Qt calls in the thread
@@ -291,12 +291,12 @@ class MultiSampleService:
                     continue
                 mask_path = img_path.parent / f"{sample_name}_mask.tiff"
 
-                # ── Sub-DataFrame ─────────────────────────────────────────────
+                # Sub-DataFrame
                 sub_df = get_sample_sub_df(master_df_snap, sample_name)
                 if sub_df.empty and master_df_snap is not None and len(sample_names) == 1:
                     sub_df = master_df_snap.copy()
 
-                # ── Image ────────────────────────────────────────────────────
+                # Image
                 img_data = []
                 raw = None
                 if img_path.exists():
@@ -314,7 +314,7 @@ class MultiSampleService:
                             hi = lo + 1.0
                         img_data.append((m, chan, [lo, hi]))
 
-                # ── Mask ─────────────────────────────────────────────────────
+                # Mask
                 mask_channels = []
                 if mask_path.exists():
                     mask_raw = tifffile.imread(str(mask_path)).astype(np.uint32)
@@ -336,7 +336,7 @@ class MultiSampleService:
         ctx.active_workers.append(worker)
         worker.start()
 
-    # ── On-load: build napari layers ──────────────────────────────────────────
+    # On-load: build napari layers
 
     def _on_samples_loaded(
         self,
@@ -352,7 +352,7 @@ class MultiSampleService:
             sample_layers = []
             sample_h, sample_w = 2000, 2000
 
-            # ── Image channels ────────────────────────────────────────────────
+            # Image channels
             for m, chan_data, clims in img_data:
                 sample_h, sample_w = chan_data.shape
                 cname = self.DEFAULT_COLORS.get(m, "gray")
@@ -371,7 +371,7 @@ class MultiSampleService:
                     ctx.legend_widget.add_grouped_channel_row(layer, m, init_color, "Channels")
                     self._added_master_legends.add(m)
 
-            # ── Segmentation masks ────────────────────────────────────────────
+            # Segmentation masks
             if mask_channels:
                 sample_h, sample_w = mask_channels[0].shape
                 ctx.state.masks_map[sample_name] = mask_channels[0]
@@ -404,7 +404,7 @@ class MultiSampleService:
                     )
                 ctx.state.current_mask = mask_channels[0]
 
-            # ── Centroids ─────────────────────────────────────────────────────
+            # Centroids
             if not sub_df.empty and {"Pos_X", "Pos_Y"}.issubset(sub_df.columns):
                 coords = sub_df[["Pos_Y", "Pos_X"]].values
                 pts = ctx.viewer.add_points(
@@ -418,7 +418,7 @@ class MultiSampleService:
                     ctx.legend_widget.add_ref_row(pts, "Centroids", "#FFFFFF", layer_type="points")
                     self._added_master_legends.add("Centroids")
 
-            # ── Cell type overlays ────────────────────────────────────────────
+            # Cell type overlays
             if not sub_df.empty and mask_channels:
                 mapper = IrisPhenotypeMapper(
                     mask_channels[0], sub_df, target_col=ref_col_text
@@ -452,7 +452,7 @@ class MultiSampleService:
                         ctx.legend_widget.add_ref_ct_row(lyr, type_name, actual_hex)
                         self._added_master_legends.add(type_name)
 
-            # ── Bounding box ──────────────────────────────────────────────────
+            # Bounding box
             pad = 40
             if not sub_df.empty and {"Pos_X", "Pos_Y"}.issubset(sub_df.columns):
                 min_y = sub_df["Pos_Y"].min() - pad
@@ -500,7 +500,7 @@ class MultiSampleService:
                     if lyr in ctx.viewer.layers and lyr is not bl:
                         lyr.translate = t
 
-            # ── Auto-load saved boundary ──────────────────────────────────────
+            # Auto-load saved boundary
             boundary_path = ctx.state.file_map.get(sample_name)
             if not boundary_path and ctx.state.image_dir:
                 boundary_path = Path(ctx.state.image_dir) / f"{sample_name}_image.tiff"
@@ -509,10 +509,10 @@ class MultiSampleService:
                     sample_name, boundary_path, mask_channels, scale_val, sample_layers
                 )
 
-        # ── Align and finalise ────────────────────────────────────────────────
+        # Align and finalise
         self._finalize_canvas(target_sample_names)
 
-    # ── Canvas Alignment ──────────────────────────────────────────────────────
+    # Canvas Alignment
 
     def align_samples_on_canvas(
         self, sample_names: List[str], gap: Optional[int] = None
@@ -598,7 +598,7 @@ class MultiSampleService:
                 if lyr in ctx.viewer.layers and lyr is not s["bbox_lyr"]:
                     lyr.translate = (ty, tx)
 
-    # ── Clear Canvas ──────────────────────────────────────────────────────────
+    # Clear Canvas
 
     def clear_canvas(self) -> None:
         """Remove all layers and legend entries, then reset per-sample state."""
@@ -613,7 +613,7 @@ class MultiSampleService:
         ctx.state.areas_map.clear()
         ctx.state.current_mapped_df = None
 
-    # ── Finalise canvas ───────────────────────────────────────────────────────
+    # Finalise canvas
 
     def _finalize_canvas(self, sample_names: List[str]) -> None:
         ctx = self.ctx
@@ -661,7 +661,7 @@ class MultiSampleService:
                 )
 
 
-    # ── Saved boundary ────────────────────────────────────────────────────────
+    # Saved boundary
 
     def _try_load_saved_boundary(
         self, sample_name, img_path, mask_channels, scale_val, sample_layers
@@ -708,7 +708,7 @@ class MultiSampleService:
         except Exception as exc:
             print(f"[IRIS-Viewer] Failed to load boundary for {sample_name}: {exc}")
 
-    # ── Layer registration & sync ─────────────────────────────────────────────
+    # Layer registration & sync
 
     def _register_layer(self, layer, base_name: str) -> None:
         """Attach visibility / colormap / opacity / contrast sync callbacks."""
@@ -825,7 +825,7 @@ class MultiSampleService:
                     row.checkbox.blockSignals(False)
                     break
 
-    # ── Colour loading ────────────────────────────────────────────────────────
+    # Colour loading
 
     def load_channel_colors(self, filepath: str) -> None:
         """Load marker colour mapping from *filepath* and apply to the canvas."""

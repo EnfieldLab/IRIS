@@ -1,9 +1,11 @@
-import pytest
 import numpy as np
+import pytest
+
 from iris_viewer.engine.segmentation.cellpose_backend import CellposeBackend
-from iris_viewer.engine.segmentation.stardist_backend import StardistBackend
-from iris_viewer.engine.segmentation.instanseg_backend import InstanSegBackend
 from iris_viewer.engine.segmentation.cellsam_backend import CellSAMBackend
+from iris_viewer.engine.segmentation.instanseg_backend import InstanSegBackend
+from iris_viewer.engine.segmentation.stardist_backend import StardistBackend
+
 
 @pytest.fixture
 def dummy_image():
@@ -16,7 +18,7 @@ def test_cellpose_backend(dummy_image):
     backend = CellposeBackend()
     if not backend.is_available():
         pytest.skip("Cellpose not installed")
-        
+
     res = backend.segment(
         image=dummy_image,
         nuclear_channel=0,
@@ -27,12 +29,12 @@ def test_cellpose_backend(dummy_image):
     )
     assert 'nuclear' in res
     assert res['nuclear'].shape == (128, 128)
-    
+
 def test_stardist_backend(dummy_image):
     backend = StardistBackend()
     if not backend.is_available():
         pytest.skip("StarDist not installed")
-        
+
     res = backend.segment(
         image=dummy_image,
         nuclear_channel=0,
@@ -43,12 +45,12 @@ def test_stardist_backend(dummy_image):
     )
     assert 'nuclear' in res
     assert res['nuclear'].shape == (128, 128)
-    
+
 def test_instanseg_backend(dummy_image):
     backend = InstanSegBackend()
     if not backend.is_available():
         pytest.skip("InstanSeg not installed")
-        
+
     res = backend.segment(
         image=dummy_image,
         nuclear_channel=0,
@@ -64,7 +66,7 @@ def test_cellsam_backend(dummy_image):
     backend = CellSAMBackend()
     if not backend.is_available():
         pytest.skip("CellSAM not installed")
-        
+
     try:
         res = backend.segment(
             image=dummy_image,

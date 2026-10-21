@@ -4,7 +4,8 @@ All segmentation methods (Cellpose, StarDist, CellSAM, InstanSeg) implement this
 ensuring a uniform contract for the consensus engine and the controller.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional
+
 import numpy as np
 
 
@@ -53,7 +54,7 @@ class SegmentationBackend(ABC):
         device : str
             Compute device: 'cpu', 'cuda', or 'mps'.
         expand_radius : int
-            For nuclear-only backends, optionally dilate the nuclear mask 
+            For nuclear-only backends, optionally dilate the nuclear mask
             by this many pixels to approximate a cytoplasm mask.
 
         Returns
@@ -74,19 +75,18 @@ class SegmentationBackend(ABC):
         ...
 
     def _expand_nuclear_to_cytoplasm(
-        self, 
-        nuclear_mask: np.ndarray, 
+        self,
+        nuclear_mask: np.ndarray,
         expand_radius: int
     ) -> np.ndarray:
         """
-        Utility: dilate each labeled nucleus outward by `expand_radius` pixels 
-        to approximate a cytoplasm mask. Conflicts are resolved by nearest-label 
+        Utility: dilate each labeled nucleus outward by `expand_radius` pixels
+        to approximate a cytoplasm mask. Conflicts are resolved by nearest-label
         assignment using a distance transform.
         """
         if expand_radius <= 0:
             return nuclear_mask.copy()
 
-        from scipy.ndimage import distance_transform_edt, label as nd_label
         from skimage.segmentation import expand_labels
 
         expanded = expand_labels(nuclear_mask, distance=expand_radius)

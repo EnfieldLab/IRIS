@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import threading
 import types
-from pathlib import Path
 
 import numpy as np
 from napari.qt import thread_worker
@@ -57,7 +56,7 @@ class BatchService:
         self.ctx = ctx
         self._gpu_lock = threading.Lock()
 
-    # ── Public API ─────────────────────────────────────────────────────────
+    # Public API
 
     def run_batch_processing(self) -> None:
         """Entry point: validate state, snapshot pipeline config, start the queue."""
@@ -90,7 +89,7 @@ class BatchService:
 
         self._batch_process_next(groups)
 
-    # ── Internal Queue Loop ────────────────────────────────────────────────
+    # Internal Queue Loop
 
     def _batch_process_next(self, groups: dict) -> None:
         """Pop the next sample and start its worker; call _on_batch_complete when done."""
@@ -103,7 +102,7 @@ class BatchService:
         sample_name = ctx.state.batch_queue.pop(0)
         img_path = ctx.state.file_map[sample_name]
 
-        # ── Snapshot everything needed by the worker BEFORE entering the thread ──
+        # Snapshot everything needed by the worker BEFORE entering the thread
         # This is the critical fix: no Qt widget reads inside _process_sample().
         scale_val: float = ctx.control_widget.spin_scale.value()
         markers: list = list(ctx.state.markers)
@@ -209,7 +208,7 @@ class BatchService:
                if ctx.state.image_dir else "")
         )
 
-    # ── Helpers ────────────────────────────────────────────────────────────
+    # Helpers
 
     def _get_pipeline_groups(self) -> dict:
         """Read the current tab-based pipeline configuration from the UI.

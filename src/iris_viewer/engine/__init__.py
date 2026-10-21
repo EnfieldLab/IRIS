@@ -6,11 +6,11 @@ spatial geometry, and cellular neighborhood clustering.
 """
 from __future__ import annotations
 
-from .consensus import compute_consensus_mask, apply_manual_override
+from .consensus import apply_manual_override, compute_consensus_mask
 from .feature_extraction import extract_cell_features
-from .pipeline import PipelineService, SegmentationSequence, SegmentationStep
 from .geometry import compute_tissue_boundary_mask, recompute_area_from_vertices
 from .neighborhood import identify_cellular_neighborhoods
+from .pipeline import PipelineService, SegmentationSequence, SegmentationStep
 
 __all__ = [
     "compute_consensus_mask",

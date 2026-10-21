@@ -6,7 +6,6 @@ import threading
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from iris_viewer.engine.pipeline import (
     PipelineService,
@@ -15,8 +14,7 @@ from iris_viewer.engine.pipeline import (
     execute_group_sync,
 )
 
-
-# ── Fixtures ───────────────────────────────────────────────────────────────────
+# Fixtures
 
 def _make_image(c=2, h=64, w=64) -> np.ndarray:
     """Return a minimal (C, H, W) uint16 image."""
@@ -51,7 +49,7 @@ def _cytoplasm_backend(nuc_mask: np.ndarray) -> MagicMock:
     return backend
 
 
-# ── execute_group_sync ─────────────────────────────────────────────────────────
+# execute_group_sync
 
 class TestExecuteGroupSync:
 
@@ -122,7 +120,7 @@ class TestExecuteGroupSync:
 
         result = execute_group_sync("dilate_test", sequence, image, backends, device="cpu")
 
-        nuc = result["nuclear"]
+        assert result["nuclear"] is not None
         cyto = result["cytoplasm"]
         assert cyto is not None
         # All nuclear-labelled pixels should appear in cytoplasm (or at least some)
@@ -161,8 +159,6 @@ class TestExecuteGroupSync:
         lock = threading.Lock()
         acquired = []
 
-        original_segment = nuc_b.segment.side_effect
-
         def segment_with_spy(*args, **kwargs):
             # Lock must be held during segment() when gpu_lock is provided
             acquired.append(not lock.acquire(blocking=False))  # True = lock was already held
@@ -181,7 +177,7 @@ class TestExecuteGroupSync:
         assert True  # No deadlock / exception is the primary success criterion
 
 
-# ── PipelineService ────────────────────────────────────────────────────────────
+# PipelineService
 
 class TestPipelineService:
 

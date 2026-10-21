@@ -178,7 +178,7 @@ SHARED_DARK_THEME = """
     }
 """
 
-# ── Accent Colors ────────────────────────────────────────────────────────────
+# Accent Colors
 
 COLOR_PRIMARY = "#3A6A9A"
 COLOR_PRIMARY_HOVER = "#4A7FBA"
@@ -191,7 +191,7 @@ CONFIDENCE_HIGH_COLOR = "#44AA66"     # Green
 CONFIDENCE_MEDIUM_COLOR = "#CCAA44"   # Yellow/Amber
 CONFIDENCE_LOW_COLOR = "#CC4444"      # Red
 
-# ── Status Badge Styles ─────────────────────────────────────────────────────
+# Status Badge Styles
 
 STATUS_STYLES = {
     'Idle':     "color: #888; font-style: italic;",
@@ -201,7 +201,7 @@ STATUS_STYLES = {
     'Failed':   "color: #CC4444; font-weight: bold;",
 }
 
-# ── Button Variant Styles ───────────────────────────────────────────────────
+# Button Variant Styles
 
 BUTTON_PRIMARY = """
     QPushButton {
@@ -251,7 +251,7 @@ BUTTON_SUCCESS = """
     QPushButton:hover { background-color: #55BB77; }
 """
 
-# ── Default Channel Colour Suggestions ─────────────────────────────────────────
+# Default Channel Colour Suggestions
 # Maps common marker names (upper-cased for matching) to napari-compatible
 # colourmap names or hex strings.  Used to auto-assign colours on image load.
 

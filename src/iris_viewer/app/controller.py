@@ -14,42 +14,37 @@ from __future__ import annotations
 import types as pytypes
 from pathlib import Path
 
-import numpy as np
 import napari
+import numpy as np
 from napari.qt import thread_worker
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 
+from iris_viewer.app.services import (
+    BatchService,
+    BoundaryService,
+    CurationService,
+    ImageService,
+    MultiSampleService,
+    NeighborhoodService,
+    ReviewService,
+)
 from iris_viewer.core.state import ViewerAppState
-from iris_viewer.engine.pipeline import PipelineService, SegmentationSequence
 from iris_viewer.engine.consensus import compute_consensus_mask
 from iris_viewer.engine.feature_extraction import extract_cell_features
+from iris_viewer.engine.pipeline import PipelineService, SegmentationSequence
 from iris_viewer.io.exporters import (
     export_confidence_map,
     export_consensus_mask,
     export_features_csv,
 )
-
 from iris_viewer.widgets import (
     ImageControlWidget,
-    SegmentationPanelWidget,
-    ConsensusPanelWidget,
-    FeaturePanelWidget,
-    PhenotyperPanelWidget,
-    ViewerLegendWidget,
-    MultiSampleComparisonWidget,
     IrisCellularNeighborhoodsWidget,
     IrisMarkerExpressionWidget,
-)
-
-from iris_viewer.app.services import (
-    BatchService,
-    ReviewService,
-    BoundaryService,
-    NeighborhoodService,
-    ImageService,
-    MultiSampleService,
-    CurationService,
+    PhenotyperPanelWidget,
+    SegmentationPanelWidget,
+    ViewerLegendWidget,
 )
 
 
@@ -71,7 +66,7 @@ class ViewerController:
         self.added_legend_entries: set = set()
         self._active_workers: list = []
 
-        # ── napari Viewer ─────────────────────────────────────────────────
+        # napari Viewer
         self.viewer = napari.Viewer(title="IRIS-Viewer")
         try:
             self.viewer.scale_bar.visible = False
@@ -83,7 +78,7 @@ class ViewerController:
         except AttributeError:
             pass
 
-        # ── Widgets ───────────────────────────────────────────────────────
+        # Widgets
         self.control_widget      = ImageControlWidget(viewer=self.viewer)
         self.segmentation_panel  = SegmentationPanelWidget()
         self.consensus_panel     = self.segmentation_panel.consensus_panel
@@ -107,9 +102,9 @@ class ViewerController:
             (self.neighborhood_widget, "Neighborhoods"),
         ]:
             docks[name] = self.viewer.window.add_dock_widget(widget, name=name, area="right")
-            
+
         legend_dock = self.viewer.window.add_dock_widget(self.legend_widget, name="Legend", area="left")
-        
+
         self.comparison_widget.show()
 
         qt = self.viewer.window._qt_window
@@ -143,7 +138,7 @@ class ViewerController:
                 d.raise_()
                 break
 
-        # ── Adjust Main Window Size ───────────────────────────────────────
+        # Adjust Main Window Size
         from qtpy.QtCore import QTimer
         def enforce_window_size():
             screen = qt.screen()
@@ -153,11 +148,11 @@ class ViewerController:
                 qt.resize(int(geom.width() * 0.85), int(geom.height() * 0.85))
                 qt.move(geom.center() - qt.rect().center())
             qt.showMaximized()
-            
+
         # Delay the resize slightly so it overrides napari's internal settings restoration
         QTimer.singleShot(200, enforce_window_size)
 
-        # ── Shared Context namespace ───────────────────────────────────────
+        # Shared Context namespace
         # Both the controller and all services read/write the same objects.
         # Mutable containers (lists, sets, dicts) are shared by reference.
         self._ctx = pytypes.SimpleNamespace(
@@ -180,7 +175,7 @@ class ViewerController:
             current_issue_idx=-1,
         )
 
-        # ── Services ──────────────────────────────────────────────────────
+        # Services
         self.image_svc        = ImageService(self._ctx)
         self.batch_svc        = BatchService(self._ctx)
         self.review_svc       = ReviewService(self._ctx)
@@ -192,10 +187,10 @@ class ViewerController:
         self.segmentation_panel.ctx = self._ctx
         self.phenotyper_panel.ctx = self._ctx
 
-        # ── Replace Napari Welcome Text ───────────────────────────────────────
-        from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
+        # Replace Napari Welcome Text
         from qtpy.QtCore import Qt
-        
+        from qtpy.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+
         # Suppress default napari welcome widgets
         try:
             for top_widget in QApplication.instance().topLevelWidgets():
@@ -229,18 +224,19 @@ class ViewerController:
 
         # Initialize centered IRIS branding animation canvas overlay
         canvas_native = self.viewer.window._qt_viewer.canvas.native
-        
+
         self.iris_welcome = QLabel()
         # Use an opaque black background
         self.iris_welcome.setStyleSheet("background-color: black;")
         self.iris_welcome.setAlignment(Qt.AlignCenter)
         self.iris_welcome.setAttribute(Qt.WA_TransparentForMouseEvents)
-        
-        from qtpy.QtGui import QMovie
+
         import os
+
+        from qtpy.QtGui import QMovie
         gif_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../image/iris_blink.gif"))
         movie = QMovie(gif_path)
-        
+
         # Start and jump to frame 0 to read the original size synchronously
         movie.start()
         movie.jumpToFrame(0)
@@ -249,7 +245,7 @@ class ViewerController:
             from qtpy.QtCore import QSize
             scale_factor = 0.5
             movie.setScaledSize(QSize(int(orig_size.width() * scale_factor), int(orig_size.height() * scale_factor)))
-            
+
         self.iris_welcome.setMovie(movie)
         # Keep a reference to prevent garbage collection
         self.iris_welcome._movie = movie
@@ -259,20 +255,20 @@ class ViewerController:
         if not layout:
             layout = QVBoxLayout(canvas_native)
             layout.setContentsMargins(0, 0, 0, 0)
-        
+
         layout.addWidget(self.iris_welcome) # No alignment flag makes it expand
 
         # Hide it when a layer is added
         @self.viewer.layers.events.inserted.connect
         def _hide_iris_text(*args):
             self.iris_welcome.hide()
-            
+
         @self.viewer.layers.events.removed.connect
         def _show_iris_text(*args):
             if len(self.viewer.layers) == 0:
                 self.iris_welcome.show()
 
-        # ── Init ──────────────────────────────────────────────────────────
+        # Init
         self._configure_backend_availability()
         self._bind_control_signals()
         self._bind_segmentation_signals()
@@ -282,14 +278,14 @@ class ViewerController:
         self._bind_curation_signals()
         self._bind_neighborhood_signals()
 
-    # ── Configuration ──────────────────────────────────────────────────────
+    # Configuration
 
     def _configure_backend_availability(self) -> None:
         self.segmentation_panel.update_available_methods(
             self.pipeline_service.get_available_methods()
         )
 
-    # ── Signal Binding ─────────────────────────────────────────────────────
+    # Signal Binding
 
     def _bind_control_signals(self) -> None:
         cw = self.control_widget
@@ -389,6 +385,7 @@ class ViewerController:
             filepath: Path to the Excel (.xlsx) or CSV color configuration table.
         """
         import re
+
         import pandas as pd
         path_obj = Path(filepath)
         try:
@@ -397,21 +394,21 @@ class ViewerController:
         except Exception as e:
             QMessageBox.critical(self.control_widget, "Error", f"Failed to read file:\n{e}")
             return
-            
+
         has_color = any(k in cols for k in ['colors', 'color', 'colours', 'colour', 'hex', 'code'])
         has_markers = has_color and any(k in cols for k in ['markers', 'marker', 'channel', 'channels', 'target', 'targets'])
         has_celltypes = has_color and any(k in cols for k in ['celltypes', 'celltype', 'phenotype', 'phenotypes', 'label', 'labels', 'cluster', 'clusters'])
-        
+
         if not has_markers and not has_celltypes:
             QMessageBox.warning(self.control_widget, "Invalid Format", "File must contain a color column and either marker or cell type names.")
             return
-            
+
         if has_markers:
             self.image_svc.load_channel_colors(filepath)
         if has_celltypes:
             self.multi_sample_svc.load_celltype_colors(filepath)
 
-    # ── Interactive Review & Canvas Controls ──────────────────────────────────
+    # Interactive Review & Canvas Controls
 
     def _toggle_interactive_review(self, enabled: bool) -> None:
         """Toggle mouse click callbacks for interactive confidence review.
@@ -453,7 +450,7 @@ class ViewerController:
             self.viewer.mouse_double_click_callbacks.extend(self._old_double_clicks)
             del self._old_double_clicks
 
-    # ── Segmentation Pipeline ───────────────────────────────────────────────
+    # Segmentation Pipeline
 
     def _run_segmentation_pipeline(self, groups: dict) -> None:
         is_multi = len(self.state.multi_sample_images) > 0
@@ -488,9 +485,10 @@ class ViewerController:
             )
 
     def _run_multi_segmentation_pipeline(self, groups: dict) -> None:
-        from iris_viewer.engine.pipeline import execute_group_sync, SegmentationSequence
         from napari.qt.threading import thread_worker
-        
+
+        from iris_viewer.engine.pipeline import SegmentationSequence, execute_group_sync
+
         backends = self.pipeline_service.backends
         device = "cpu"
         try:
@@ -498,7 +496,7 @@ class ViewerController:
         except Exception:
             pass
         scale_val = self.control_widget.spin_scale.value()
-        
+
         @thread_worker
         def _process_all():
             results = {}
@@ -509,7 +507,7 @@ class ViewerController:
                     res = execute_group_sync(group_name, seq, image, backends, device=device)
                     results[sample_name][group_name] = res
             return results
-            
+
         def _on_done(results):
             self.segmentation_panel.set_running_state(False)
             has_results = False
@@ -520,32 +518,32 @@ class ViewerController:
                     cyto = res.get('cytoplasm')
                     if nuc is not None or cyto is not None:
                         has_results = True
-                    
+
                     bbox_lyr = next((l for l in self.viewer.layers if l.name == f"Bounds - {sample_name}"), None)
                     t = bbox_lyr.translate if bbox_lyr else (0, 0)
-                    
+
                     if nuc is not None:
                         lname = f"{group_name} Nuclear Mask"
                         lyr = self.viewer.add_labels(
-                            nuc, name=lname, translate=t, 
+                            nuc, name=lname, translate=t,
                             scale=(scale_val, scale_val), visible=True, opacity=0.3
                         )
                         sample_layers.append(lyr)
                         if lname not in self.added_legend_entries:
                             self.legend_widget.add_segmentation_row(lyr, lname, "#888888")
                             self.added_legend_entries.add(lname)
-                    
+
                     if cyto is not None:
                         lname = f"{group_name} Cyto Mask"
                         lyr = self.viewer.add_labels(
-                            cyto, name=lname, translate=t, 
+                            cyto, name=lname, translate=t,
                             scale=(scale_val, scale_val), visible=True, opacity=0.3
                         )
                         sample_layers.append(lyr)
                         if lname not in self.added_legend_entries:
                             self.legend_widget.add_segmentation_row(lyr, lname, "#888888")
                             self.added_legend_entries.add(lname)
-                            
+
             if not has_results:
                 QMessageBox.warning(self.control_widget, "No Results", "Multi-sample segmentation failed.")
 
@@ -645,7 +643,7 @@ class ViewerController:
             "tensor pass before the worker thread actually closes."
         )
 
-    # ── Consensus Generation ────────────────────────────────────────────────
+    # Consensus Generation
 
     def _generate_consensus(self) -> None:
         compare_mode = self.consensus_panel.combo_compare.currentText()
@@ -750,7 +748,7 @@ class ViewerController:
             "Consensus mask and confidence contours generated successfully."
         )
 
-    # ── Feature Extraction ──────────────────────────────────────────────────
+    # Feature Extraction
 
     def _run_feature_extraction(
         self, selected_morphology: list, selected_intensity: list
@@ -788,7 +786,7 @@ class ViewerController:
         if hasattr(self, "phenotyper_panel") and df is not None and not df.empty:
             self.phenotyper_panel.set_data(df=df, markers=self.state.markers)
 
-    # ── Exports ─────────────────────────────────────────────────────────────
+    # Exports
 
     def _export_mask(self, fmt: str = "") -> None:
         if self.state.consensus_mask is None:
@@ -797,7 +795,7 @@ class ViewerController:
         sample = self.state.current_sample_name or "sample"
         ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".tiff"
         default_name = f"{sample}_mask{ext}"
-        
+
         filters = "TIFF Image (*.tiff *.tif);;OME-TIFF Image (*.ome.tif *.ome.tiff);;PNG Image (*.png);;NumPy Array (*.npy);;NumPy Compressed (*.npz);;All Files (*)"
         filepath, selected_filter = QFileDialog.getSaveFileName(
             self.control_widget, "Export Consensus Mask",
@@ -822,7 +820,7 @@ class ViewerController:
         sample = self.state.current_sample_name or "sample"
         ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".csv"
         default_name = f"{sample}_features{ext}"
-        
+
         filters = "CSV (*.csv);;Excel Workbook (*.xlsx);;Apache Parquet (*.parquet);;Tab-Separated Values (*.tsv);;JSON (*.json);;All Files (*)"
         filepath, selected_filter = QFileDialog.getSaveFileName(
             self.control_widget, "Export Features",
@@ -842,7 +840,7 @@ class ViewerController:
         sample = self.state.current_sample_name or "sample"
         ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".tiff"
         default_name = f"{sample}_confidence{ext}"
-        
+
         filters = "TIFF Image (*.tiff *.tif);;PNG Heatmap (*.png);;NumPy Array (*.npy);;NumPy Compressed (*.npz);;All Files (*)"
         filepath, selected_filter = QFileDialog.getSaveFileName(
             self.control_widget, "Export Confidence Map",
@@ -859,7 +857,7 @@ class ViewerController:
         if getattr(self.state, 'master_df', None) is None or self.state.master_df.empty:
             QMessageBox.warning(self.control_widget, "No Annotation Data", "Load annotation data first.")
             return
-            
+
         ext = fmt if fmt.startswith(".") else f".{fmt}" if fmt else ".csv"
         default_name = f"updated_phenotypes{ext}"
         filters = "CSV (*.csv);;Excel Workbook (*.xlsx);;Apache Parquet (*.parquet);;Tab-Separated Values (*.tsv);;JSON (*.json);;All Files (*)"
@@ -871,13 +869,13 @@ class ViewerController:
             ref_col = self.control_widget.combo_ref.currentText()
             df_export = self.state.master_df.copy()
             updated_col_name = f"{ref_col}_updated"
-            
+
             if 'Verified_CellType' in df_export.columns:
                 df_export[updated_col_name] = df_export['Verified_CellType']
                 df_export.drop(columns=['Verified_CellType'], inplace=True)
             else:
                 df_export[updated_col_name] = df_export[ref_col]
-                
+
             try:
                 lower = filepath.lower()
                 if lower.endswith('.xlsx'):
@@ -894,7 +892,7 @@ class ViewerController:
             except Exception as e:
                 QMessageBox.critical(self.control_widget, "Export Error", f"Failed to save file: {e}")
 
-    # ── Session ─────────────────────────────────────────────────────────────
+    # Session
 
     def _save_session(self) -> None:
         sample = self.state.current_sample_name or "session"

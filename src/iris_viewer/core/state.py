@@ -25,7 +25,7 @@ class ViewerAppState:
     """Complete runtime state for IRIS-Viewer."""
 
     def __init__(self) -> None:
-        # ── Image & File Management ─────────────────────────────────────
+        # Image & File Management
         self.image_dir: Optional[Path] = None
         self.file_map: Dict[str, Path] = {}        # sample_name -> Path
         self.markers: List[str] = []
@@ -33,30 +33,30 @@ class ViewerAppState:
         self.raw_image: Optional[np.ndarray] = None        # (C, H, W)
         self.channel_contrast_limits: Dict[str, list] = {} # marker -> [lo, hi]
 
-        # ── Segmentation Results ────────────────────────────────────────
+        # Segmentation Results
         # method_name -> {'nuclear': ndarray, 'cytoplasm': ndarray|None}
         self.segmentation_results: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
         self.segmentation_status: Dict[str, str] = {}     # step_key -> status
 
-        # ── Consensus & Confidence ──────────────────────────────────────
+        # Consensus & Confidence
         self.consensus_mask: Optional[np.ndarray] = None      # (H, W) label array
         self.confidence_map: Optional[np.ndarray] = None      # (H, W) float [0, 1]
         self.per_cell_confidence: Dict[int, float] = {}       # cell_id -> confidence
         self.cell_method_map: Dict[int, Dict[str, int]] = {}  # cell_id -> {method: orig_id}
         self.manual_overrides: Dict[int, str] = {}            # cell_id -> preferred method
 
-        # ── Override History (undo stack) ───────────────────────────────
+        # Override History (undo stack)
         # Each snapshot: (consensus_mask, confidence_map, per_cell_confidence, manual_overrides)
         self.override_history: Deque[Tuple] = deque(maxlen=50)
 
-        # ── Feature Extraction ──────────────────────────────────────────
+        # Feature Extraction
         self.features_df: Optional[pd.DataFrame] = None
 
-        # ── Active Mask References ──────────────────────────────────────
+        # Active Mask References
         self.current_mask: Optional[np.ndarray] = None     # active nuclear mask
         self.cytoplasm_mask: Optional[np.ndarray] = None   # last loaded cytoplasm mask
 
-        # ── Multi-Sample Canvas ─────────────────────────────────────────
+        # Multi-Sample Canvas
         # sample_name -> raw multi-channel image array (C, H, W)
         self.multi_sample_images: Dict[str, np.ndarray] = {}
         # sample_name -> list of napari layers for that sample
@@ -72,17 +72,17 @@ class ViewerAppState:
         # IrisDataAdapter instance (set by MultiSampleService)
         self._data_adapter = None
 
-        # ── Annotation Master File ──────────────────────────────────────
+        # Annotation Master File
         self.master_df: Optional[pd.DataFrame] = None
 
-        # ── Batch Processing ────────────────────────────────────────────
+        # Batch Processing
         self.batch_queue: List[str] = []
         self.batch_results: Dict[str, Dict] = {}      # sample -> result dict
 
-        # ── Persistent UI Settings ──────────────────────────────────────
+        # Persistent UI Settings
         self.persistent_settings: Dict[str, Any] = {}
 
-    # ── Override History ────────────────────────────────────────────────
+    # Override History
 
     def snapshot_override_state(self) -> None:
         """Push a copy of override-related arrays onto the undo stack."""
@@ -107,7 +107,7 @@ class ViewerAppState:
          self.manual_overrides) = self.override_history.pop()
         return True
 
-    # ── Lifecycle ───────────────────────────────────────────────────────
+    # Lifecycle
 
     def reset_sample_state(self) -> None:
         """Reset per-sample volatile data while preserving global config."""
@@ -134,7 +134,7 @@ class ViewerAppState:
         """Full state reset — clears everything including directory and markers."""
         self.__init__()
 
-    # ── Session Persistence ─────────────────────────────────────────────
+    # Session Persistence
 
     def to_session_dict(self, consensus_threshold: float = 0.66) -> dict:
         """Serialise recoverable session fields to a JSON-compatible dict.

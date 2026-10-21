@@ -4,8 +4,10 @@ CellSAM is a foundation model for cell segmentation built on SAM (Segment Anythi
 with a CellFinder object detector. It segments whole cells (not specifically nuclear vs cytoplasm),
 generalizing across imaging modalities and cell types.
 """
+from typing import Any, Dict, Optional
+
 import numpy as np
-from typing import Dict, Optional, Any
+
 from .base import SegmentationBackend
 
 
@@ -15,7 +17,7 @@ class CellSAMBackend(SegmentationBackend):
 
     def is_available(self) -> bool:
         try:
-            import cellSAM
+            import cellSAM  # noqa: F401
             return True
         except ImportError:
             return False
@@ -29,14 +31,14 @@ class CellSAMBackend(SegmentationBackend):
         self, image: np.ndarray, nuclear_channel: int, membrane_channel: Optional[int],
         diameter: Optional[float], device: str, expand_radius: int = 0, **kwargs
     ) -> Dict[str, Optional[np.ndarray]]:
-        
+
         import os
         token = kwargs.get('token', '')
         if token:
             os.environ["DEEPCELL_ACCESS_TOKEN"] = token
 
-        from cellSAM import segment_cellular_image, get_model
-        
+        from cellSAM import get_model, segment_cellular_image
+
         model = get_model()
         model = model.to(device)
 
@@ -57,7 +59,7 @@ class CellSAMBackend(SegmentationBackend):
             nuc = self._normalize_channel(np.asarray(image[nuclear_channel] if image.ndim == 3 else image))
             composite = np.stack([nuc, nuc, nuc], axis=-1)
 
-        print(f"[IRIS-Viewer] CellSAM Execution: Segmenting...")
+        print("[IRIS-Viewer] CellSAM Execution: Segmenting...")
         mask, _, _ = segment_cellular_image(composite, model, device=device)
         return {
             'nuclear': mask.astype(np.uint32),

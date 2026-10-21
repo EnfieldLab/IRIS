@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, List, Optional
+
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
 try:
     from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 except ImportError:
@@ -22,7 +24,7 @@ except ImportError:
         NavigationToolbar = None
 from matplotlib.figure import Figure
 from qtpy.QtCore import Qt, Signal
-from qtpy.QtGui import QColor, QPixmap
+from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -40,7 +42,6 @@ from qtpy.QtWidgets import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -98,7 +99,7 @@ class CellProportionDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        # ── Top Toolbar Controls ──────────────────────────────────────
+        # Top Toolbar Controls
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(10)
 
@@ -146,12 +147,12 @@ class CellProportionDialog(QDialog):
 
         layout.addLayout(controls_layout)
 
-        # ── Hover Details Status Bar ─────────────────────────────────
+        # Hover Details Status Bar
         self.lbl_hover = QLabel("Hover over any bar segment to inspect exact proportions.")
         self.lbl_hover.setStyleSheet("color: #AAA; font-size: 12px; font-style: italic; padding: 2px 4px;")
         layout.addWidget(self.lbl_hover)
 
-        # ── Matplotlib Canvas & Toolbar ──────────────────────────────
+        # Matplotlib Canvas & Toolbar
         self.figure = Figure(figsize=(10, 6.5), dpi=100)
         self.figure.patch.set_facecolor('#14161d')
         self.canvas = FigureCanvas(self.figure)
@@ -452,7 +453,7 @@ class IrisCellularNeighborhoodsWidget(QWidget):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        # ── Configuration Box ─────────────────────────────────────────────
+        # Configuration Box
         config_box = QGroupBox()
         cb = QVBoxLayout()
         cb.setContentsMargins(10, 3, 10, 10)
@@ -501,7 +502,7 @@ class IrisCellularNeighborhoodsWidget(QWidget):
         cb.addWidget(self.btn_niche)
         self.main_layout.addWidget(config_box, 0)
 
-        # ── Plot & Metadata Group ─────────────────────────────────────────
+        # Plot & Metadata Group
         self.plot_group = QGroupBox()
         pg = QVBoxLayout()
         pg.setContentsMargins(6, 6, 6, 6)

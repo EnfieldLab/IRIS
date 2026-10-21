@@ -21,11 +21,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 
-
-# ── Type aliases ──────────────────────────────────────────────────────────────
+# Type aliases
 
 # Per-method predictions:  method_name → {cell_id → {cell_type → probability}}
 Predictions = Dict[str, Dict[int, Dict[str, float]]]
@@ -64,7 +62,7 @@ class PhenotypingEnsemble:
         self.method_weights = method_weights or {}
         self.min_probability_threshold = min_probability_threshold
 
-    # ── Main API ──────────────────────────────────────────────────────────────
+    # Main API
 
     def vote(
         self,
@@ -107,7 +105,7 @@ class PhenotypingEnsemble:
 
         return strategy_fn(predictions)
 
-    # ── Strategies ────────────────────────────────────────────────────────────
+    # Strategies
 
     def _soft_vote(self, predictions: Predictions) -> EnsembleResult:
         """
@@ -272,9 +270,9 @@ class PhenotypingEnsemble:
             total_borda = sum(borda_scores.values()) or 1.0
             conf_borda = borda_scores[winner] / total_borda
 
-            # Map borda dominance to agreement-like confidence
+            # Map borda dominance and agreement to confidence
             agreeing = sum(1 for mc in method_calls.values() if mc == winner)
-            conf = agreeing / len(method_calls)
+            conf = (agreeing / len(method_calls) + conf_borda) / 2.0
 
             final_types[cell_id] = winner
             confidences[cell_id] = float(conf)
@@ -282,7 +280,7 @@ class PhenotypingEnsemble:
 
         return final_types, confidences, per_method
 
-    # ── Utilities ─────────────────────────────────────────────────────────────
+    # Utilities
 
     @staticmethod
     def _all_cell_ids(predictions: Predictions) -> List[int]:
@@ -300,7 +298,7 @@ class PhenotypingEnsemble:
             types.update(method_preds.get(cell_id, {}).keys())
         return sorted(types)
 
-    # ── Post-processing helpers ────────────────────────────────────────────────
+    # Post-processing helpers
 
     def results_to_dataframe(
         self,

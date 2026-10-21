@@ -7,6 +7,7 @@ via k-nearest neighbor graph extraction and clustering (K-Means or Leiden).
 from __future__ import annotations
 
 from typing import List, Tuple
+
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree

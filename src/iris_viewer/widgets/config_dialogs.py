@@ -1,13 +1,23 @@
 """
 IRIS-Viewer Panel Configuration Dialog
-Direct adaptation of IRIS/widgets/config_dialogs.py for mapping 
+Direct adaptation of IRIS/widgets/config_dialogs.py for mapping
 multiplex image channel indices to biological marker labels.
 """
 import pandas as pd
-from qtpy.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QLineEdit, QPushButton, QTableWidget,
-                             QTableWidgetItem, QFileDialog, QMessageBox, QHeaderView)
 from qtpy.QtCore import Qt
+from qtpy.QtWidgets import (
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 
 class ViewerPanelConfigDialog(QDialog):
