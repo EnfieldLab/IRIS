@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-56%20passed-brightgreen.svg)](tests/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
 [![Framework: napari](https://img.shields.io/badge/napari-plugin-blueviolet.svg)](https://napari.org/)
 
 **IRIS Suite** is an interactive, high-performance spatial biology framework for multiplexed tissue imaging (CODEX/PhenoCycler, Akoya, CyCIF, MIBI, IMC, and multiplexed immunofluorescence). IRIS bridges deep learning segmentation, interactive curation, automated cell phenotyping, and spatial cellular neighborhood analytics within a unified hardware-accelerated desktop environment.
