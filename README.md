@@ -24,7 +24,7 @@
 ### 2. Interactive Review & Fine Tuning
 - **Active Visual Audit**: Real-time inspection of segmented cell boundaries superimposed over multi-channel fluorescence signals.
 - **Human-in-the-Loop Curation**: Direct split, merge, delete, and manual polygon boundary refinement on full-resolution imagery.
-- **Dynamic Channel Management**: Live channel visibility, contrast adjustment, and synchronized multi-sample camera locking.
+- **Dynamic Channel Management**: Live channel visibility, contrast adjustment, and synchronized multi-sample loading.
 
 ### 3. Hierarchical Single-Cell Phenotyping
 - **Manual Gating Studio**: 2D biaxial scatter plotting with polygon lasso selection, quadrant breakdown, and real-time parent/cohort population statistics.
@@ -64,7 +64,7 @@ src/iris_viewer/
 │   ├── feature_extraction.py  # Per-cell morphology and multi-channel intensity extraction
 │   ├── pipeline.py            # Asynchronous segmentation pipeline execution engine
 │   ├── geometry.py            # Convex hull and tissue boundary delineation
-│   ├── neighbourhood.py        # Spatial interaction graphs and cellular niche clustering
+│   ├── neighbourhood.py       # Spatial interaction graphs and cellular niche clustering
 │   ├── phenotyping/           # ASTIR probabilistic mapping, MAPS graph neural networks, ensemble
 │   └── segmentation/          # Deep learning wrappers (Cellpose, StarDist, CellSAM, InstanSeg)
 ├── io/                        # Multi-format data adapters (OME-TIFF, CSV, Parquet, AnnData)
@@ -77,10 +77,10 @@ src/iris_viewer/
 
 ### Prerequisites
 - Python >= 3.10
-- Conda or Mamba
+- Conda
 - Hardware acceleration (optional): Apple Silicon (Metal/MPS), NVIDIA GPU (CUDA >= 11.8), or multi-core CPU
 
-### Option A: Conda / Mamba (Recommended)
+### Option A: Conda (Recommended)
 ```bash
 git clone https://github.com/EnfieldLab/IRIS.git
 cd IRIS
@@ -109,8 +109,8 @@ pip install -e ".[all]"
 | Bundle | Command | Included Tools |
 | :--- | :--- | :--- |
 | **Core** | `pip install -e .` | napari, numpy, scipy, pandas, scikit-image, scanpy |
-| **Segmentation** | `pip install -e ".[cellpose,stardist]"` | Cellpose 3.0+, StarDist, CSBDeep |
-| **Phenotyping** | `pip install -e ".[astir,maps]"` | ASTIR, PyTorch, PyG (Graph Neural Networks) |
+| **Segmentation** | `pip install -e ".[cellpose,stardist]"` | Cellpose, StarDist |
+| **Phenotyping** | `pip install -e ".[astir,maps]"` | ASTIR, PyTorch, PyG |
 | **All Features** | `pip install -e ".[all]"` | Full analytical and machine learning stack |
 | **Development** | `pip install -e ".[dev]"` | pytest, pytest-qt, mypy, ruff |
 
@@ -131,7 +131,7 @@ iris-viewer
 1. **Load Image Data**:
    - In the **Control** panel, click **Select Image Directory…** to load multi-channel TIFFs or multi-core TMA folders.
    - Adjust channel colours, contrast limits, and physical scale ($\mu\text{m/pixel}$).
-2. **Execute Segmentation & Consensus**:
+2. **Run Segmentation**:
    - In the **Segmentation** tab, select target channels (e.g., nuclear DAPI, membrane PanCK/CD45).
    - Run individual models or compute an ensemble **Consensus Mask** with user-defined overlap thresholds.
 3. **Interactive Review**:
