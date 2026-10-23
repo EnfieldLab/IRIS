@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import types as pytypes
 from pathlib import Path
+from typing import Optional
 
 import napari
 import numpy as np
@@ -21,6 +22,7 @@ from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 
 from iris_viewer.app.services import (
+    AnnotationService,
     BatchService,
     BoundaryService,
     CurationService,
@@ -176,6 +178,7 @@ class ViewerController:
         )
 
         # Services
+        self.annotation_svc   = AnnotationService(self._ctx)
         self.image_svc        = ImageService(self._ctx)
         self.batch_svc        = BatchService(self._ctx)
         self.review_svc       = ReviewService(self._ctx)
@@ -183,9 +186,11 @@ class ViewerController:
         self.curation_svc     = CurationService(self._ctx)
         self.boundary_svc     = BoundaryService(self._ctx)
         self.neighborhood_svc = NeighborhoodService(self._ctx)
+        self._ctx.annotation_svc = self.annotation_svc
         self._ctx.review_svc = self.review_svc
         self._ctx.multi_sample_svc = self.multi_sample_svc
         self._ctx.image_svc = self.image_svc
+        self._ctx.curation_svc = self.curation_svc
         self.legend_widget.ctx = self._ctx
         self.segmentation_panel.ctx = self._ctx
         self.phenotyper_panel.ctx = self._ctx
@@ -299,7 +304,7 @@ class ViewerController:
         cw.loadCellTypeColorTriggered.connect(self.multi_sample_svc.load_celltype_colors)
         cw.scaleFactorChanged.connect(self.image_svc.update_scale)
         cw.viewLockToggled.connect(self._toggle_view_lock)
-        cw.loadAnnotationDataTriggered.connect(self.multi_sample_svc.set_master_file)
+        cw.loadAnnotationDataTriggered.connect(self.annotation_svc.load_annotation_file)
         cw.autoSegmentTriggered.connect(self.boundary_svc.auto_segment_boundary)
         cw.saveBoundsTriggered.connect(self.boundary_svc.save_sample_boundaries)
         cw.exportMaskTriggered.connect(self._export_mask)
@@ -317,12 +322,31 @@ class ViewerController:
         if hasattr(cw, 'loadSessionTriggered'):
             cw.loadSessionTriggered.connect(self._load_session)
 
-    def _on_phenotype_column_changed(self, col: str) -> None:
+    def _on_phenotype_column_changed(self, col: Optional[str] = None) -> None:
+        if not col or not isinstance(col, str):
+            col = ""
+            if hasattr(self, "control_widget") and hasattr(self.control_widget, "combo_ref"):
+                col = self.control_widget.combo_ref.currentText().strip()
+            if not col and hasattr(self, "comparison_widget") and hasattr(self.comparison_widget, "combo_ref"):
+                col = self.comparison_widget.combo_ref.currentText().strip()
+        if not col:
+            col = "cell_type"
+
         active_df = (
             self.state.master_df
             if (self.state.master_df is not None and not self.state.master_df.empty)
             else self.state.current_mapped_df
         )
+
+        if active_df is not None and not active_df.empty and col in active_df.columns:
+            unique_types = sorted(str(t) for t in active_df[col].dropna().unique() if str(t).strip())
+            for w in (getattr(self, "control_widget", None), getattr(self, "comparison_widget", None)):
+                if w and hasattr(w, "combo_quick_type"):
+                    w.combo_quick_type.blockSignals(True)
+                    w.combo_quick_type.clear()
+                    w.combo_quick_type.addItems(unique_types)
+                    w.combo_quick_type.blockSignals(False)
+
         if hasattr(self, "phenotyper_panel") and active_df is not None and not active_df.empty:
             self.phenotyper_panel.set_data(
                 df=active_df,
@@ -339,7 +363,6 @@ class ViewerController:
                 celltype_col=col,
                 selected_samples=selected_s,
             )
-
 
     def _bind_segmentation_signals(self) -> None:
         self.segmentation_panel.runSequence.connect(self._run_segmentation_pipeline)
@@ -360,7 +383,7 @@ class ViewerController:
         self.feature_panel.exportTriggered.connect(self._export_features)
 
     def _bind_multi_sample_signals(self) -> None:
-        """Wire the MultiSampleComparisonWidget signals to MultiSampleService."""
+        """Wire the MultiSampleComparisonWidget signals to MultiSampleService and state."""
         cw = self.comparison_widget
         cw.addSamplesTriggered.connect(self.multi_sample_svc.add_samples_to_canvas)
         cw.clearCanvasTriggered.connect(self.multi_sample_svc.clear_canvas)

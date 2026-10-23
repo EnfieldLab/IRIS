@@ -103,7 +103,7 @@ class MultiSampleService:
         # Colour maps — mutated in place by ColorService
         self.CELLTYPE_COLORS: Dict[str, str] = {}
         self.DEFAULT_COLORS: Dict[str, str] = dict(DEFAULT_MARKER_COLORS)
-        self._annotation_svc = AnnotationService(ctx)
+        self._annotation_svc = getattr(ctx, "annotation_svc", None) or AnnotationService(ctx)
         self._color_svc = ColorService(ctx, self.DEFAULT_COLORS, self.CELLTYPE_COLORS)
 
     # Colour Resolution & Colormap Helpers
@@ -275,7 +275,7 @@ class MultiSampleService:
                     self._added_master_legends.add(type_name)
 
             # Update the resolved dataframes cache for analytics/export
-            resolved_df = mapper.df.copy() if 'mapper' in locals() else sub_df.copy()
+            resolved_df = mapper.df.copy() if mapper is not None else sub_df.copy()
             resolved_df["Image"] = sample_name
             ctx.state.resolved_dfs[sample_name] = resolved_df
 

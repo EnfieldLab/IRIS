@@ -276,3 +276,10 @@ DEFAULT_MARKER_COLORS: dict = {
     'KI67': 'gray',
     'MKI67': 'gray',
 }
+
+# Default Cell Type Colour Palette
+DEFAULT_CELLTYPE_PALETTE: list[str] = [
+    "#4477EE", "#44AA44", "#EE4444", "#FFAA22", "#AA44EE",
+    "#22AACC", "#FF6688", "#88CC44", "#AA8822", "#44CCAA",
+    "#CC4488", "#6688FF", "#FFCC44", "#44DDFF", "#FF8844",
+]

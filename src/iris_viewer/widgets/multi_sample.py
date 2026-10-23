@@ -45,10 +45,9 @@ class MultiSampleComparisonWidget(QWidget):
     --------
     - Scrollable sample checklist (populated from ``update_sample_list``)
     - Select All / None toggle
-    - Load annotation xlsx / CSV (master file)
     - "Add Selected Samples to Canvas" → ``addSamplesTriggered``
     - "Clear Canvas"                   → ``clearCanvasTriggered``
-    - Grid gap and max columns spinners for canvas layout
+    - Grid gap spinner for canvas layout
     """
 
     addSamplesTriggered  = Signal(list)
@@ -135,6 +134,7 @@ class MultiSampleComparisonWidget(QWidget):
         layout.addWidget(self.btn_clear)
 
         self._main_layout.addWidget(box)
+
 
     def _build_layout_group(self) -> None:
         box = QGroupBox()

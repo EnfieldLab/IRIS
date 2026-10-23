@@ -76,6 +76,8 @@ class AnnotationService:
 
         if hasattr(ctx, "control_widget") and hasattr(ctx.control_widget, "lbl_annotation"):
             ctx.control_widget.lbl_annotation.setText(Path(file_path).name)
+        if hasattr(ctx, "comparison_widget") and hasattr(ctx.comparison_widget, "lbl_annotation"):
+            ctx.comparison_widget.lbl_annotation.setText(Path(file_path).name)
 
         if hasattr(ctx, "multi_sample_svc"):
             ctx.multi_sample_svc.update_phenotypes_on_canvas()
@@ -110,31 +112,41 @@ class AnnotationService:
 
     def _populate_celltype_combos(self, adapter: IrisDataAdapter) -> None:
         """Fill the Cell Phenotype and Quick Curation dropdowns from *adapter*."""
-        cw = self.ctx.control_widget
         cols = adapter.normalised.columns.tolist()
 
-        if hasattr(cw, "combo_ref"):
-            cw.combo_ref.blockSignals(True)
-            cw.combo_ref.clear()
-            cw.combo_ref.addItems(cols)
+        best_col = next(
+            (c for c in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label")
+             if c in cols),
+            None,
+        )
+        default_col = best_col or (cols[0] if cols else "")
 
-            best_col = next(
-                (c for c in ("cell_type", "Verified_CellType", "CellType", "GROUP", "Phenotype", "Label")
-                 if c in cols),
-                None,
-            )
-            if best_col:
-                cw.combo_ref.setCurrentText(best_col)
-            elif cols:
-                cw.combo_ref.setCurrentText(cols[0])
-            cw.combo_ref.blockSignals(False)
+        widgets = []
+        if hasattr(self.ctx, "control_widget") and self.ctx.control_widget:
+            widgets.append(self.ctx.control_widget)
+        if hasattr(self.ctx, "comparison_widget") and self.ctx.comparison_widget:
+            widgets.append(self.ctx.comparison_widget)
 
-        ref_col = cw.combo_ref.currentText() if hasattr(cw, "combo_ref") else "cell_type"
-        if ref_col in adapter.normalised.columns and hasattr(cw, "combo_quick_type"):
+        for w in widgets:
+            if hasattr(w, "combo_ref"):
+                w.combo_ref.blockSignals(True)
+                w.combo_ref.clear()
+                w.combo_ref.addItems(cols)
+                if default_col:
+                    w.combo_ref.setCurrentText(default_col)
+                w.combo_ref.blockSignals(False)
+
+        ref_col = default_col
+        if widgets and hasattr(widgets[0], "combo_ref"):
+            ref_col = widgets[0].combo_ref.currentText() or default_col
+
+        if ref_col in adapter.normalised.columns:
             unique_types = sorted(
-                str(t) for t in adapter.normalised[ref_col].dropna().unique()
+                str(t) for t in adapter.normalised[ref_col].dropna().unique() if str(t).strip()
             )
-            cw.combo_quick_type.blockSignals(True)
-            cw.combo_quick_type.clear()
-            cw.combo_quick_type.addItems(unique_types)
-            cw.combo_quick_type.blockSignals(False)
+            for w in widgets:
+                if hasattr(w, "combo_quick_type"):
+                    w.combo_quick_type.blockSignals(True)
+                    w.combo_quick_type.clear()
+                    w.combo_quick_type.addItems(unique_types)
+                    w.combo_quick_type.blockSignals(False)
