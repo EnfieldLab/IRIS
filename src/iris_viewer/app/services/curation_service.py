@@ -524,8 +524,16 @@ class CurationService:
 
         if hasattr(ctx, "multi_sample_svc"):
             ctx.multi_sample_svc._register_layer(lyr, type_name)
-            if hasattr(ctx, "legend_widget") and type_name not in ctx.multi_sample_svc._added_master_legends:
+            already_in_legend = False
+            if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "ref_ct_rows"):
+                already_in_legend = any(r.name == type_name for r in ctx.legend_widget.ref_ct_rows)
+            elif hasattr(ctx.multi_sample_svc, "_added_master_legends"):
+                already_in_legend = type_name in ctx.multi_sample_svc._added_master_legends
+
+            if not already_in_legend:
                 ctx.legend_widget.add_ref_ct_row(lyr, type_name, hex_color)
                 ctx.multi_sample_svc._added_master_legends.add(type_name)
         elif hasattr(ctx, "legend_widget"):
-            ctx.legend_widget.add_ref_ct_row(lyr, type_name, hex_color)
+            already_in_legend = any(r.name == type_name for r in getattr(ctx.legend_widget, "ref_ct_rows", []))
+            if not already_in_legend:
+                ctx.legend_widget.add_ref_ct_row(lyr, type_name, hex_color)

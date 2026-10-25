@@ -116,6 +116,9 @@ class ImageService:
         ctx.viewer.layers.clear()
         ctx.legend_widget.clear()
         ctx.added_legend_entries.clear()
+        if hasattr(ctx, "multi_sample_svc") and hasattr(ctx.multi_sample_svc, "_added_master_legends"):
+            ctx.multi_sample_svc._added_master_legends.clear()
+        ctx.state.sample_layers_map.clear()
         ctx.state.reset_sample_state()
         ctx.state.current_sample_name = sample_name
         img_path = ctx.state.file_map[sample_name]

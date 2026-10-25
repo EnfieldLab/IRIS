@@ -207,7 +207,13 @@ class MultiSampleService:
                 pts.translate = translation
                 sample_layers.append(pts)
                 self._register_layer(pts, "Centroids")
-                if "Centroids" not in self._added_master_legends:
+                has_centroid_legend = False
+                if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "seg_rows"):
+                    has_centroid_legend = any(r.name == "Centroids" for r in ctx.legend_widget.seg_rows)
+                else:
+                    has_centroid_legend = "Centroids" in self._added_master_legends
+
+                if not has_centroid_legend:
                     ctx.legend_widget.add_ref_row(pts, "Centroids", "#FFFFFF", layer_type="points")
                     self._added_master_legends.add("Centroids")
 
@@ -229,9 +235,9 @@ class MultiSampleService:
                 if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "remove_row"):
                     ctx.legend_widget.remove_row(l_base)
                 if hasattr(self, "_added_master_legends") and l_base in self._added_master_legends:
-                    self._added_master_legends.remove(l_base)
+                    self._added_master_legends.discard(l_base)
                 if hasattr(ctx, "added_legend_entries") and l_base in ctx.added_legend_entries:
-                    ctx.added_legend_entries.remove(l_base)
+                    ctx.added_legend_entries.discard(l_base)
 
             # Check and add Cell Phenotypes via IrisPhenotypeMapper
             mapper = IrisPhenotypeMapper(mask, sub_df, target_col=ref_col)
@@ -270,7 +276,13 @@ class MultiSampleService:
                 except Exception:
                     actual_hex = hex_color
 
-                if type_name not in self._added_master_legends:
+                has_pheno_legend = False
+                if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "ref_ct_rows"):
+                    has_pheno_legend = any(r.name == type_name for r in ctx.legend_widget.ref_ct_rows)
+                else:
+                    has_pheno_legend = type_name in self._added_master_legends
+
+                if not has_pheno_legend:
                     ctx.legend_widget.add_ref_ct_row(lyr, type_name, actual_hex)
                     self._added_master_legends.add(type_name)
 
@@ -412,7 +424,13 @@ class MultiSampleService:
                 )
                 sample_layers.append(layer)
                 self._register_layer(layer, m)
-                if m not in self._added_master_legends:
+                has_chan_legend = False
+                if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "channel_rows"):
+                    has_chan_legend = any(r.name == m for r in ctx.legend_widget.channel_rows)
+                else:
+                    has_chan_legend = m in self._added_master_legends
+
+                if not has_chan_legend:
                     try:
                         if isinstance(cname, str) and (cname.startswith("#") or mcolors.is_color_like(cname)):
                             init_color = mcolors.to_hex(cname)
@@ -447,7 +465,13 @@ class MultiSampleService:
                         )
                     sample_layers.append(seg_lyr)
                     self._register_layer(seg_lyr, lname)
-                    if lname not in self._added_master_legends:
+                    has_seg_legend = False
+                    if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "seg_rows"):
+                        has_seg_legend = any(r.name == lname for r in ctx.legend_widget.seg_rows)
+                    else:
+                        has_seg_legend = lname in self._added_master_legends
+
+                    if not has_seg_legend:
                         ctx.legend_widget.add_ref_row(seg_lyr, lname, "#888888")
                         self._added_master_legends.add(lname)
 
@@ -467,7 +491,13 @@ class MultiSampleService:
                 pts.face_color = "white"
                 sample_layers.append(pts)
                 self._register_layer(pts, "Centroids")
-                if "Centroids" not in self._added_master_legends:
+                has_centroid_legend = False
+                if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "seg_rows"):
+                    has_centroid_legend = any(r.name == "Centroids" for r in ctx.legend_widget.seg_rows)
+                else:
+                    has_centroid_legend = "Centroids" in self._added_master_legends
+
+                if not has_centroid_legend:
                     ctx.legend_widget.add_ref_row(pts, "Centroids", "#FFFFFF", layer_type="points")
                     self._added_master_legends.add("Centroids")
 
@@ -503,7 +533,13 @@ class MultiSampleService:
                         actual_hex = mcolors.to_hex(actual_rgba)
                     except Exception:
                         actual_hex = hex_color
-                    if type_name not in self._added_master_legends:
+                    has_pheno_legend = False
+                    if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "ref_ct_rows"):
+                        has_pheno_legend = any(r.name == type_name for r in ctx.legend_widget.ref_ct_rows)
+                    else:
+                        has_pheno_legend = type_name in self._added_master_legends
+
+                    if not has_pheno_legend:
                         ctx.legend_widget.add_ref_ct_row(lyr, type_name, actual_hex)
                         self._added_master_legends.add(type_name)
 
@@ -661,6 +697,8 @@ class MultiSampleService:
         ctx.viewer.layers.clear()
         ctx.legend_widget.clear()
         self._added_master_legends.clear()
+        if hasattr(ctx, "added_legend_entries"):
+            ctx.added_legend_entries.clear()
         ctx.state.sample_layers_map.clear()
         if hasattr(ctx.state, "multi_sample_images"):
             ctx.state.multi_sample_images.clear()

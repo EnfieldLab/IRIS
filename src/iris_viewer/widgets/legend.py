@@ -205,6 +205,14 @@ class ViewerLegendWidget(QWidget):
             layer_type: Type of napari layer ('image' or 'labels').
         """
         target_group.show()
+
+        # Deduplicate: if an entry with this name already exists in target_list, update color if needed and return
+        for existing in target_list:
+            if existing.name == name:
+                if initial_color:
+                    existing.update_swatch_display(initial_color)
+                return
+
         initial_vis = layer.visible if (layer is not None and hasattr(layer, 'visible')) else True
         row = ViewerLegendRow(name, initial_color, initial_visible=initial_vis)
         row.layerDoubleClicked.connect(self.layerSelected.emit)
@@ -317,6 +325,13 @@ class ViewerLegendWidget(QWidget):
             if not row_list:
                 group.hide()
 
+        ctx = getattr(self, "ctx", None)
+        if ctx:
+            if hasattr(ctx, "added_legend_entries") and isinstance(ctx.added_legend_entries, set):
+                ctx.added_legend_entries.discard(layer_name)
+            if hasattr(ctx, "multi_sample_svc") and hasattr(ctx.multi_sample_svc, "_added_master_legends"):
+                ctx.multi_sample_svc._added_master_legends.discard(layer_name)
+
     def clear(self):
         """Remove all rows from all groups."""
         for group, layout, row_list in [
@@ -332,3 +347,10 @@ class ViewerLegendWidget(QWidget):
                 if child.widget():
                     child.widget().deleteLater()
             group.hide()
+
+        ctx = getattr(self, "ctx", None)
+        if ctx:
+            if hasattr(ctx, "added_legend_entries") and isinstance(ctx.added_legend_entries, set):
+                ctx.added_legend_entries.clear()
+            if hasattr(ctx, "multi_sample_svc") and hasattr(ctx.multi_sample_svc, "_added_master_legends"):
+                ctx.multi_sample_svc._added_master_legends.clear()

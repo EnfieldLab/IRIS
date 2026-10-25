@@ -128,6 +128,7 @@ class ViewerAppState:
         self.current_mask = None
         self.cytoplasm_mask = None
         self.multi_sample_images.clear()
+        self.sample_layers_map.clear()
         self.masks_map.clear()
         self.resolved_dfs.clear()
         self.areas_map.clear()
