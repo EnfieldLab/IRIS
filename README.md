@@ -28,8 +28,8 @@
 
 ### 3. Hierarchical Single-Cell Phenotyping
 - **Manual Gating**: 2D biaxial scatter plotting with polygon lasso selection, quadrant breakdown, and real-time parent/cohort population statistics.
-- **Probabilistic Annotation (ASTIR)**: Integration with automated probabilistic marker-to-cell-type association maps.
-- **Microenvironment-Aware Phenotyping (MAPS)**: Spatial graph neural network modelling spatial context and neighbouring cell-type distributions.
+- **ASTIR**: Integration with automated probabilistic marker-to-cell-type cell classification.
+- **MAPS**: Spatial graph neural network modelling spatial context and neighbouring cell-type distributions.
 - **Unsupervised Clustering**: High-throughput Leiden, PhenoGraph, and k-means clustering with integrated marker expression heatmaps.
 
 ### 4. Spatial Neighbourhoods & Microenvironment Analytics
@@ -65,7 +65,7 @@ src/iris_viewer/
 │   ├── pipeline.py            # Asynchronous segmentation pipeline execution engine
 │   ├── geometry.py            # Convex hull and tissue boundary delineation
 │   ├── neighbourhood.py       # Spatial interaction graphs and cellular niche clustering
-│   ├── phenotyping/           # ASTIR probabilistic mapping, MAPS graph neural networks, ensemble (more methods currently understanding testing and validation)
+│   ├── phenotyping/           # ASTIR probabilistic mapping, MAPS graph neural networks, ensemble methods (currently undergoing testing and validation)
 │   └── segmentation/          # Deep learning wrappers (Cellpose, StarDist, CellSAM, InstanSeg)
 ├── io/                        # Multi-format data adapters (OME-TIFF, CSV, Parquet, AnnData)
 └── widgets/                   # Interactive docking panels, pop-up windows, and on-canvas overlays
