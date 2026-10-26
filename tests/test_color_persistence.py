@@ -143,3 +143,59 @@ def test_image_service_marker_color_resolution():
     state.channel_colors["cd45"] = "#ff0077"
     assert img_svc.get_marker_color("CD45") == "#ff0077"
     assert img_svc.get_marker_color("cd45") == "#ff0077"
+
+
+def test_color_service_centralized_defaults_and_helpers():
+    """ColorService should initialize with default marker colors when args are omitted."""
+    state = ViewerAppState()
+    ctx = types.SimpleNamespace(
+        state=state,
+        viewer=types.SimpleNamespace(layers=[]),
+        legend_widget=None,
+        control_widget=None,
+    )
+    svc = ColorService(ctx)
+    assert "DAPI" in svc.default_colors
+    assert svc.celltype_colors == {}
+
+    # Resolves default marker color
+    assert svc.get_marker_color("DAPI").lower() == "#0000ff" or svc.get_marker_color("DAPI") == "blue"
+
+    # Resolves celltype color with fallback
+    assert svc.get_celltype_color("UnknownType", fallback="#123456") == "#123456"
+    svc.celltype_colors["tumor"] = "#ff0000"
+    assert svc.get_celltype_color("Tumor") == "#ff0000"
+
+    # Resolves colormap from hex
+    cmap = svc.get_layer_colormap("#00ff00", "GFP")
+    assert isinstance(cmap, Colormap)
+
+
+def test_color_service_and_multi_sample_service_sync():
+    """MultiSampleService should share color dictionary references with ColorService on ctx."""
+    state = ViewerAppState()
+    ctx = types.SimpleNamespace(
+        state=state,
+        viewer=types.SimpleNamespace(layers=[]),
+        legend_widget=None,
+        control_widget=None,
+    )
+    color_svc = ColorService(ctx)
+    ctx.color_svc = color_svc
+
+    multi_svc = MultiSampleService(ctx)
+    ctx.multi_sample_svc = multi_svc
+
+    # Check shared references
+    assert multi_svc.DEFAULT_COLORS is color_svc.default_colors
+    assert multi_svc.CELLTYPE_COLORS is color_svc.celltype_colors
+
+    # Mutating via multi_svc mutates color_svc
+    multi_svc.DEFAULT_COLORS["TEST_MARKER"] = "#aabbcc"
+    assert color_svc.get_marker_color("TEST_MARKER") == "#aabbcc"
+    assert multi_svc.get_marker_color("TEST_MARKER") == "#aabbcc"
+
+    # ImageService uses color_svc via ctx
+    img_svc = ImageService(ctx)
+    assert img_svc.get_marker_color("TEST_MARKER") == "#aabbcc"
+

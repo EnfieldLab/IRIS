@@ -25,6 +25,7 @@ from iris_viewer.app.services import (
     AnnotationService,
     BatchService,
     BoundaryService,
+    ColorService,
     CurationService,
     ImageService,
     MultiSampleService,
@@ -178,6 +179,7 @@ class ViewerController:
         )
 
         # Services
+        self.color_svc        = ColorService(self._ctx)
         self.annotation_svc   = AnnotationService(self._ctx)
         self.image_svc        = ImageService(self._ctx)
         self.batch_svc        = BatchService(self._ctx)
@@ -186,6 +188,7 @@ class ViewerController:
         self.curation_svc     = CurationService(self._ctx)
         self.boundary_svc     = BoundaryService(self._ctx)
         self.neighborhood_svc = NeighborhoodService(self._ctx)
+        self._ctx.color_svc        = self.color_svc
         self._ctx.annotation_svc   = self.annotation_svc
         self._ctx.review_svc       = self.review_svc
         self._ctx.multi_sample_svc = self.multi_sample_svc
@@ -305,7 +308,7 @@ class ViewerController:
         cw.sampleSelected.connect(self.image_svc.on_sample_selected)
         cw.loadExistingMaskTriggered.connect(self.image_svc.on_load_existing_mask)
         cw.loadChannelColorTriggered.connect(self._load_colors_smart)
-        cw.loadCellTypeColorTriggered.connect(self.multi_sample_svc.load_celltype_colors)
+        cw.loadCellTypeColorTriggered.connect(self.color_svc.load_celltype_colors)
         cw.scaleFactorChanged.connect(self.image_svc.update_scale)
         cw.viewLockToggled.connect(self._toggle_view_lock)
         cw.loadAnnotationDataTriggered.connect(self.annotation_svc.load_annotation_file)
@@ -434,16 +437,16 @@ class ViewerController:
             return
 
         if has_markers and has_celltypes:
-            self.multi_sample_svc.load_channel_colors(filepath, show_dialog=False)
-            self.multi_sample_svc.load_celltype_colors(filepath, show_dialog=False)
+            self.color_svc.load_channel_colors(filepath, show_dialog=False)
+            self.color_svc.load_celltype_colors(filepath, show_dialog=False)
             QMessageBox.information(
                 self.control_widget, "Success",
                 "Updated channel marker and cell type colors from file."
             )
         elif has_markers:
-            self.multi_sample_svc.load_channel_colors(filepath, show_dialog=True)
+            self.color_svc.load_channel_colors(filepath, show_dialog=True)
         elif has_celltypes:
-            self.multi_sample_svc.load_celltype_colors(filepath, show_dialog=True)
+            self.color_svc.load_celltype_colors(filepath, show_dialog=True)
 
     # Interactive Review & Canvas Controls
 
@@ -1042,6 +1045,9 @@ class ViewerController:
             self.state.persistent_settings = restored.persistent_settings
             self.state.channel_colors      = restored.channel_colors
             self.state.celltype_colors     = restored.celltype_colors
+            if hasattr(self, "color_svc"):
+                self.color_svc.default_colors.update(restored.channel_colors)
+                self.color_svc.celltype_colors.update(restored.celltype_colors)
             if hasattr(self, "multi_sample_svc"):
                 self.multi_sample_svc.DEFAULT_COLORS.update(restored.channel_colors)
                 self.multi_sample_svc.CELLTYPE_COLORS.update(restored.celltype_colors)

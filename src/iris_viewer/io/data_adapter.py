@@ -388,27 +388,32 @@ class IrisPhenotypeMapper:
         )
 
         if {"Pos_X", "Pos_Y"}.issubset(df.columns):
-            def _lookup(row):
-                try:
-                    x = int(round(float(row["Pos_X"])))
-                    y = int(round(float(row["Pos_Y"])))
-                except (ValueError, TypeError):
-                    return 0
+            x_num = pd.to_numeric(df["Pos_X"], errors="coerce")
+            y_num = pd.to_numeric(df["Pos_Y"], errors="coerce")
+            valid = x_num.notna() & y_num.notna()
 
-                if 0 <= y < h and 0 <= x < w:
-                    val = int(self.mask[y, x])
-                    if val > 0:
-                        return val
-                    # Centroid may be slightly outside the boundary of the mask; search a 3x3 local window
-                    y_min, y_max = max(0, y - 1), min(h, y + 2)
-                    x_min, x_max = max(0, x - 1), min(w, x + 2)
-                    sub = self.mask[y_min:y_max, x_min:x_max]
-                    nz = sub[sub > 0]
-                    if len(nz) > 0:
-                        return int(nz[0])
-                return 0
+            xs = np.round(x_num.fillna(-1).values).astype(np.int64, copy=False)
+            ys = np.round(y_num.fillna(-1).values).astype(np.int64, copy=False)
 
-            lookup_ids = df.apply(_lookup, axis=1)
+            in_bounds = valid.values & (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
+            lookup_ids = np.zeros(len(df), dtype=np.int64)
+
+            if in_bounds.any():
+                v_idx = np.where(in_bounds)[0]
+                v_xs = xs[v_idx]
+                v_ys = ys[v_idx]
+
+                direct_vals = self.mask[v_ys, v_xs].astype(np.int64)
+                lookup_ids[v_idx] = direct_vals
+
+                # Centroid may be slightly outside the boundary of the mask; search a 3x3 local window
+                zero_mask = direct_vals == 0
+                if zero_mask.any():
+                    from scipy.ndimage import maximum_filter
+
+                    dilated = maximum_filter(self.mask, size=3)
+                    fallback_vals = dilated[v_ys[zero_mask], v_xs[zero_mask]].astype(np.int64)
+                    lookup_ids[v_idx[zero_mask]] = fallback_vals
 
             if has_valid_obj:
                 df["ObjectNumber"] = np.where(
@@ -453,17 +458,37 @@ class IrisPhenotypeMapper:
         result: Dict[str, Tuple[np.ndarray, str]] = {}
         h, w = self.mask.shape[-2], self.mask.shape[-1]
 
-        for cell_type in unique_types:
-            type_rows = valid_df[valid_df[self.target_col].astype(str) == cell_type]
-            target_ids = type_rows["ObjectNumber"].astype(np.int64).unique()
-            # Ensure target_ids strictly excludes 0 (background)
-            target_ids = target_ids[target_ids > 0]
+        max_id = int(self.mask.max()) if self.mask.size > 0 else 0
+        # Fast path: Vectorized categorical LUT indexing (single pass over the image array)
+        if 0 < max_id < 2_000_000 and len(valid_df) > 0:
+            lut = np.zeros(max_id + 1, dtype=np.uint16)
+            for type_idx, cell_type in enumerate(unique_types, start=1):
+                t_ids = (
+                    valid_df.loc[
+                        valid_df[self.target_col].astype(str) == cell_type,
+                        "ObjectNumber",
+                    ]
+                    .astype(np.int64)
+                    .values
+                )
+                valid_t_ids = t_ids[(t_ids > 0) & (t_ids <= max_id)]
+                if len(valid_t_ids) > 0:
+                    lut[valid_t_ids] = type_idx
 
-            if len(target_ids) == 0:
-                binary = np.zeros((h, w), dtype=np.uint8)
-            else:
-                binary = np.isin(self.mask, target_ids).astype(np.uint8)
-
-            result[cell_type] = (binary, palette[cell_type])
+            cat_mask = lut[self.mask]
+            for type_idx, cell_type in enumerate(unique_types, start=1):
+                binary = (cat_mask == type_idx).astype(np.uint8)
+                result[cell_type] = (binary, palette[cell_type])
+        else:
+            # Fallback path for empty masks or sparse large IDs
+            for cell_type in unique_types:
+                type_rows = valid_df[valid_df[self.target_col].astype(str) == cell_type]
+                target_ids = type_rows["ObjectNumber"].astype(np.int64).unique()
+                target_ids = target_ids[target_ids > 0]
+                if len(target_ids) == 0:
+                    binary = np.zeros((h, w), dtype=np.uint8)
+                else:
+                    binary = np.isin(self.mask, target_ids).astype(np.uint8)
+                result[cell_type] = (binary, palette[cell_type])
 
         return result

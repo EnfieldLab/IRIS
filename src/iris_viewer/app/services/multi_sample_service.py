@@ -36,7 +36,6 @@ from qtpy.QtWidgets import QMessageBox
 from iris_viewer.app.services.annotation_service import AnnotationService
 from iris_viewer.app.services.color_service import ColorService
 from iris_viewer.io.data_adapter import IrisPhenotypeMapper
-from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
 
 
 def get_sample_sub_df(df: pd.DataFrame, sample_name: str) -> pd.DataFrame:
@@ -101,57 +100,21 @@ class MultiSampleService:
         self._syncing_colormap   = False
         self._syncing_opacity    = False
         self._syncing_contrast   = False
-        # Colour maps — mutated in place by ColorService
-        self.CELLTYPE_COLORS: Dict[str, str] = {}
-        self.DEFAULT_COLORS: Dict[str, str] = dict(DEFAULT_MARKER_COLORS)
         self._annotation_svc = getattr(ctx, "annotation_svc", None) or AnnotationService(ctx)
-        self._color_svc = ColorService(ctx, self.DEFAULT_COLORS, self.CELLTYPE_COLORS)
+        self._color_svc = getattr(ctx, "color_svc", None) or ColorService(ctx)
+        # Colour maps — shared references with centralized ColorService
+        self.CELLTYPE_COLORS: Dict[str, str] = self._color_svc.celltype_colors
+        self.DEFAULT_COLORS: Dict[str, str] = self._color_svc.default_colors
 
     # Colour Resolution & Colormap Helpers
 
-    def get_marker_color(self, marker: str) -> str:
+    def get_marker_color(self, marker: str) -> str | Colormap:
         """Resolve hex or named color for a marker, respecting user overrides."""
-        ctx = self.ctx
-        # 1. State channel colors
-        if hasattr(ctx, "state") and hasattr(ctx.state, "channel_colors"):
-            cc = ctx.state.channel_colors
-            for k in (marker, marker.lower(), marker.upper()):
-                if k in cc:
-                    return cc[k]
-        # 2. DEFAULT_COLORS dict
-        for k in (marker, marker.lower(), marker.upper()):
-            if k in self.DEFAULT_COLORS:
-                return self.DEFAULT_COLORS[k]
-        # 3. Persistent settings
-        if hasattr(ctx, "state") and hasattr(ctx.state, "persistent_settings"):
-            for k in (marker, marker.lower(), marker.upper()):
-                if k in ctx.state.persistent_settings and "colormap" in ctx.state.persistent_settings[k]:
-                    cmap = ctx.state.persistent_settings[k]["colormap"]
-                    if isinstance(cmap, Colormap) and hasattr(cmap, "colors"):
-                        try:
-                            return mcolors.to_hex(cmap.colors[-1][:3])
-                        except Exception:
-                            pass
-                    return cmap
-        # 4. Fallback default
-        return DEFAULT_MARKER_COLORS.get(marker.upper(), "gray")
+        return self._color_svc.get_marker_color(marker)
 
     def _get_layer_colormap(self, color_val: Any, name: str) -> Any:
         """Convert a hex string or Colormap into a valid napari colormap."""
-        if isinstance(color_val, Colormap):
-            return color_val
-        if isinstance(color_val, str):
-            if color_val.startswith("#") or (
-                mcolors.is_color_like(color_val)
-                and color_val.lower() not in ("gray", "red", "green", "blue", "cyan", "magenta", "yellow")
-            ):
-                try:
-                    rgb = list(mcolors.to_rgb(color_val))
-                    colors = np.array([[0, 0, 0, 0], rgb + [1.0]])
-                    return Colormap(colors, name=f"custom_{name}")
-                except Exception:
-                    pass
-        return color_val
+        return self._color_svc.get_layer_colormap(color_val, name)
 
     # Master Annotation File
 

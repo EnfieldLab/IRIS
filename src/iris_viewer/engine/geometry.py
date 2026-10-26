@@ -75,6 +75,9 @@ def recompute_area_from_vertices(
 ) -> Tuple[float, str]:
     """Recalculate geometric area when polygon boundary vertices are interactively edited.
 
+    Uses the Shoelace formula for O(N) evaluation, bypassing full-canvas rasterization
+    to prevent memory spikes and UI lag on gigapixel images.
+
     Args:
         vertices: (N, 2) array of vertex coordinates in (Y, X) order.
         mask_shape: (height, width) of the target mask canvas.
@@ -83,21 +86,17 @@ def recompute_area_from_vertices(
     Returns:
         Tuple of (area_value, area_text).
     """
-    if len(vertices) < 3: return 0.0, "--"
-    if len(mask_shape) > 2: mask_shape = (mask_shape[-2], mask_shape[-1])
+    if len(vertices) < 3:
+        return 0.0, "--"
 
-    tissue_mask = np.zeros(mask_shape, dtype=np.uint8)
-    clamped_y = np.clip(vertices[:, 0].astype(int), 0, mask_shape[0] - 1)
-    clamped_x = np.clip(vertices[:, 1].astype(int), 0, mask_shape[1] - 1)
+    # Shoelace formula for polygonal area: 0.5 * |sum(x_i * y_{i+1} - x_{i+1} * y_i)|
+    y = vertices[:, 0]
+    x = vertices[:, 1]
+    pixel_count = 0.5 * float(np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))))
 
-    rr, cc = polygon(clamped_y, clamped_x, shape=mask_shape)
-    tissue_mask[rr, cc] = 1
-
-    pixel_count = float(np.sum(tissue_mask))
     physical_area = pixel_count * (scale_factor ** 2)
-
     area_value = physical_area if scale_factor != 1.0 else pixel_count
     unit_label = "µm²" if scale_factor != 1.0 else "px²"
-    area_text = f"{area_value:.2f} {unit_label}" if scale_factor != 1.0 else f"{int(pixel_count)} {unit_label}"
+    area_text = f"{area_value:.2f} {unit_label}" if scale_factor != 1.0 else f"{int(round(pixel_count))} {unit_label}"
 
     return area_value, area_text

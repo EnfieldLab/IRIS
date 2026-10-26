@@ -474,6 +474,8 @@ class CurationService:
             hex_color = ctx.state.celltype_colors[type_name.lower()]
         elif hasattr(ctx.state, "celltype_colors") and type_name in ctx.state.celltype_colors:
             hex_color = ctx.state.celltype_colors[type_name]
+        elif hasattr(ctx, "color_svc") and type_name.lower() in ctx.color_svc.celltype_colors:
+            hex_color = ctx.color_svc.celltype_colors[type_name.lower()]
         elif hasattr(ctx, "multi_sample_svc") and type_name.lower() in ctx.multi_sample_svc.CELLTYPE_COLORS:
             hex_color = ctx.multi_sample_svc.CELLTYPE_COLORS[type_name.lower()]
         else:
@@ -484,6 +486,8 @@ class CurationService:
         if hasattr(ctx.state, "celltype_colors"):
             ctx.state.celltype_colors[type_name] = hex_color
             ctx.state.celltype_colors[type_name.lower()] = hex_color
+        if hasattr(ctx, "color_svc"):
+            ctx.color_svc.celltype_colors[type_name.lower()] = hex_color
         if hasattr(ctx, "multi_sample_svc"):
             ctx.multi_sample_svc.CELLTYPE_COLORS[type_name.lower()] = hex_color
 

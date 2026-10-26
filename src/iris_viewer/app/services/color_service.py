@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import matplotlib.colors as mcolors
 import numpy as np
@@ -18,10 +18,13 @@ import pandas as pd
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
+from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
+
 
 class ColorService:
     """
     Loads CSV/XLSX colour maps and applies them to the napari canvas and Legend.
+    Provides centralized colour resolution for marker channels and cell-type phenotypes.
 
     Parameters
     ----------
@@ -29,24 +32,85 @@ class ColorService:
         Application context namespace exposing ``viewer``, ``state``,
         ``control_widget``, and ``legend_widget``.
     default_colors :
-        Mutable dict mapping marker names to default hex colours (shared
-        reference with ``MultiSampleService``).
+        Mutable dict mapping marker names to default hex colours (optional;
+        defaults to a copy of ``DEFAULT_MARKER_COLORS``).
     celltype_colors :
         Mutable dict mapping cell-type names (lowercase) to hex colours
-        (shared reference with ``MultiSampleService``).
+        (optional; defaults to an empty dict).
     """
 
     def __init__(
         self,
         ctx: types.SimpleNamespace,
-        default_colors: dict,
-        celltype_colors: dict,
+        default_colors: Optional[dict] = None,
+        celltype_colors: Optional[dict] = None,
     ) -> None:
         self.ctx = ctx
-        self.default_colors = default_colors
-        self.celltype_colors = celltype_colors
+        self.default_colors: dict = (
+            default_colors if default_colors is not None else dict(DEFAULT_MARKER_COLORS)
+        )
+        self.celltype_colors: dict = (
+            celltype_colors if celltype_colors is not None else {}
+        )
 
-    # Channel / Marker colours
+    # Colour Resolution & Colormap Helpers
+
+    def get_marker_color(self, marker: str) -> str | Colormap:
+        """Resolve hex or named colour for a marker, respecting user overrides."""
+        ctx = self.ctx
+        # 1. State channel colors
+        if hasattr(ctx, "state") and hasattr(ctx.state, "channel_colors"):
+            cc = ctx.state.channel_colors
+            for k in (marker, marker.lower(), marker.upper()):
+                if k in cc:
+                    return cc[k]
+        # 2. default_colors dict
+        for k in (marker, marker.lower(), marker.upper()):
+            if k in self.default_colors:
+                return self.default_colors[k]
+        # 3. Persistent settings
+        if hasattr(ctx, "state") and hasattr(ctx.state, "persistent_settings"):
+            for k in (marker, marker.lower(), marker.upper()):
+                if k in ctx.state.persistent_settings and "colormap" in ctx.state.persistent_settings[k]:
+                    cmap = ctx.state.persistent_settings[k]["colormap"]
+                    if hasattr(cmap, "colors") and len(cmap.colors) > 0:
+                        try:
+                            return mcolors.to_hex(cmap.colors[-1][:3])
+                        except Exception:
+                            pass
+                    return cmap
+        # 4. Fallback default
+        return DEFAULT_MARKER_COLORS.get(marker.upper(), "gray")
+
+    def get_layer_colormap(self, color_val: Any, name: str) -> Any:
+        """Convert a hex string or Colormap into a valid napari colormap."""
+        if isinstance(color_val, Colormap):
+            return color_val
+        if isinstance(color_val, str):
+            if color_val.startswith("#") or (
+                mcolors.is_color_like(color_val)
+                and color_val.lower() not in ("gray", "red", "green", "blue", "cyan", "magenta", "yellow")
+            ):
+                try:
+                    rgb = list(mcolors.to_rgb(color_val))
+                    colors = np.array([[0, 0, 0, 0], rgb + [1.0]])
+                    return Colormap(colors, name=f"custom_{name}")
+                except Exception:
+                    pass
+        return color_val
+
+    def get_celltype_color(self, cell_type: str, fallback: str = "gray") -> str:
+        """Resolve hex colour for a cell type, respecting user overrides."""
+        ctx = self.ctx
+        if hasattr(ctx, "state") and hasattr(ctx.state, "celltype_colors"):
+            ctc = ctx.state.celltype_colors
+            for k in (cell_type, cell_type.lower()):
+                if k in ctc:
+                    return ctc[k]
+        for k in (cell_type, cell_type.lower()):
+            if k in self.celltype_colors:
+                return self.celltype_colors[k]
+        return fallback
 
     # Channel / Marker colours
 

@@ -42,6 +42,8 @@ class ImageService:
     def get_marker_color(self, marker: str) -> str | Colormap:
         """Resolve hex or named colour for a marker, respecting user overrides."""
         ctx = self.ctx
+        if hasattr(ctx, "color_svc"):
+            return ctx.color_svc.get_marker_color(marker)
         if hasattr(ctx, "multi_sample_svc"):
             return ctx.multi_sample_svc.get_marker_color(marker)
         if hasattr(ctx, "state") and hasattr(ctx.state, "channel_colors"):
@@ -367,10 +369,12 @@ class ImageService:
 
     def load_channel_colors(self, filepath: str) -> None:
         """Import a marker→colour mapping from CSV/XLSX, updating state, legend, and canvas."""
-        if hasattr(self.ctx, "multi_sample_svc"):
+        if hasattr(self.ctx, "color_svc"):
+            self.ctx.color_svc.load_channel_colors(filepath)
+        elif hasattr(self.ctx, "multi_sample_svc"):
             self.ctx.multi_sample_svc.load_channel_colors(filepath)
         else:
-            ColorService(self.ctx, {}, {}).load_channel_colors(filepath)
+            ColorService(self.ctx).load_channel_colors(filepath)
 
     # Scale
 

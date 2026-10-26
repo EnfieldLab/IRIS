@@ -251,6 +251,10 @@ class ViewerLegendWidget(QWidget):
                             ctx.state.persistent_settings.setdefault(n, {})["colormap"] = cmap
                             ctx.state.persistent_settings.setdefault(n.lower(), {})["colormap"] = cmap
                             ctx.state.persistent_settings.setdefault(n.upper(), {})["colormap"] = cmap
+                    if hasattr(ctx, "color_svc"):
+                        ctx.color_svc.default_colors[n] = hex_c
+                        ctx.color_svc.default_colors[n.lower()] = hex_c
+                        ctx.color_svc.default_colors[n.upper()] = hex_c
                     if hasattr(ctx, "multi_sample_svc"):
                         ctx.multi_sample_svc.DEFAULT_COLORS[n] = hex_c
                         ctx.multi_sample_svc.DEFAULT_COLORS[n.lower()] = hex_c
@@ -259,6 +263,8 @@ class ViewerLegendWidget(QWidget):
                     if hasattr(ctx, "state") and hasattr(ctx.state, "celltype_colors"):
                         ctx.state.celltype_colors[n] = hex_c
                         ctx.state.celltype_colors[n.lower()] = hex_c
+                    if hasattr(ctx, "color_svc"):
+                        ctx.color_svc.celltype_colors[n.lower()] = hex_c
                     if hasattr(ctx, "multi_sample_svc"):
                         ctx.multi_sample_svc.CELLTYPE_COLORS[n.lower()] = hex_c
 
