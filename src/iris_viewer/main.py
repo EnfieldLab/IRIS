@@ -47,7 +47,7 @@ def main() -> None:
         session_path = Path(sys.argv[1])
         if session_path.is_file() and session_path.suffix.lower() == ".json":
             try:
-                controller._load_session.__func__(controller)  # call private method directly
+                controller._load_session(session_path)
             except Exception:
                 pass  # non-fatal: user can load via menu
 

@@ -31,6 +31,7 @@ import pandas as pd
 import tifffile
 from napari.qt import thread_worker
 from napari.utils.colormaps import Colormap
+from qtpy.QtWidgets import QMessageBox
 
 from iris_viewer.app.services.annotation_service import AnnotationService
 from iris_viewer.app.services.color_service import ColorService
@@ -391,9 +392,30 @@ class MultiSampleService:
             if hasattr(ctx, "comparison_widget"):
                 ctx.comparison_widget.set_loading_done()
 
+        def _on_error(exc: Exception):
+            print(f"[MultiSample Error] Failed to load multi-sample canvas: {exc}")
+            if hasattr(ctx, "comparison_widget"):
+                ctx.comparison_widget.set_loading_done()
+            if hasattr(ctx, "control_widget"):
+                QMessageBox.critical(
+                    ctx.control_widget,
+                    "Multi-Sample Load Error",
+                    f"Failed to load multi-sample canvas:\n{exc}"
+                )
+
         worker = _load_all()
         worker.returned.connect(_on_loaded)
-        ctx.active_workers.append(worker)
+        if hasattr(ctx, "track_worker"):
+            ctx.track_worker(
+                worker,
+                on_error=_on_error,
+                error_title="Multi-Sample Load Error",
+                error_prefix="Failed to load multi-sample canvas",
+            )
+        else:
+            worker.errored.connect(_on_error)
+            if hasattr(ctx, "active_workers"):
+                ctx.active_workers.append(worker)
         worker.start()
 
     # On-load: build napari layers

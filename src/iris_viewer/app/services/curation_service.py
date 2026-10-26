@@ -39,12 +39,6 @@ class CurationService:
 
         obj_id, sample_name = self.get_cell_at_position(event.position)
 
-        if obj_id is not None:
-            if hasattr(self.ctx, "canvas_manager") and hasattr(self.ctx.canvas_manager, "highlight_cell_outline"):
-                self.ctx.canvas_manager.highlight_cell_outline(obj_id, sample_name)
-            if hasattr(self.ctx, "expression_widget") and hasattr(self.ctx.expression_widget, "highlight_cell"):
-                self.ctx.expression_widget.highlight_cell(obj_id, sample_name)
-
         yield
         while event.type == 'mouse_move':
             yield
@@ -90,14 +84,8 @@ class CurationService:
 
         obj_id, sample_name = self.get_cell_at_position(event.position)
 
-        if obj_id is not None:
-            if hasattr(self.ctx, "canvas_manager") and hasattr(self.ctx.canvas_manager, "highlight_cell_outline"):
-                self.ctx.canvas_manager.highlight_cell_outline(obj_id, sample_name)
-            if hasattr(self.ctx, "expression_widget") and hasattr(self.ctx.expression_widget, "highlight_cell"):
-                self.ctx.expression_widget.highlight_cell(obj_id, sample_name)
-
-            if target_type and ref_col:
-                self.apply_quick_phenotype_change(obj_id, target_type, ref_col, sample_name)
+        if obj_id is not None and target_type and ref_col:
+            self.apply_quick_phenotype_change(obj_id, target_type, ref_col, sample_name)
 
         yield
 

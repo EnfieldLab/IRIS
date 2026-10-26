@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import types as pytypes
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional, Union
 
 import napari
 import numpy as np
@@ -186,11 +186,15 @@ class ViewerController:
         self.curation_svc     = CurationService(self._ctx)
         self.boundary_svc     = BoundaryService(self._ctx)
         self.neighborhood_svc = NeighborhoodService(self._ctx)
-        self._ctx.annotation_svc = self.annotation_svc
-        self._ctx.review_svc = self.review_svc
+        self._ctx.annotation_svc   = self.annotation_svc
+        self._ctx.review_svc       = self.review_svc
         self._ctx.multi_sample_svc = self.multi_sample_svc
-        self._ctx.image_svc = self.image_svc
-        self._ctx.curation_svc = self.curation_svc
+        self._ctx.image_svc        = self.image_svc
+        self._ctx.curation_svc     = self.curation_svc
+        self._ctx.boundary_svc     = self.boundary_svc
+        self._ctx.batch_svc        = self.batch_svc
+        self._ctx.neighborhood_svc = self.neighborhood_svc
+        self._ctx.track_worker     = self.track_worker
         self.legend_widget.ctx = self._ctx
         self.segmentation_panel.ctx = self._ctx
         self.phenotyper_panel.ctx = self._ctx
@@ -517,6 +521,39 @@ class ViewerController:
                 on_error=self._on_segmentation_error,
             )
 
+    def track_worker(
+        self,
+        worker: Any,
+        on_error: Optional[Callable[[Exception], None]] = None,
+        error_title: str = "Worker Error",
+        error_prefix: str = "An error occurred during background processing",
+    ) -> Any:
+        """Register a worker in active_workers, connect automatic cleanup on finished,
+        and connect an errored handler to notify the user and reset UI states.
+        """
+        def _cleanup():
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+
+        worker.finished.connect(_cleanup)
+
+        def _handle_error(exc: Exception):
+            _cleanup()
+            print(f"[{error_title}] {exc}")
+            if on_error:
+                try:
+                    on_error(exc)
+                except Exception as inner_e:
+                    print(f"[{error_title}] Error callback raised: {inner_e}")
+            else:
+                QMessageBox.critical(
+                    self.control_widget, error_title, f"{error_prefix}:\n{exc}"
+                )
+
+        worker.errored.connect(_handle_error)
+        self._active_workers.append(worker)
+        return worker
+
     def _run_multi_segmentation_pipeline(self, groups: dict) -> None:
         from napari.qt.threading import thread_worker
 
@@ -580,9 +617,21 @@ class ViewerController:
             if not has_results:
                 QMessageBox.warning(self.control_widget, "No Results", "Multi-sample segmentation failed.")
 
+        def _on_multi_seg_error(exc: Exception):
+            self.segmentation_panel.set_running_state(False)
+            QMessageBox.critical(
+                self.control_widget, "Segmentation Error",
+                f"Multi-sample segmentation pipeline failed:\n{exc}"
+            )
+
         worker = _process_all()
         worker.returned.connect(_on_done)
-        self._active_workers.append(worker)
+        self.track_worker(
+            worker,
+            on_error=_on_multi_seg_error,
+            error_title="Segmentation Error",
+            error_prefix="Multi-sample segmentation failed",
+        )
         worker.start()
 
     def _on_segmentation_error(
@@ -708,8 +757,20 @@ class ViewerController:
 
         worker = _run()
         worker.returned.connect(self._on_consensus_complete)
-        self._active_workers.append(worker)
+        self.track_worker(
+            worker,
+            on_error=self._on_consensus_error,
+            error_title="Consensus Error",
+            error_prefix="Failed to generate consensus mask",
+        )
         worker.start()
+
+    def _on_consensus_error(self, exc: Exception) -> None:
+        self.consensus_panel.set_generating_state(False)
+        QMessageBox.critical(
+            self.control_widget, "Consensus Error",
+            f"Failed to generate consensus mask:\n{exc}"
+        )
 
     def _on_consensus_complete(self, result: tuple) -> None:
         self.consensus_panel.set_generating_state(False)
@@ -809,8 +870,20 @@ class ViewerController:
 
         worker = _extract()
         worker.returned.connect(self._on_features_extracted)
-        self._active_workers.append(worker)
+        self.track_worker(
+            worker,
+            on_error=self._on_features_extraction_error,
+            error_title="Feature Extraction Error",
+            error_prefix="Failed to extract features",
+        )
         worker.start()
+
+    def _on_features_extraction_error(self, exc: Exception) -> None:
+        self.feature_panel.set_extracting_state(False)
+        QMessageBox.critical(
+            self.control_widget, "Feature Extraction Error",
+            f"Failed to extract features:\n{exc}"
+        )
 
     def _on_features_extracted(self, df) -> None:
         self.state.features_df = df
@@ -941,18 +1014,30 @@ class ViewerController:
                 f"Session saved to:\n{filepath}"
             )
 
-    def _load_session(self) -> None:
-        filepath, _ = QFileDialog.getOpenFileName(
-            self.control_widget, "Load Session", "", "JSON (*.json)"
-        )
+    def _load_session(self, filepath: Optional[Union[str, Path]] = None) -> None:
         if not filepath:
+            selected_path, _ = QFileDialog.getOpenFileName(
+                self.control_widget, "Load Session", "", "JSON (*.json)"
+            )
+            if not selected_path:
+                return
+            filepath = selected_path
+
+        filepath = Path(filepath)
+        if not filepath.is_file():
+            QMessageBox.warning(
+                self.control_widget, "File Not Found",
+                f"Session file not found:\n{filepath}"
+            )
             return
+
         try:
-            restored, raw_data = ViewerAppState.load_session(Path(filepath))
+            restored, raw_data = ViewerAppState.load_session(filepath)
 
             # Restore non-array fields into the live state object
             self.state.markers             = restored.markers
             self.state.per_cell_confidence = restored.per_cell_confidence
+            self.state.cell_method_map     = restored.cell_method_map
             self.state.manual_overrides    = restored.manual_overrides
             self.state.persistent_settings = restored.persistent_settings
             self.state.channel_colors      = restored.channel_colors

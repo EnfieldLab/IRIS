@@ -95,6 +95,7 @@ class ViewerAppState:
                 self.confidence_map.copy() if self.confidence_map is not None else None,
                 dict(self.per_cell_confidence),
                 dict(self.manual_overrides),
+                {int(k): dict(v) for k, v in self.cell_method_map.items()},
             ))
 
     def undo_override(self) -> bool:
@@ -104,10 +105,18 @@ class ViewerAppState:
         """
         if not self.override_history:
             return False
-        (self.consensus_mask,
-         self.confidence_map,
-         self.per_cell_confidence,
-         self.manual_overrides) = self.override_history.pop()
+        entry = self.override_history.pop()
+        if len(entry) == 5:
+            (self.consensus_mask,
+             self.confidence_map,
+             self.per_cell_confidence,
+             self.manual_overrides,
+             self.cell_method_map) = entry
+        else:
+            (self.consensus_mask,
+             self.confidence_map,
+             self.per_cell_confidence,
+             self.manual_overrides) = entry
         return True
 
     # Lifecycle
@@ -154,6 +163,7 @@ class ViewerAppState:
             "consensus_threshold": consensus_threshold,
             # Integer keys become strings in JSON — restored as int on load.
             "per_cell_confidence": {str(k): v for k, v in self.per_cell_confidence.items()},
+            "cell_method_map": {str(k): v for k, v in self.cell_method_map.items()},
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
             "persistent_settings": self.persistent_settings,
             "channel_colors": self.channel_colors,
@@ -170,6 +180,10 @@ class ViewerAppState:
         state.current_sample_name = data.get("current_sample_name")
         state.per_cell_confidence = {
             int(k): float(v) for k, v in data.get("per_cell_confidence", {}).items()
+        }
+        state.cell_method_map = {
+            int(k): {str(mk): int(mv) for mk, mv in v.items()}
+            for k, v in data.get("cell_method_map", {}).items()
         }
         state.manual_overrides = {
             int(k): str(v) for k, v in data.get("manual_overrides", {}).items()

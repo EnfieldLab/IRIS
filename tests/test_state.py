@@ -18,6 +18,7 @@ def _make_populated_state() -> ViewerAppState:
     st.markers = ["DAPI", "CD45", "CK"]
     st.current_sample_name = "sample_01"
     st.per_cell_confidence = {1: 0.9, 2: 0.4, 3: 0.75}
+    st.cell_method_map = {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
     st.manual_overrides = {2: "Cellpose"}
     st.consensus_mask = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int32)
     st.confidence_map = np.array([[0.0, 0.9, 0.4], [0.9, 0.4, 0.75]], dtype=np.float32)
@@ -46,6 +47,13 @@ class TestSessionPersistence:
         restored = ViewerAppState.from_session_dict(d)
 
         assert restored.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
+
+    def test_cell_method_map_roundtrip(self):
+        st = _make_populated_state()
+        d = st.to_session_dict()
+        restored = ViewerAppState.from_session_dict(d)
+
+        assert restored.cell_method_map == {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
 
     def test_manual_overrides_roundtrip(self):
         st = _make_populated_state()
@@ -117,11 +125,13 @@ class TestOverrideHistory:
         st.consensus_mask = np.zeros_like(orig_mask)
         st.per_cell_confidence = {}
         st.manual_overrides = {}
+        st.cell_method_map = {}
 
         success = st.undo_override()
         assert success is True
         np.testing.assert_array_equal(st.consensus_mask, orig_mask)
         assert st.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
+        assert st.cell_method_map == {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
 
     def test_undo_when_empty_returns_false(self):
         st = ViewerAppState()

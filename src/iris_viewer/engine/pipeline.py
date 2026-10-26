@@ -218,16 +218,32 @@ class PipelineService:
                 _, grp, idx, name, err = val
                 on_error(grp, idx, name, err)
 
-        self.sequence_worker.yielded.connect(_on_yield)
-        self.sequence_worker.finished.connect(on_all_complete)
+        worker = self.sequence_worker
 
-        self._active_workers.append(self.sequence_worker)
-        self.sequence_worker.start()
+        def _on_finished():
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+            on_all_complete()
+
+        def _on_pipeline_worker_error(exc: Exception):
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+            on_error("Pipeline", -1, "General", str(exc))
+
+        worker.yielded.connect(_on_yield)
+        worker.finished.connect(_on_finished)
+        worker.errored.connect(_on_pipeline_worker_error)
+
+        self._active_workers.append(worker)
+        worker.start()
 
     def cancel_all(self):
         """Cancels all running workers in the current sequence."""
-        for worker in self._active_workers:
-            worker.quit()
+        for worker in list(self._active_workers):
+            try:
+                worker.quit()
+            except Exception:
+                pass
         self._active_workers.clear()
 
 

@@ -1,5 +1,5 @@
 import napari
-from qtpy.QtCore import Qt
+from qtpy.QtCore import QEvent, Qt
 from qtpy.QtGui import QColor, QPainter
 from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -93,7 +93,7 @@ class CanvasScaleBarOverlay(QWidget):
         self._update_scale_bar()
 
     def eventFilter(self, obj, event):
-        if obj == self.parent() and event.type() in (event.Resize, event.Move):
+        if obj == self.parent() and event.type() in (QEvent.Resize, QEvent.Move):
             self._reposition()
         return super().eventFilter(obj, event)
 

@@ -91,9 +91,17 @@ class NeighborhoodService:
 
         worker = _niche_worker()
         worker.returned.connect(self._on_niche_complete)
-        worker.errored.connect(self._on_niche_error)
-        if hasattr(ctx, "_active_workers"):
-            ctx._active_workers.append(worker)
+        if hasattr(ctx, "track_worker"):
+            ctx.track_worker(
+                worker,
+                on_error=self._on_niche_error,
+                error_title="Neighborhood Error",
+                error_prefix="Failed to identify cellular neighborhoods",
+            )
+        else:
+            worker.errored.connect(self._on_niche_error)
+            if hasattr(ctx, "active_workers"):
+                ctx.active_workers.append(worker)
         worker.start()
 
     def _on_niche_complete(self, result: tuple) -> None:

@@ -167,8 +167,34 @@ class BatchService:
 
         worker = _process_sample()
         worker.returned.connect(lambda res: self._on_sample_done(res, groups))
-        ctx.active_workers.append(worker)
+        if hasattr(ctx, "track_worker"):
+            ctx.track_worker(
+                worker,
+                on_error=lambda exc: self._on_sample_error(sample_name, exc, groups),
+                error_title="Batch Error",
+                error_prefix=f"Processing sample '{sample_name}' failed",
+            )
+        else:
+            worker.errored.connect(lambda exc: self._on_sample_error(sample_name, exc, groups))
+            if hasattr(ctx, "active_workers"):
+                ctx.active_workers.append(worker)
         worker.start()
+
+    def _on_sample_error(self, sample_name: str, exc: Exception, groups: dict) -> None:
+        """Handle error for a single sample so the remaining batch queue does not freeze."""
+        ctx = self.ctx
+        print(f"[Batch Error] Sample '{sample_name}' failed: {exc}")
+        ctx.state.batch_results[sample_name] = {
+            'total_cells': 0, 'high_conf': 0, 'med_conf': 0,
+            'low_conf': 0, 'mean_confidence': 0.0, 'methods': [],
+            'error': str(exc),
+        }
+
+        done = len(ctx.state.batch_results)
+        total = done + len(ctx.state.batch_queue)
+        ctx.control_widget.btn_batch.setText(f"Processing {done}/{total}…")
+
+        self._batch_process_next(groups)
 
     def _on_sample_done(self, result: tuple, groups: dict) -> None:
         ctx = self.ctx

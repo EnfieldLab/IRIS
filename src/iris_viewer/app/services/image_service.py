@@ -129,8 +129,29 @@ class ImageService:
 
         worker = _load()
         worker.returned.connect(lambda res: self._on_image_loaded(res, sample_name))
-        ctx.active_workers.append(worker)
+        if hasattr(ctx, "track_worker"):
+            ctx.track_worker(
+                worker,
+                on_error=lambda exc: self._on_image_load_error(exc, sample_name),
+                error_title="Image Load Error",
+                error_prefix=f"Failed to load image for sample '{sample_name}'",
+            )
+        else:
+            worker.errored.connect(lambda exc: self._on_image_load_error(exc, sample_name))
+            if hasattr(ctx, "active_workers"):
+                ctx.active_workers.append(worker)
         worker.start()
+
+    def _on_image_load_error(self, exc: Exception, sample_name: str) -> None:
+        """Handle image loading failure gracefully with user feedback."""
+        ctx = self.ctx
+        print(f"[Image Error] Failed to load sample '{sample_name}': {exc}")
+        if hasattr(ctx, "control_widget"):
+            QMessageBox.critical(
+                ctx.control_widget,
+                "Image Load Error",
+                f"Failed to load image for sample '{sample_name}':\n{exc}"
+            )
 
     def _on_image_loaded(self, result: tuple, sample_name: str) -> None:
         """Add multi-channel layers to the viewer after the dask array is loaded."""
