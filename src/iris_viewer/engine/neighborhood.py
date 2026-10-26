@@ -13,6 +13,8 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from sklearn.cluster import MiniBatchKMeans
 
+from iris_viewer.engine.geometry import ensure_spatial_coordinates
+
 
 def identify_cellular_neighborhoods(
     df: pd.DataFrame,
@@ -46,12 +48,11 @@ def identify_cellular_neighborhoods(
         ValueError: If spatial coordinate columns are missing.
         ImportError: If Leiden clustering is requested but igraph/leidenalg are not installed.
     """
-    if df.empty or cell_type_col not in df.columns: return df.copy(), np.zeros((1, 1)), []
+    if df.empty or cell_type_col not in df.columns:
+        return df.copy(), np.zeros((1, 1)), []
 
-    x_col = next((c for c in ['Pos_X', 'Centroid_X', 'x', 'X'] if c in df.columns), None)
-    y_col = next((c for c in ['Pos_Y', 'Centroid_Y', 'y', 'Y'] if c in df.columns), None)
-    if x_col is None or y_col is None:
-        raise ValueError("DataFrame missing spatial coordinate columns ('Pos_X', 'Pos_Y').")
+    ensure_spatial_coordinates(df)
+    x_col, y_col = "Pos_X", "Pos_Y"
 
     if len(df) <= k_neighbors:
         updated_df = df.copy()

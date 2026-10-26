@@ -14,6 +14,40 @@ from scipy.spatial import ConvexHull
 from skimage.draw import polygon
 
 
+def ensure_spatial_coordinates(df: pd.DataFrame) -> Tuple[str, str]:
+    """Validate and ensure canonical 'Pos_X' and 'Pos_Y' spatial coordinates exist on df.
+
+    Adheres strictly to the IRIS canonical spatial column naming standard ('Pos_X', 'Pos_Y').
+    If alternative coordinate columns exist in the DataFrame (e.g. 'Centroid_X'/'Centroid_Y',
+    'x'/'y', or case variants), they are mapped to 'Pos_X' and 'Pos_Y' in place so that
+    all downstream analytics, overlays, and exports use 'Pos_X' and 'Pos_Y'.
+
+    Args:
+        df: Input DataFrame containing spatial cell coordinates.
+
+    Returns:
+        Tuple[str, str]: ('Pos_X', 'Pos_Y')
+
+    Raises:
+        ValueError: If neither ('Pos_X', 'Pos_Y') nor acceptable alternatives are present.
+    """
+    if "Pos_X" in df.columns and "Pos_Y" in df.columns:
+        return "Pos_X", "Pos_Y"
+
+    x_col = next((c for c in ['Pos_X', 'Centroid_X', 'x', 'X'] if c in df.columns), None)
+    y_col = next((c for c in ['Pos_Y', 'Centroid_Y', 'y', 'Y'] if c in df.columns), None)
+
+    if x_col is None or y_col is None:
+        raise ValueError("DataFrame missing spatial coordinate columns ('Pos_X', 'Pos_Y').")
+
+    if "Pos_X" not in df.columns:
+        df["Pos_X"] = df[x_col]
+    if "Pos_Y" not in df.columns:
+        df["Pos_Y"] = df[y_col]
+
+    return "Pos_X", "Pos_Y"
+
+
 def compute_tissue_boundary_mask(
     df: pd.DataFrame,
     mask_shape: Tuple[int, int],
@@ -36,15 +70,13 @@ def compute_tissue_boundary_mask(
     Raises:
         ValueError: If fewer than 3 spatial coordinates are present in df.
     """
-    if len(df) < 3: raise ValueError("Convex hull generation requires at least 3 cell coordinates.")
+    if len(df) < 3:
+        raise ValueError("Convex hull generation requires at least 3 cell coordinates.")
 
-    y_col = next((c for c in ['Pos_Y', 'Centroid_Y', 'y', 'Y'] if c in df.columns), None)
-    x_col = next((c for c in ['Pos_X', 'Centroid_X', 'x', 'X'] if c in df.columns), None)
-    if y_col is None or x_col is None:
-        raise ValueError("DataFrame missing spatial coordinate columns ('Pos_X', 'Pos_Y').")
-
-    points = df[[y_col, x_col]].dropna().values
-    if len(points) < 3: raise ValueError("Convex hull requires at least 3 non-NaN coordinate points.")
+    ensure_spatial_coordinates(df)
+    points = df[["Pos_Y", "Pos_X"]].dropna().values
+    if len(points) < 3:
+        raise ValueError("Convex hull requires at least 3 non-NaN coordinate points.")
 
     hull = ConvexHull(points)
     hull_vertices = points[hull.vertices]

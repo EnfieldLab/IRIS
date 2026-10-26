@@ -11,7 +11,6 @@ Heavy per-domain logic has been moved to:
 """
 from __future__ import annotations
 
-import types as pytypes
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
@@ -32,7 +31,13 @@ from iris_viewer.app.services import (
     NeighborhoodService,
     ReviewService,
 )
-from iris_viewer.core.state import ViewerAppState
+from iris_viewer.core import (
+    AppContext,
+    ViewerAppState,
+    get_layer_base_name,
+    get_layer_sample_name,
+    get_layer_type,
+)
 from iris_viewer.engine.consensus import compute_consensus_mask
 from iris_viewer.engine.feature_extraction import extract_cell_features
 from iris_viewer.engine.pipeline import PipelineService, SegmentationSequence
@@ -158,7 +163,7 @@ class ViewerController:
         # Shared Context namespace
         # Both the controller and all services read/write the same objects.
         # Mutable containers (lists, sets, dicts) are shared by reference.
-        self._ctx = pytypes.SimpleNamespace(
+        self._ctx = AppContext(
             viewer=self.viewer,
             state=self.state,
             pipeline_service=self.pipeline_service,
@@ -470,7 +475,7 @@ class ViewerController:
         """
         self.viewer.layers.selection.clear()
         for layer in self.viewer.layers:
-            base = layer.name.split(" [")[0] if " [" in layer.name else layer.name
+            base = get_layer_base_name(layer)
             if base == layer_name:
                 self.viewer.layers.selection.add(layer)
                 break
@@ -592,14 +597,22 @@ class ViewerController:
                     if nuc is not None or cyto is not None:
                         has_results = True
 
-                    bbox_lyr = next((l for l in self.viewer.layers if l.name == f"Bounds - {sample_name}"), None)
+                    bbox_lyr = next(
+                        (
+                            l for l in self.viewer.layers
+                            if (get_layer_type(l) == "bounds" and get_layer_sample_name(l) == sample_name)
+                            or l.name == f"Bounds - {sample_name}"
+                        ),
+                        None,
+                    )
                     t = bbox_lyr.translate if bbox_lyr else (0, 0)
 
                     if nuc is not None:
                         lname = f"{group_name} Nuclear Mask"
                         lyr = self.viewer.add_labels(
                             nuc, name=lname, translate=t,
-                            scale=(scale_val, scale_val), visible=True, opacity=0.3
+                            scale=(scale_val, scale_val), visible=True, opacity=0.3,
+                            metadata={"sample_name": sample_name, "layer_type": "segmentation", "base_name": lname},
                         )
                         sample_layers.append(lyr)
                         if lname not in self.added_legend_entries:
@@ -610,7 +623,8 @@ class ViewerController:
                         lname = f"{group_name} Cyto Mask"
                         lyr = self.viewer.add_labels(
                             cyto, name=lname, translate=t,
-                            scale=(scale_val, scale_val), visible=True, opacity=0.3
+                            scale=(scale_val, scale_val), visible=True, opacity=0.3,
+                            metadata={"sample_name": sample_name, "layer_type": "segmentation", "base_name": lname},
                         )
                         sample_layers.append(lyr)
                         if lname not in self.added_legend_entries:

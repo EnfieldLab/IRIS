@@ -53,7 +53,7 @@ def _cytoplasm_backend(nuc_mask: np.ndarray) -> MagicMock:
 
 class TestExecuteGroupSync:
 
-    def test_nuclear_only_step(self):
+    def test_execute_group_sync_nuclear_only_step(self):
         image = _make_image()
         nuc_b = _nuclear_backend(3)
         backends = {"MockNuclear": nuc_b}
@@ -68,7 +68,7 @@ class TestExecuteGroupSync:
         nuc_b.segment.assert_called_once()
         assert result["nuclear"].max() == 3
 
-    def test_two_nuclear_steps_merge_labels(self):
+    def test_execute_group_sync_two_nuclear_steps_merge_labels(self):
         """Two Nuclear (Base) steps should merge masks without label collision."""
         image = _make_image()
         b1 = _nuclear_backend(3)
@@ -91,7 +91,7 @@ class TestExecuteGroupSync:
         unique_labels = set(np.unique(nuc)) - {0}
         assert len(unique_labels) == 5   # 3 from b1 + 2 from b2, no collision
 
-    def test_cytoplasm_sequential_step(self):
+    def test_execute_group_sync_cytoplasm_sequential_step(self):
         image = _make_image()
         nuc_b = _nuclear_backend(4)
         nuc_mask = nuc_b.segment.return_value['nuclear'].copy()
@@ -108,7 +108,7 @@ class TestExecuteGroupSync:
         assert result["nuclear"] is not None
         assert result["cytoplasm"] is not None
 
-    def test_dilation_step(self):
+    def test_execute_group_sync_dilation_step(self):
         image = _make_image()
         nuc_b = _nuclear_backend(2)
         backends = {"MockNuclear": nuc_b}
@@ -126,7 +126,7 @@ class TestExecuteGroupSync:
         # All nuclear-labelled pixels should appear in cytoplasm (or at least some)
         assert np.any(cyto > 0)
 
-    def test_missing_backend_skips_step_gracefully(self):
+    def test_execute_group_sync_missing_backend_skips_step_gracefully(self):
         image = _make_image()
 
         sequence = SegmentationSequence(steps=[
@@ -137,7 +137,7 @@ class TestExecuteGroupSync:
         result = execute_group_sync("skip_test", sequence, image, {}, device="cpu")
         assert result["nuclear"] is None
 
-    def test_cytoplasm_without_nuclear_skips_gracefully(self):
+    def test_execute_group_sync_cytoplasm_without_nuclear_skips_gracefully(self):
         """Sequential cytoplasm step should be skipped when no nuclear base exists."""
         image = _make_image()
         cyto_b = _cytoplasm_backend(np.zeros((64, 64), dtype=np.int32))
@@ -150,7 +150,7 @@ class TestExecuteGroupSync:
         result = execute_group_sync("no_nuc_test", sequence, image, backends, device="cpu")
         assert result["cytoplasm"] is None
 
-    def test_gpu_lock_is_acquired_and_released(self):
+    def test_execute_group_sync_gpu_lock_is_acquired_and_released(self):
         """Verify execute_group_sync respects the provided threading.Lock."""
         image = _make_image()
         nuc_b = _nuclear_backend(1)
@@ -182,7 +182,7 @@ class TestExecuteGroupSync:
 class TestPipelineService:
 
     @patch("iris_viewer.engine.pipeline.get_available_backends")
-    def test_get_available_methods(self, mock_get):
+    def test_pipeline_service_get_available_methods(self, mock_get):
         mock_backend = MagicMock()
         mock_backend.name = "Cellpose"
         mock_backend.is_available.return_value = True
@@ -194,7 +194,7 @@ class TestPipelineService:
         assert "Cellpose" in methods
 
     @patch("iris_viewer.engine.pipeline.get_available_backends")
-    def test_unavailable_backend_not_listed(self, mock_get):
+    def test_pipeline_service_unavailable_backend_not_listed(self, mock_get):
         mock_backend = MagicMock()
         mock_backend.name = "StarDist"
         mock_backend.is_available.return_value = False
@@ -204,7 +204,7 @@ class TestPipelineService:
         assert "StarDist" not in svc.get_available_methods()
 
     @patch("iris_viewer.engine.pipeline.get_available_backends")
-    def test_cancel_all_clears_workers(self, mock_get):
+    def test_pipeline_service_cancel_all_clears_workers(self, mock_get):
         mock_get.return_value = []
         svc = PipelineService()
 

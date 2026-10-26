@@ -36,21 +36,21 @@ class TestPhenotypingEnsemble:
     def _ensemble(self, min_conf: float = 0.0) -> PhenotypingEnsemble:
         return PhenotypingEnsemble(min_probability_threshold=min_conf)
 
-    def test_soft_vote_returns_all_cells(self):
+    def test_consensus_phenotyping_soft_vote_returns_all_cells(self):
         preds = _make_predictions(20)
         ens = self._ensemble()
         final, conf, _per_method = ens.vote(preds, strategy="soft_vote")
         assert set(final.keys()) == set(range(1, 21))
         assert set(conf.keys()) == set(range(1, 21))
 
-    def test_soft_vote_confidence_in_range(self):
+    def test_consensus_phenotyping_soft_vote_confidence_in_range(self):
         preds = _make_predictions(30)
         ens = self._ensemble()
         _, conf, _ = ens.vote(preds, strategy="soft_vote")
         for c in conf.values():
             assert 0.0 <= c <= 1.0
 
-    def test_weighted_majority_respects_weights(self):
+    def test_consensus_phenotyping_weighted_majority_respects_weights(self):
         """When one method has weight=100x, it should always win."""
         cell_ids = [1, 2, 3]
         preds = {
@@ -62,31 +62,31 @@ class TestPhenotypingEnsemble:
         for cid in cell_ids:
             assert final[cid] == "Tumor"
 
-    def test_borda_count_returns_all_cells(self):
+    def test_consensus_phenotyping_borda_count_returns_all_cells(self):
         preds = _make_predictions(10)
         ens = self._ensemble()
         final, _conf, _ = ens.vote(preds, strategy="borda_count")
         assert len(final) == 10
 
-    def test_min_probability_threshold_produces_unresolved(self):
+    def test_consensus_phenotyping_min_probability_threshold_produces_unresolved(self):
         """With threshold=1.0 nothing should pass -> all Unresolved."""
         preds = _make_predictions(5)
         ens = PhenotypingEnsemble(min_probability_threshold=1.0)
         final, _, _ = ens.vote(preds, strategy="soft_vote")
         assert all(v == PhenotypingEnsemble.UNRESOLVED_LABEL for v in final.values())
 
-    def test_invalid_strategy_raises(self):
+    def test_consensus_phenotyping_invalid_strategy_raises(self):
         preds = _make_predictions(5)
         ens = self._ensemble()
         with pytest.raises(ValueError, match="Unknown strategy"):
             ens.vote(preds, strategy="magic_vote")
 
-    def test_empty_predictions_raises(self):
+    def test_consensus_phenotyping_empty_predictions_raises(self):
         ens = self._ensemble()
         with pytest.raises(ValueError):
             ens.vote({}, strategy="soft_vote")
 
-    def test_per_method_breakdown_contains_all_methods(self):
+    def test_consensus_phenotyping_per_method_breakdown_contains_all_methods(self):
         preds = _make_predictions(5)
         ens = self._ensemble()
         _, _, per_method = ens.vote(preds, strategy="soft_vote")
@@ -98,7 +98,7 @@ class TestPhenotypingEnsemble:
 class TestASTIRBackend:
     """Tests for ASTIR backend integration."""
 
-    def test_availability_reflects_import(self):
+    def test_astir_backend_availability_reflects_import(self):
         b = ASTIRBackend()
         try:
             import astir  # noqa: F401
@@ -106,7 +106,7 @@ class TestASTIRBackend:
         except ImportError:
             assert b.is_available() is False
 
-    def test_predict_without_fit_raises_or_runs(self):
+    def test_astir_backend_predict_without_fit_raises_or_runs(self):
         b = ASTIRBackend()
         if not b.is_available():
             pytest.skip("astir not installed")
@@ -122,7 +122,7 @@ class TestASTIRBackend:
         assert isinstance(result, dict)
         assert set(result.keys()) == {1, 2}
 
-    def test_astir_multiclass_inference(self):
+    def test_astir_backend_multiclass_inference(self):
         b = ASTIRBackend()
         if not b.is_available():
             pytest.skip("astir not installed")
@@ -148,13 +148,13 @@ class TestASTIRBackend:
 class TestMAPSFallback:
     """Tests for MAPS deep learning architecture."""
 
-    def test_maps_attributes(self):
+    def test_maps_backend_attributes(self):
         b = MAPSBackend()
         assert b.name == "MAPS"
         assert b.requires_spatial is True
         assert b.requires_training is False
 
-    def test_maps_predict_fallback_without_torch(self):
+    def test_maps_backend_predict_fallback_without_torch(self):
         """When PyTorch or PyG is missing or basic run, predicts correctly or gracefully falls back."""
         b = MAPSBackend()
         df = pd.DataFrame({
@@ -175,7 +175,7 @@ class TestMAPSFallback:
 class TestUnsupervisedClusteringAndMarkerExpression:
     """Tests for cluster marker selection, cluster preservation, and robust expression profiling."""
 
-    def test_technical_marker_detection(self):
+    def test_marker_expression_widget_technical_marker_detection(self):
         from iris_viewer.widgets.phenotyping_panel import PhenotyperPanelWidget
         assert PhenotyperPanelWidget._is_technical_channel("DAPI") is True
         assert PhenotyperPanelWidget._is_technical_channel("dapi_nuclei") is True
@@ -190,7 +190,7 @@ class TestUnsupervisedClusteringAndMarkerExpression:
         assert PhenotyperPanelWidget._is_technical_channel("PanCK") is False
         assert PhenotyperPanelWidget._is_technical_channel("FoxP3") is False
 
-    def test_marker_expression_clustering_preservation(self, qapp):
+    def test_marker_expression_widget_clustering_preservation(self, qapp):
         from iris_viewer.widgets.marker_expression import MarkerExpressionDialog
         # 8 clusters with multiple samples
         df = pd.DataFrame({
@@ -215,7 +215,7 @@ class TestUnsupervisedClusteringAndMarkerExpression:
         assert len(dialog.cached_matrix) == 8
         dialog.close()
 
-    def test_phenotyping_module_subpanel_navigation_order(self, qapp):
+    def test_phenotyper_panel_subpanel_navigation_order(self, qapp):
         from iris_viewer.widgets.phenotyping_panel import PhenotyperPanelWidget
         panel = PhenotyperPanelWidget(ctx=None)
 
@@ -230,7 +230,7 @@ class TestUnsupervisedClusteringAndMarkerExpression:
         assert panel.stack.widget(3) == panel.maps_widget
         panel.close()
 
-    def test_interactive_phenotype_assignment_studio(self, qapp):
+    def test_phenotyper_panel_interactive_phenotype_assignment_studio(self, qapp):
         from iris_viewer.widgets.marker_expression import MarkerExpressionDialog
         df = pd.DataFrame({
             "Cluster": [f"Cluster {i % 4}" for i in range(80)],
@@ -307,7 +307,7 @@ class TestUnsupervisedClusteringAndMarkerExpression:
 
         dialog.close()
 
-    def test_leiden_igraph_parameters(self):
+    def test_leiden_clustering_igraph_parameters(self):
         """Verify scanpy leiden executes cleanly with flavor='igraph', n_iterations=2, directed=False or fallback."""
         try:
             import anndata as ad
@@ -422,7 +422,7 @@ class TestModularPackageArchitecture:
         assert SegmentationStudioDialog is SSD
         assert IrisSegmentationWidget is SegmentationPanelWidget
 
-    def test_thresholding_and_quality_with_nan_edge_cases(self):
+    def test_phenotyping_thresholding_and_quality_with_nan_edge_cases(self):
         from iris_viewer.widgets.phenotyping.thresholding import (
             arcsinh_transform,
             assess_gating_quality,

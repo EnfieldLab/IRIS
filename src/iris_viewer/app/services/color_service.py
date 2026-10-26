@@ -18,6 +18,7 @@ import pandas as pd
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
+from iris_viewer.core.layers import get_layer_base_name
 from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
 
 
@@ -190,7 +191,7 @@ class ColorService:
 
             # 4. Update any existing viewer layers
             for layer in ctx.viewer.layers:
-                layer_base = layer.name.split(" [")[0]
+                layer_base = get_layer_base_name(layer)
                 if layer_base.lower() in color_map and hasattr(layer, "colormap"):
                     c = color_map[layer_base.lower()]
                     self._apply_colormap_to_layer(layer, c)
@@ -276,7 +277,7 @@ class ColorService:
                             updated += 1
 
             for layer in ctx.viewer.layers:
-                layer_base = layer.name.split(" [")[0]
+                layer_base = get_layer_base_name(layer)
                 if layer_base.lower() in self.celltype_colors and hasattr(layer, "colormap"):
                     c = self.celltype_colors[layer_base.lower()]
                     self._apply_colormap_to_layer(layer, c)
@@ -317,7 +318,7 @@ class ColorService:
         try:
             colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_color)) + [1]])
             layer.colormap = Colormap(colors, name=f"custom_{layer.name}")
-            layer_base = layer.name.split(" [")[0]
+            layer_base = get_layer_base_name(layer)
             if hasattr(self.ctx.state, "persistent_settings"):
                 self.ctx.state.persistent_settings.setdefault(layer_base, {})["colormap"] = layer.colormap
                 self.ctx.state.persistent_settings.setdefault(layer_base.lower(), {})["colormap"] = layer.colormap
@@ -328,6 +329,6 @@ class ColorService:
     def _apply_colormap_to_layers(self, cell_type: str, hex_color: str) -> None:
         """Push a new two-stop colormap to every canvas layer matching *cell_type*."""
         for layer in self.ctx.viewer.layers:
-            layer_base = layer.name.split(" [")[0]
+            layer_base = get_layer_base_name(layer)
             if layer_base.lower() == cell_type.lower() and hasattr(layer, "colormap"):
                 self._apply_colormap_to_layer(layer, hex_color)

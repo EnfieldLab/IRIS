@@ -1,13 +1,11 @@
 """
-Tests for sample switching and legend synchronization:
-- Verifies that switching between single samples correctly displays all active cell phenotype
-  legend rows for each sample, including phenotypes shared across samples.
-- Verifies that Centroids legend rows are preserved across sample switches.
-- Verifies that legend rows are properly deduplicated and tracking sets remain synchronized.
+Unit tests for iris_viewer.app.services.multi_sample_service module:
+- get_sample_sub_df: Sample filtering and canonical 'Pos_X' / 'Pos_Y' coordinate validation
+- MultiSampleService.update_phenotypes_on_canvas: Synchronizing phenotype layers across sample switches
+- ViewerLegendWidget: Row deduplication and state synchronization
 """
 from __future__ import annotations
 
-import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -18,7 +16,8 @@ import pytest
 from qtpy.QtWidgets import QApplication
 
 from iris_viewer.app.services.image_service import ImageService
-from iris_viewer.app.services.multi_sample_service import MultiSampleService
+from iris_viewer.app.services.multi_sample_service import MultiSampleService, get_sample_sub_df
+from iris_viewer.core.context import AppContext
 from iris_viewer.core.state import ViewerAppState
 from iris_viewer.widgets.legend import ViewerLegendWidget
 
@@ -28,19 +27,55 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _create_sample_switching_context(tmp_path: Path):
+def test_get_sample_sub_df_ensures_canonical_pos_x_pos_y():
+    """Verify get_sample_sub_df standardizes coordinates into Pos_X and Pos_Y."""
+    df = pd.DataFrame({
+        "Image": ["sample_a", "sample_a", "sample_b"],
+        "Centroid_X": [12.5, 14.5, 99.0],
+        "Centroid_Y": [22.0, 24.0, 99.0],
+        "cell_type": ["B_cell", "T_cell", "Tumor"],
+    })
+    sub_df = get_sample_sub_df(df, "sample_a")
+    assert len(sub_df) == 2
+    assert "Pos_X" in sub_df.columns
+    assert "Pos_Y" in sub_df.columns
+    assert list(sub_df["Pos_X"]) == [12.5, 14.5]
+    assert list(sub_df["Pos_Y"]) == [22.0, 24.0]
+
+
+def test_get_sample_sub_df_tiered_sample_name_matching():
+    """Verify get_sample_sub_df matches sample identifiers with stripped extensions or suffixes."""
+    df = pd.DataFrame({
+        "Image": ["TMA_Core_A1_image.tiff", "TMA_Core_A1_image.tiff", "TMA_Core_B2.tiff"],
+        "Pos_X": [10.0, 20.0, 30.0],
+        "Pos_Y": [15.0, 25.0, 35.0],
+    })
+    # Stripped match for TMA_Core_A1
+    sub_a = get_sample_sub_df(df, "TMA_Core_A1")
+    assert len(sub_a) == 2
+
+    # Stripped match for TMA_Core_B2
+    sub_b = get_sample_sub_df(df, "TMA_Core_B2")
+    assert len(sub_b) == 1
+
+    # Nonexistent sample returns empty DataFrame
+    sub_c = get_sample_sub_df(df, "Nonexistent_Core")
+    assert sub_c.empty
+
+
+def _create_sample_switching_context(tmp_path: Path) -> AppContext:
     """Set up a test context with 2 distinct samples and annotation master_df."""
     viewer = napari.Viewer(show=False)
     state = ViewerAppState()
     legend_widget = ViewerLegendWidget(viewer)
 
-    ctx = types.SimpleNamespace()
-    ctx.viewer = viewer
-    ctx.state = state
-    ctx.legend_widget = legend_widget
-    ctx.added_legend_entries = set()
-    ctx.active_workers = []
-
+    ctx = AppContext(
+        viewer=viewer,
+        state=state,
+        legend_widget=legend_widget,
+        added_legend_entries=set(),
+        active_workers=[],
+    )
     legend_widget.ctx = ctx
 
     # Mock ControlWidget
@@ -50,7 +85,7 @@ def _create_sample_switching_context(tmp_path: Path):
     cw.update_dashboard = MagicMock()
     ctx.control_widget = cw
 
-    # Mock MultiSampleService and ImageService
+    # Services
     ms_svc = MultiSampleService(ctx)
     img_svc = ImageService(ctx)
     ctx.multi_sample_svc = ms_svc
@@ -58,47 +93,31 @@ def _create_sample_switching_context(tmp_path: Path):
 
     # Sample A mask and df
     mask_a = np.zeros((100, 100), dtype=np.uint32)
-    mask_a[10:20, 10:20] = 1  # B cells
-    mask_a[30:40, 30:40] = 2  # T cells
-    mask_a[50:60, 50:60] = 3  # Tumor
+    mask_a[10:20, 10:20] = 1
+    mask_a[30:40, 30:40] = 2
+    mask_a[50:60, 50:60] = 3
 
-    df_a = pd.DataFrame({
-        "Image": ["sample_A", "sample_A", "sample_A"],
-        "ObjectNumber": [1, 2, 3],
-        "Pos_X": [15.0, 35.0, 55.0],
-        "Pos_Y": [15.0, 35.0, 55.0],
-        "cell_type": ["B cells", "T cells", "Tumor"],
-    })
-
-    # Sample B mask and df (shares "B cells", has new "Macrophage" and "Epithelial")
+    # Sample B mask and df
     mask_b = np.zeros((100, 100), dtype=np.uint32)
-    mask_b[10:20, 10:20] = 10  # B cells
-    mask_b[30:40, 30:40] = 20  # Macrophage
-    mask_b[50:60, 50:60] = 30  # Epithelial
+    mask_b[15:25, 15:25] = 1
+    mask_b[35:45, 35:45] = 2
+    mask_b[55:65, 55:65] = 3
 
-    df_b = pd.DataFrame({
-        "Image": ["sample_B", "sample_B", "sample_B"],
-        "ObjectNumber": [10, 20, 30],
-        "Pos_X": [15.0, 35.0, 55.0],
-        "Pos_Y": [15.0, 35.0, 55.0],
-        "cell_type": ["B cells", "Macrophage", "Epithelial"],
+    master_df = pd.DataFrame({
+        "Image": [
+            "sample_A", "sample_A", "sample_A",
+            "sample_B", "sample_B", "sample_B"
+        ],
+        "ObjectNumber": [1, 2, 3, 1, 2, 3],
+        "cell_type": [
+            "Tumor", "T cells", "B cells",
+            "B cells", "Macrophage", "Epithelial"
+        ],
+        "Pos_X": [15, 35, 55, 20, 40, 60],
+        "Pos_Y": [15, 35, 55, 20, 40, 60],
     })
+    state.master_df = master_df
 
-    state.master_df = pd.concat([df_a, df_b], ignore_index=True)
-    state.markers = ["DAPI", "CD45"]
-
-    # Create dummy image files in tmp_path
-    img_a_path = tmp_path / "sample_A.tiff"
-    img_b_path = tmp_path / "sample_B.tiff"
-    img_a_path.touch()
-    img_b_path.touch()
-
-    state.file_map = {
-        "sample_A": img_a_path,
-        "sample_B": img_b_path,
-    }
-
-    # Store masks for manual loading in test
     ctx._sample_masks = {
         "sample_A": mask_a,
         "sample_B": mask_b,
@@ -107,8 +126,8 @@ def _create_sample_switching_context(tmp_path: Path):
     return ctx
 
 
-def test_single_sample_switch_phenotype_legends(tmp_path, qapp):
-    """When switching between single samples, all cell phenotype legend rows appear."""
+def test_multi_sample_service_single_sample_switch_synchronizes_phenotype_legends(tmp_path, qapp):
+    """Verify switching between single samples correctly updates active cell phenotype legend rows."""
     ctx = _create_sample_switching_context(tmp_path)
     legend_widget = ctx.legend_widget
     ms_svc = ctx.multi_sample_svc
@@ -128,7 +147,6 @@ def test_single_sample_switch_phenotype_legends(tmp_path, qapp):
 
     # --- Step 2: Switch to Sample B ---
     sample_b = "sample_B"
-    # on_sample_selected clears view, legend, and resets volatile state
     ctx.viewer.layers.clear()
     ctx.legend_widget.clear()
     ctx.added_legend_entries.clear()
@@ -138,7 +156,6 @@ def test_single_sample_switch_phenotype_legends(tmp_path, qapp):
     ctx.state.reset_sample_state()
     ctx.state.current_sample_name = sample_b
 
-    # Simulate loaded companion mask and layers for Sample B
     ctx.state.masks_map[sample_b] = ctx._sample_masks[sample_b]
     ctx.state.sample_layers_map[sample_b] = []
 
@@ -172,8 +189,8 @@ def test_single_sample_switch_phenotype_legends(tmp_path, qapp):
     assert "Epithelial" not in legend_names_a_again
 
 
-def test_legend_deduplication(tmp_path, qapp):
-    """Adding the same phenotype row multiple times does not produce duplicate rows in legend."""
+def test_multi_sample_service_legend_row_deduplication(tmp_path, qapp):
+    """Verify adding the same phenotype row multiple times does not produce duplicates."""
     ctx = _create_sample_switching_context(tmp_path)
     legend_widget = ctx.legend_widget
 
@@ -186,8 +203,8 @@ def test_legend_deduplication(tmp_path, qapp):
     assert matching[0].hex_color == "#00FF00"
 
 
-def test_legend_clear_synchronizes_state(tmp_path, qapp):
-    """Calling clear() on legend_widget empties GUI rows and clears tracking sets."""
+def test_multi_sample_service_legend_clear_synchronizes_state(tmp_path, qapp):
+    """Verify calling clear() on legend_widget resets rows and empties tracking sets."""
     ctx = _create_sample_switching_context(tmp_path)
     legend_widget = ctx.legend_widget
     ms_svc = ctx.multi_sample_svc

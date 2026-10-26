@@ -20,7 +20,13 @@ from napari.utils.colormaps import Colormap
 from qtpy.QtGui import QCursor
 from qtpy.QtWidgets import QInputDialog, QMenu
 
+try:
+    from napari.layers import Image, Labels
+except ImportError:
+    Image = Labels = ()  # type: ignore
+
 from iris_viewer.app.services.multi_sample_service import get_sample_sub_df
+from iris_viewer.core.layers import get_layer_base_name, get_layer_type
 from iris_viewer.widgets.styles import DEFAULT_CELLTYPE_PALETTE
 
 
@@ -107,9 +113,9 @@ class CurationService:
             layers = self.ctx.state.sample_layers_map.get(sample_name, [])
             mask = self.ctx.state.masks_map.get(sample_name)
 
-            bbox_lyr = next((l for l in layers if l.name == f"Bounds - {sample_name}"), None)
+            bbox_lyr = next((l for l in layers if get_layer_type(l) == "bounds" or l.name == f"Bounds - {sample_name}"), None)
             seg_layer = next(
-                (l for l in layers if l.__class__.__name__ == 'Labels' and ("segmentation" in l.name.lower() or "mask" in l.name.lower())),
+                (l for l in layers if ((isinstance(l, Labels) if Labels else False) or getattr(l, "__class__", type(l)).__name__ == 'Labels') and ("segmentation" in l.name.lower() or "mask" in l.name.lower())),
                 None,
             )
 
@@ -270,13 +276,14 @@ class CurationService:
             mask_bool = (mask_np == obj_id)
             base_markers = set(self.ctx.state.markers) if getattr(self.ctx.state, "markers", None) else set()
             for lyr in s_layers:
-                if lyr.__class__.__name__ != 'Image':
+                is_img = isinstance(lyr, Image) if Image else False
+                if not (is_img or getattr(lyr, "__class__", type(lyr)).__name__ == 'Image'):
                     continue
                 if getattr(lyr.data, "shape", None) != mask_bool.shape:
                     continue
                 if not isinstance(lyr.data, np.ndarray) or hasattr(lyr.data, "compute"):
                     continue
-                b_name = lyr.name.split(" [")[0].strip()
+                b_name = get_layer_base_name(lyr)
                 if (
                     b_name in base_markers
                     or "segmentation" in b_name.lower()
@@ -421,13 +428,14 @@ class CurationService:
             base_markers = set(self.ctx.state.markers) if getattr(self.ctx.state, "markers", None) else set()
 
             def _is_phenotype_layer(l, target_name: Optional[str] = None) -> bool:
-                if l.__class__.__name__ != 'Image':
+                is_img = isinstance(l, Image) if Image else False
+                if not (is_img or getattr(l, "__class__", type(l)).__name__ == 'Image'):
                     return False
                 if getattr(l.data, "shape", None) != mask_bool.shape:
                     return False
                 if not isinstance(l.data, np.ndarray) or hasattr(l.data, "compute"):
                     return False
-                b_name = l.name.split(" [")[0].strip()
+                b_name = get_layer_base_name(l)
                 if target_name is not None and b_name.lower() != target_name.strip().lower():
                     return False
                 if (
@@ -443,7 +451,7 @@ class CurationService:
             # 1. Unconditionally clear this cell from ALL other phenotype layers for this sample
             for lyr in s_layers:
                 if _is_phenotype_layer(lyr):
-                    b_name = lyr.name.split(" [")[0].strip()
+                    b_name = get_layer_base_name(lyr)
                     if b_name.lower() != new_type.lower():
                         if np.any(lyr.data[mask_bool] > 0):
                             new_data = lyr.data.copy()
@@ -503,6 +511,7 @@ class CurationService:
             mask_bin, name=type_name, opacity=0.8, visible=True,
             blending="translucent", colormap=Colormap(colors),
             contrast_limits=[0, 1], scale=scale_val,
+            metadata={"sample_name": sample_name, "cell_type": type_name, "layer_type": "phenotype"},
         )
         lyr.translate = translation
 

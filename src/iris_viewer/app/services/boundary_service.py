@@ -101,6 +101,7 @@ class BoundaryService:
                         face_color='white',
                         opacity=0.5,
                         scale=(scale_val, scale_val),
+                        metadata={"sample_name": sample_name, "layer_type": "tissue_boundary"},
                     )
                     if bounds_layer:
                         t_layer.translate = bounds_layer.translate

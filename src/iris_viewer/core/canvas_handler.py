@@ -2,15 +2,24 @@
 Canvas drag handler for grouped sample layer translation.
 Reused from IRIS core with no modifications.
 """
+from __future__ import annotations
+
 import numpy as np
+
+from iris_viewer.core.layers import get_layer_sample_name, get_layer_type
 
 
 def handle_global_canvas_drag(viewer, event, sample_layers_map):
     active_layer = viewer.layers.selection.active
-    if active_layer is None or not active_layer.name.startswith("Bounds - "):
+    if active_layer is None:
         return
 
-    sample_name = active_layer.name.replace("Bounds - ", "")
+    l_type = get_layer_type(active_layer)
+    if l_type == "bounds" or active_layer.name.startswith("Bounds - "):
+        sample_name = get_layer_sample_name(active_layer) or active_layer.name.replace("Bounds - ", "")
+    else:
+        return
+
     layers_to_move = sample_layers_map.get(sample_name, [])
     if not layers_to_move:
         return

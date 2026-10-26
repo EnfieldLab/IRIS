@@ -213,6 +213,7 @@ class ImageService:
                 visible=is_vis,
                 contrast_limits=clims,
                 scale=(scale_val, scale_val),
+                metadata={"sample_name": sample_name, "marker": marker, "layer_type": "channel"},
             )
             ctx.state.sample_layers_map[sample_name].append(layer)
 
@@ -253,6 +254,7 @@ class ImageService:
                     [hull_verts], shape_type="polygon", name=lname,
                     edge_width=2, edge_color="white", face_color="white",
                     opacity=0.5, scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "layer_type": "tissue_boundary"},
                 )
                 ctx.legend_widget.add_ref_row(t_lyr, lname, "#FFFFFF", layer_type="shapes")
                 if sample_name not in ctx.state.sample_layers_map:
@@ -320,11 +322,13 @@ class ImageService:
                 layer = ctx.viewer.add_labels(
                     data, name=name, opacity=1.0, visible=True,
                     contour=1, scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "segmentation_name": name, "layer_type": "segmentation"},
                 )
             except TypeError:
                 layer = ctx.viewer.add_labels(
                     data, name=name, opacity=1.0, visible=True,
                     scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "segmentation_name": name, "layer_type": "segmentation"},
                 )
             if sample_name not in ctx.state.sample_layers_map:
                 ctx.state.sample_layers_map[sample_name] = []

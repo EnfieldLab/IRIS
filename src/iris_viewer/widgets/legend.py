@@ -19,6 +19,8 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from iris_viewer.core.layers import get_layer_base_name
+
 
 class ViewerLegendRow(QWidget):
     """Single row in the legend panel representing a named layer with color swatch and visibility toggle."""
@@ -221,7 +223,7 @@ class ViewerLegendWidget(QWidget):
             if not self.viewer:
                 return
             for l in self.viewer.layers:
-                l_base = l.name.split(" [")[0] if " [" in l.name else l.name
+                l_base = get_layer_base_name(l)
                 if l_base == n:
                     l.visible = is_vis
 
@@ -229,7 +231,7 @@ class ViewerLegendWidget(QWidget):
             if not self.viewer:
                 return
             for target_layer in self.viewer.layers:
-                l_base = target_layer.name.split(" [")[0] if " [" in target_layer.name else target_layer.name
+                l_base = get_layer_base_name(target_layer)
                 if l_base == n:
                     if layer_type == 'image':
                         colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_c)) + [1]])
@@ -308,7 +310,7 @@ class ViewerLegendWidget(QWidget):
     def add_ref_ct_row(self, layer, name: str, initial_color: str):
         if layer is None and self.viewer:
             for l in self.viewer.layers:
-                l_base = l.name.split(" [")[0] if " [" in l.name else l.name
+                l_base = get_layer_base_name(l)
                 if l_base == name or l.name == name:
                     layer = l
                     break

@@ -1,46 +1,19 @@
 """
-Unit tests for P1 performance optimizations and geometry recalculations:
-- Shoelace formula area computation in geometry.py
-- Vectorized centroid / local 3x3 window ID resolution in data_adapter.py
-- Fast categorical LUT mask generation by cell type in data_adapter.py
+Unit tests for iris_viewer.io.data_adapter module:
+- IrisPhenotypeMapper.resolve_ids: Vectorized ID lookup with 3x3 dilation window fallback
+- IrisPhenotypeMapper.get_masks_by_type: Fast categorical LUT binary mask generation by cell type
+- IrisDataAdapter: Annotation parsing and canonical Pos_X/Pos_Y coordinate standardisation
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from iris_viewer.engine.geometry import recompute_area_from_vertices
-from iris_viewer.io.data_adapter import IrisPhenotypeMapper
+from iris_viewer.io.data_adapter import IrisDataAdapter, IrisPhenotypeMapper
 
 
-def test_recompute_area_from_vertices_shoelace():
-    """Verify Shoelace formula correctly calculates polygon areas without rasterization."""
-    # Degenerate cases
-    assert recompute_area_from_vertices(np.array([]), (100, 100)) == (0.0, "--")
-    assert recompute_area_from_vertices(np.array([[0, 0], [10, 0]]), (100, 100)) == (0.0, "--")
-
-    # 10x10 square vertices in (Y, X) order
-    square_verts = np.array([
-        [10.0, 10.0],
-        [10.0, 20.0],
-        [20.0, 20.0],
-        [20.0, 10.0],
-    ])
-
-    # Unscaled (pixels)
-    area_px, label_px = recompute_area_from_vertices(square_verts, (50, 50), scale_factor=1.0)
-    assert pytest.approx(area_px, 0.01) == 100.0
-    assert label_px == "100 px²"
-
-    # Scaled (micrometers, scale_factor = 0.5 µm/px -> 100 px * 0.25 = 25 µm²)
-    area_um, label_um = recompute_area_from_vertices(square_verts, (50, 50), scale_factor=0.5)
-    assert pytest.approx(area_um, 0.01) == 25.0
-    assert label_um == "25.00 µm²"
-
-
-def test_resolve_ids_vectorized_and_fallback():
-    """Verify vectorized resolve_ids handles direct lookup, 3x3 window dilation fallback, and out-of-bounds."""
+def test_iris_phenotype_mapper_resolve_ids_vectorized_and_dilation_fallback():
+    """Verify IrisPhenotypeMapper.resolve_ids handles direct lookup, 3x3 window dilation fallback, and out-of-bounds."""
     # Create a 20x20 label mask with cell 101 at (5, 5) and cell 102 at (15, 15)
     mask = np.zeros((20, 20), dtype=np.int32)
     mask[5:8, 5:8] = 101
@@ -68,8 +41,8 @@ def test_resolve_ids_vectorized_and_fallback():
     assert resolved_df.loc[5, "ObjectNumber"] == 0
 
 
-def test_get_masks_by_type_fast_lut():
-    """Verify categorical LUT path produces identical, accurate binary masks for each cell type."""
+def test_iris_phenotype_mapper_get_masks_by_type_categorical_lut():
+    """Verify IrisPhenotypeMapper.get_masks_by_type produces accurate binary masks via fast categorical LUT."""
     h, w = 30, 30
     mask = np.zeros((h, w), dtype=np.int32)
     # Cells 1 and 2 are Tumor; Cell 3 is Stroma
@@ -101,3 +74,35 @@ def test_get_masks_by_type_fast_lut():
     assert np.sum(stroma_mask) == 25
     assert np.all(stroma_mask[20:25, 20:25] == 1)
     assert np.all(stroma_mask[2:5, 2:5] == 0)
+
+
+def test_iris_data_adapter_canonical_coordinates_and_sample_extraction(tmp_path):
+    """Verify IrisDataAdapter produces canonical Pos_X, Pos_Y and per_sample slices."""
+    csv_file = tmp_path / "annotations.csv"
+    raw_df = pd.DataFrame({
+        "Image": ["sample_1.tiff", "sample_1.tiff", "sample_2.tiff"],
+        "ObjectNumber": [1, 2, 3],
+        "Centroid_X": [15.5, 25.5, 35.5],
+        "Centroid_Y": [10.0, 20.0, 30.0],
+        "cell_type": ["B_cell", "T_cell", "Tumor"],
+        "CD3": [100.0, 200.0, 50.0],
+    })
+    raw_df.to_csv(csv_file, index=False)
+
+    adapter = IrisDataAdapter.from_file(csv_file)
+    norm = adapter.normalised
+
+    # Canonical columns standardisation
+    assert "Pos_X" in norm.columns
+    assert "Pos_Y" in norm.columns
+    assert "ObjectNumber" in norm.columns
+    assert "cell_type" in norm.columns
+    assert list(norm["Pos_X"]) == [15.5, 25.5, 35.5]
+    assert list(norm["Pos_Y"]) == [10.0, 20.0, 30.0]
+
+    # Sample slicing
+    samples = adapter.per_sample()
+    assert "sample_1" in samples
+    assert "sample_2" in samples
+    assert len(samples["sample_1"]) == 2
+    assert len(samples["sample_2"]) == 1

@@ -35,7 +35,14 @@ from qtpy.QtWidgets import QMessageBox
 
 from iris_viewer.app.services.annotation_service import AnnotationService
 from iris_viewer.app.services.color_service import ColorService
+from iris_viewer.core.layers import get_layer_base_name
+from iris_viewer.engine.geometry import ensure_spatial_coordinates
 from iris_viewer.io.data_adapter import IrisPhenotypeMapper
+
+try:
+    from napari.layers import Image, Labels, Points, Shapes
+except ImportError:
+    Image = Labels = Points = Shapes = ()  # type: ignore
 
 
 def get_sample_sub_df(df: pd.DataFrame, sample_name: str) -> pd.DataFrame:
@@ -50,34 +57,41 @@ def get_sample_sub_df(df: pd.DataFrame, sample_name: str) -> pd.DataFrame:
     """
     if df is None or df.empty:
         return pd.DataFrame()
+    res = pd.DataFrame()
     if "Image" not in df.columns:
-        return df.copy()
+        res = df.copy()
+    else:
+        # Exact match
+        m = df["Image"].astype(str) == str(sample_name)
+        if m.any():
+            res = df[m].copy()
+        else:
+            # Stripped extension/suffix match
+            def _clean(s: str) -> str:
+                s = str(s).strip()
+                for ext in (".tiff", ".tif", "_image", "_mask"):
+                    if s.endswith(ext):
+                        s = s[:-len(ext)]
+                return s
 
-    # Exact match
-    m = df["Image"].astype(str) == str(sample_name)
-    if m.any():
-        return df[m].copy()
+            target_clean = _clean(sample_name)
+            col_clean = df["Image"].astype(str).map(_clean)
+            m2 = col_clean == target_clean
+            if m2.any():
+                res = df[m2].copy()
+            else:
+                # Substring match fallback
+                m3 = col_clean.apply(lambda x: bool(x and target_clean and (x == target_clean or x in target_clean or target_clean in x)))
+                if m3.any():
+                    res = df[m3].copy()
 
-    # Stripped extension/suffix match
-    def _clean(s: str) -> str:
-        s = str(s).strip()
-        for ext in (".tiff", ".tif", "_image", "_mask"):
-            if s.endswith(ext):
-                s = s[:-len(ext)]
-        return s
+    if not res.empty:
+        try:
+            ensure_spatial_coordinates(res)
+        except (ValueError, KeyError):
+            pass
 
-    target_clean = _clean(sample_name)
-    col_clean = df["Image"].astype(str).map(_clean)
-    m2 = col_clean == target_clean
-    if m2.any():
-        return df[m2].copy()
-
-    # Substring match fallback
-    m3 = col_clean.apply(lambda x: bool(x and target_clean and (x == target_clean or x in target_clean or target_clean in x)))
-    if m3.any():
-        return df[m3].copy()
-
-    return pd.DataFrame()
+    return res
 
 
 class MultiSampleService:
@@ -166,6 +180,7 @@ class MultiSampleService:
                 pts = ctx.viewer.add_points(
                     coords, name="Centroids", size=5,
                     visible=True, scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "layer_type": "centroids"},
                 )
                 pts.face_color = "white"
                 pts.translate = translation
@@ -185,8 +200,9 @@ class MultiSampleService:
             base_markers = set(ctx.state.markers) if ctx.state.markers else set()
             layers_to_remove = []
             for l in list(sample_layers):
-                l_base = l.name.split(" [")[0]
-                if l.__class__.__name__ == 'Image' and l_base not in base_markers:
+                l_base = get_layer_base_name(l)
+                is_img = (isinstance(l, Image) if Image else False) or getattr(l, "__class__", type(l)).__name__ == 'Image'
+                if is_img and l_base not in base_markers:
                     layers_to_remove.append(l)
 
             for l in layers_to_remove:
@@ -195,7 +211,7 @@ class MultiSampleService:
                 if l in sample_layers:
                     sample_layers.remove(l)
 
-                l_base = l.name.split(" [")[0]
+                l_base = get_layer_base_name(l)
                 if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "remove_row"):
                     ctx.legend_widget.remove_row(l_base)
                 if hasattr(self, "_added_master_legends") and l_base in self._added_master_legends:
@@ -211,7 +227,7 @@ class MultiSampleService:
 
             for type_name in sorted(layer_data_ref.keys()):
                 # Skip if a layer with this phenotype name already exists in this sample's group
-                if any(l.name.split(" [")[0] == type_name for l in sample_layers):
+                if any(get_layer_base_name(l) == type_name for l in sample_layers):
                     continue
 
                 mask_bin, hex_color = layer_data_ref[type_name]
@@ -225,6 +241,7 @@ class MultiSampleService:
                     mask_bin, name=type_name, opacity=0.8, visible=True,
                     blending="translucent", colormap=Colormap(colors),
                     contrast_limits=[0, 1], scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "cell_type": type_name, "layer_type": "phenotype"},
                 )
                 lyr.translate = translation
                 sample_layers.append(lyr)
@@ -260,7 +277,7 @@ class MultiSampleService:
         if all_dfs:
             ctx.state.current_mapped_df = pd.concat(all_dfs, ignore_index=True)
 
-        if hasattr(ctx, "expression_widget"):
+        if getattr(ctx, "expression_widget", None) is not None:
             active_df = (
                 ctx.state.master_df
                 if (ctx.state.master_df is not None and not ctx.state.master_df.empty)
@@ -277,7 +294,13 @@ class MultiSampleService:
                     celltype_col=ref_col,
                     selected_samples=selected_s,
                 )
-            if hasattr(ctx, "phenotyper_panel") and active_df is not None and not active_df.empty:
+        if getattr(ctx, "phenotyper_panel", None) is not None:
+            active_df = (
+                ctx.state.master_df
+                if (ctx.state.master_df is not None and not ctx.state.master_df.empty)
+                else ctx.state.current_mapped_df
+            )
+            if active_df is not None and not active_df.empty:
                 ctx.phenotyper_panel.set_data(
                     df=active_df,
                     markers=ctx.state.markers,
@@ -406,6 +429,7 @@ class MultiSampleService:
                 layer = ctx.viewer.add_image(
                     chan_data, name=m, colormap=cmap, blending="additive",
                     visible=is_vis, contrast_limits=clims, scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "marker": m, "layer_type": "channel"},
                 )
                 sample_layers.append(layer)
                 self._register_layer(layer, m)
@@ -442,11 +466,13 @@ class MultiSampleService:
                         seg_lyr = ctx.viewer.add_labels(
                             m_chan, name=lname, opacity=1.0,
                             visible=(i == 0), contour=1, scale=(scale_val, scale_val),
+                            metadata={"sample_name": sample_name, "segmentation_name": lname, "layer_type": "segmentation"},
                         )
                     except TypeError:
                         seg_lyr = ctx.viewer.add_labels(
                             m_chan, name=lname, opacity=1.0,
                             visible=(i == 0), scale=(scale_val, scale_val),
+                            metadata={"sample_name": sample_name, "segmentation_name": lname, "layer_type": "segmentation"},
                         )
                     sample_layers.append(seg_lyr)
                     self._register_layer(seg_lyr, lname)
@@ -472,6 +498,7 @@ class MultiSampleService:
                 pts = ctx.viewer.add_points(
                     coords, name="Centroids", size=5,
                     visible=True, scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "layer_type": "centroids"},
                 )
                 pts.face_color = "white"
                 sample_layers.append(pts)
@@ -506,6 +533,7 @@ class MultiSampleService:
                         mask_bin, name=type_name, opacity=0.8, visible=True,
                         blending="translucent", colormap=Colormap(colors),
                         contrast_limits=[0, 1], scale=(scale_val, scale_val),
+                        metadata={"sample_name": sample_name, "cell_type": type_name, "layer_type": "phenotype"},
                     )
                     sample_layers.append(lyr)
                     self._register_layer(lyr, type_name)
@@ -561,6 +589,7 @@ class MultiSampleService:
                 text={"string": "{name}", "color": "white",
                       "size": 12, "anchor": "upper_left"},
                 scale=(scale_val, scale_val),
+                metadata={"sample_name": sample_name, "layer_type": "bounds"},
             )
             ctx.legend_widget.add_ref_row(
                 bbox_lyr, bbox_name, "yellow", layer_type="shapes"
@@ -760,6 +789,7 @@ class MultiSampleService:
                 [hull_verts], shape_type="polygon", name=lname,
                 edge_width=2, edge_color="white", face_color="white",
                 opacity=0.5, scale=(scale_val, scale_val),
+                metadata={"sample_name": sample_name, "layer_type": "tissue_boundary"},
             )
             if bounds_lyr is not None:
                 t_lyr.translate = bounds_lyr.translate
@@ -825,7 +855,7 @@ class MultiSampleService:
                 is_vis = layer.visible
                 settings.setdefault(base_name, {})["visible"] = is_vis
                 for l in ctx.viewer.layers:
-                    lb = l.name.split(" [")[0] if " [" in l.name else l.name
+                    lb = get_layer_base_name(l)
                     if lb == base_name and l.visible != is_vis:
                         l.visible = is_vis
                 self._sync_legend_checkbox(base_name, is_vis)
@@ -854,7 +884,7 @@ class MultiSampleService:
                     except Exception:
                         pass
                     for l in ctx.viewer.layers:
-                        lb = l.name.split(" [")[0] if " [" in l.name else l.name
+                        lb = get_layer_base_name(l)
                         if lb == base_name and l is not layer and hasattr(l, "colormap"):
                             l.colormap = cmap
                 finally:
@@ -870,7 +900,7 @@ class MultiSampleService:
                     op = layer.opacity
                     settings.setdefault(base_name, {})["opacity"] = op
                     for l in ctx.viewer.layers:
-                        lb = l.name.split(" [")[0] if " [" in l.name else l.name
+                        lb = get_layer_base_name(l)
                         if lb == base_name and l is not layer:
                             l.opacity = op
                 finally:
@@ -886,7 +916,7 @@ class MultiSampleService:
                     clims = layer.contrast_limits
                     settings.setdefault(base_name, {})["contrast_limits"] = clims
                     for l in ctx.viewer.layers:
-                        lb = l.name.split(" [")[0] if " [" in l.name else l.name
+                        lb = get_layer_base_name(l)
                         if lb == base_name and l is not layer and hasattr(l, "contrast_limits"):
                             l.contrast_limits = clims
                 except Exception:

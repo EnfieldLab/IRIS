@@ -278,6 +278,7 @@ class NeighborhoodService:
                     colormap=Colormap(colors),
                     contrast_limits=[0, 1],
                     scale=(scale_val, scale_val),
+                    metadata={"sample_name": sample_name, "niche": niche_name, "layer_type": "niche", "base_name": niche_name},
                 )
 
                 if translation is not None:

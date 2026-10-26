@@ -35,7 +35,7 @@ def test_viewer(qapp):
     viewer.close()
 
 
-def test_image_control_init_without_viewer(qapp):
+def test_image_control_widget_initialization_without_viewer(qapp):
     """Verify ImageControlWidget initializes cleanly without a viewer."""
     widget = ImageControlWidget(viewer=None)
     assert widget.viewer is None
@@ -44,7 +44,7 @@ def test_image_control_init_without_viewer(qapp):
     assert widget.chk_scalebar_in_export.isChecked() is True
 
 
-def test_canvas_size_presets_and_reset(test_viewer, qapp):
+def test_image_control_widget_canvas_size_presets_and_reset(test_viewer, qapp):
     """Verify canvas sizing presets lock dimensions and reset unlocks to auto-fit."""
     widget = ImageControlWidget(viewer=test_viewer)
     qapp.processEvents()
@@ -83,7 +83,7 @@ def test_canvas_size_presets_and_reset(test_viewer, qapp):
     assert canvas_native.maximumWidth() > 1000000
 
 
-def test_screenshot_scale_bar_overlay_integration(test_viewer, qapp):
+def test_canvas_scalebar_screenshot_overlay_integration(test_viewer, qapp):
     """Verify QuPath scale bar is composited into napari screenshot when enabled."""
     widget = ImageControlWidget(viewer=test_viewer)
     qapp.processEvents()
@@ -108,7 +108,7 @@ def test_screenshot_scale_bar_overlay_integration(test_viewer, qapp):
     assert white_pixels_disabled == 0, "Scale bar should not appear when chk_scalebar_in_export is False"
 
 
-def test_clipboard_copy_with_scale_bar(test_viewer, qapp):
+def test_image_control_widget_clipboard_copy_with_scalebar(test_viewer, qapp):
     """Verify copying canvas to clipboard via in-built napari method includes scale bar."""
     widget = ImageControlWidget(viewer=test_viewer)
     qapp.processEvents()
@@ -124,7 +124,7 @@ def test_clipboard_copy_with_scale_bar(test_viewer, qapp):
     assert copied_img.height() > 0
 
 
-def test_set_viewer_late_binding(qapp):
+def test_image_control_widget_set_viewer_late_binding(qapp):
     """Verify set_viewer binds overlays and hooks when viewer is assigned after init."""
     widget = ImageControlWidget(viewer=None)
     viewer = napari.Viewer(show=False)
@@ -141,7 +141,7 @@ def test_set_viewer_late_binding(qapp):
     viewer.close()
 
 
-def test_ui_labels_and_button_formatting(test_viewer, qapp):
+def test_image_control_widget_ui_labels_and_button_formatting(test_viewer, qapp):
     """Verify updated label names, button styling, and absence of ellipsis on buttons."""
     from qtpy.QtWidgets import QPushButton
     widget = ImageControlWidget(viewer=test_viewer)
@@ -162,7 +162,7 @@ def test_ui_labels_and_button_formatting(test_viewer, qapp):
     assert "#1E4D6B" not in widget.btn_copy_canvas.styleSheet()
 
 
-def test_scale_bar_black_background_opacity(test_viewer, qapp):
+def test_canvas_scalebar_background_opacity_rendering(test_viewer, qapp):
     """Verify scale bar background is transparent at 0.0 and pure black with configurable opacity."""
     from napari._qt.qt_viewer import QImg2array
 

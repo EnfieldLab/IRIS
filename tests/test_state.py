@@ -30,7 +30,7 @@ def _make_populated_state() -> ViewerAppState:
 
 class TestSessionPersistence:
 
-    def test_to_session_dict_fields(self):
+    def test_viewer_app_state_to_session_dict_fields(self):
         st = _make_populated_state()
         d = st.to_session_dict(consensus_threshold=0.75)
 
@@ -41,28 +41,28 @@ class TestSessionPersistence:
         assert d["consensus_threshold"] == 0.75
         assert d["persistent_settings"] == {"foo": "bar"}
 
-    def test_per_cell_confidence_roundtrip(self):
+    def test_viewer_app_state_per_cell_confidence_roundtrip(self):
         st = _make_populated_state()
         d = st.to_session_dict()
         restored = ViewerAppState.from_session_dict(d)
 
         assert restored.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
 
-    def test_cell_method_map_roundtrip(self):
+    def test_viewer_app_state_cell_method_map_roundtrip(self):
         st = _make_populated_state()
         d = st.to_session_dict()
         restored = ViewerAppState.from_session_dict(d)
 
         assert restored.cell_method_map == {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
 
-    def test_manual_overrides_roundtrip(self):
+    def test_viewer_app_state_manual_overrides_roundtrip(self):
         st = _make_populated_state()
         d = st.to_session_dict()
         restored = ViewerAppState.from_session_dict(d)
 
         assert restored.manual_overrides == {2: "Cellpose"}
 
-    def test_numpy_arrays_not_serialised(self):
+    def test_viewer_app_state_numpy_arrays_not_serialised(self):
         """Arrays must NOT end up in the session JSON."""
         st = _make_populated_state()
         d = st.to_session_dict()
@@ -71,7 +71,7 @@ class TestSessionPersistence:
         assert "raw_image" not in d
         assert "confidence_map" not in d
 
-    def test_save_and_load_roundtrip(self):
+    def test_viewer_app_state_save_and_load_roundtrip(self):
         st = _make_populated_state()
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,7 +85,7 @@ class TestSessionPersistence:
             assert restored.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
             assert raw["consensus_threshold"] == pytest.approx(0.6)
 
-    def test_load_with_missing_image_dir_does_not_raise(self):
+    def test_viewer_app_state_load_with_missing_image_dir_does_not_raise(self):
         """Non-existent image_dir should not raise — it is a Path, not validated here."""
         data = {
             "version": 1,
@@ -99,7 +99,7 @@ class TestSessionPersistence:
         restored = ViewerAppState.from_session_dict(data)
         assert restored.image_dir == Path("/nonexistent/path")
 
-    def test_empty_state_session_roundtrip(self):
+    def test_viewer_app_state_empty_state_session_roundtrip(self):
         st = ViewerAppState()
         d = st.to_session_dict()
 
@@ -115,7 +115,7 @@ class TestSessionPersistence:
 
 class TestOverrideHistory:
 
-    def test_snapshot_and_undo(self):
+    def test_viewer_app_state_snapshot_and_undo(self):
         st = _make_populated_state()
         orig_mask = st.consensus_mask.copy()
 
@@ -133,18 +133,18 @@ class TestOverrideHistory:
         assert st.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
         assert st.cell_method_map == {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
 
-    def test_undo_when_empty_returns_false(self):
+    def test_viewer_app_state_undo_when_empty_returns_false(self):
         st = ViewerAppState()
         assert st.undo_override() is False
 
-    def test_maxlen_keeps_only_50_snapshots(self):
+    def test_viewer_app_state_maxlen_keeps_only_50_snapshots(self):
         st = _make_populated_state()
         for _ in range(60):
             st.snapshot_override_state()
 
         assert len(st.override_history) == 50
 
-    def test_reset_clears_history(self):
+    def test_viewer_app_state_reset_clears_history(self):
         st = _make_populated_state()
         st.snapshot_override_state()
         st.reset_sample_state()
@@ -157,7 +157,7 @@ class TestOverrideHistory:
 
 class TestStateReset:
 
-    def test_reset_sample_state_clears_volatile(self):
+    def test_viewer_app_state_reset_sample_state_clears_volatile(self):
         st = _make_populated_state()
         st.reset_sample_state()
 
@@ -170,7 +170,7 @@ class TestStateReset:
         assert st.image_dir == Path("/some/dir")
         assert st.markers == ["DAPI", "CD45", "CK"]
 
-    def test_reset_all_clears_everything(self):
+    def test_viewer_app_state_reset_all_clears_everything(self):
         st = _make_populated_state()
         st.reset_all()
 
@@ -178,7 +178,7 @@ class TestStateReset:
         assert st.markers == []
         assert st.current_sample_name is None
 
-    def test_channel_contrast_limits_cleared_on_reset(self):
+    def test_viewer_app_state_channel_contrast_limits_cleared_on_reset(self):
         st = ViewerAppState()
         st.channel_contrast_limits["DAPI"] = [0.0, 100.0]
         st.reset_sample_state()
