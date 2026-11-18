@@ -133,7 +133,7 @@ class SegmentationPanelWidget(QWidget):
                 consensus_panel=self.consensus_panel,
                 feature_panel=self.feature_panel
             )
-        self.popup_dialog._sync_state()
+        self.popup_dialog.refresh_data()
         self.popup_dialog.show()
         self.popup_dialog.raise_()
         self.popup_dialog.activateWindow()

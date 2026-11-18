@@ -549,6 +549,21 @@ class IrisCellularNeighborhoodsWidget(QWidget):
         self.table_meta.setColumnWidth(0, 65)
         pg.addWidget(self.table_meta, 2)
 
+        export_row = QHBoxLayout()
+        export_row.setSpacing(6)
+        self.btn_export_plot = QPushButton("Export Plot...")
+        self.btn_export_plot.setToolTip(
+            "Export cellular neighborhood composition chart as PDF, SVG, or PNG"
+        )
+        self.btn_export_plot.clicked.connect(self.export_publication_plot)
+        export_row.addWidget(self.btn_export_plot)
+
+        self.btn_export_csv = QPushButton("Export CSV...")
+        self.btn_export_csv.setToolTip("Export neighborhood composition profiles as CSV")
+        self.btn_export_csv.clicked.connect(self.export_neighborhood_profiles_csv)
+        export_row.addWidget(self.btn_export_csv)
+        pg.addLayout(export_row)
+
         self.main_layout.addWidget(self.plot_group, 2)
 
     def _toggle_method_visibility(self, method: str) -> None:

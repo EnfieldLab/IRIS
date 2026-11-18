@@ -47,6 +47,7 @@ class SampleImpactDialog(QDialog):
         self.setWindowTitle("Cohort Gating Assessment")
         self.resize(900, 640)
         self.setMinimumSize(750, 500)
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
         self.setStyleSheet("""
             QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
             QGroupBox { border: 1px solid #444; border-radius: 8px; margin-top: 6px; padding-top: 6px; font-weight: bold; color: #DDD; }

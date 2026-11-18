@@ -35,6 +35,7 @@ class ConsensusPanelWidget(QWidget):
     showIndividualToggled = Signal(str, bool) # method_name, visible
     reviewModeToggled = Signal(bool)
     cellOverrideRequested = Signal(int, str) # cell_id, preferred_method
+    undoOverrideRequested = Signal()
     statisticsUpdated = Signal(int, int, int, float) # total, agreed, flagged, mean_conf
     cellReviewShown = Signal(int, float, dict)        # cell_id, confidence, method_map
     cellReviewCleared = Signal()
@@ -206,6 +207,16 @@ class ConsensusPanelWidget(QWidget):
         self.override_buttons_layout.setContentsMargins(0, 4, 0, 0)
         self.override_buttons_layout.setSpacing(3)
         gl.addLayout(self.override_buttons_layout)
+
+        self.btn_undo_override = QPushButton("Undo Override")
+        self.btn_undo_override.setToolTip("Revert the most recent manual cell override")
+        self.btn_undo_override.setStyleSheet(
+            "QPushButton { background-color: #444444; color: white; padding: 4px; "
+            "font-size: 11px; margin-top: 4px; border: 1px solid #666; }"
+            "QPushButton:hover { background-color: #5A5A5A; }"
+        )
+        self.btn_undo_override.clicked.connect(lambda: self.undoOverrideRequested.emit())
+        gl.addWidget(self.btn_undo_override)
 
         self.main_layout.addWidget(group)
 

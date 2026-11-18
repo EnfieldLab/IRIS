@@ -29,6 +29,7 @@ from qtpy.QtWidgets import (
 
 from iris_viewer.widgets.marker_expression.dialog import MarkerExpressionDialog
 from iris_viewer.widgets.marker_expression.subset_dialog import SampleSubsetDialog
+from iris_viewer.widgets.phenotyping.thresholding import resolve_marker_col
 
 
 class IrisMarkerExpressionWidget(QWidget):
@@ -224,8 +225,16 @@ class IrisMarkerExpressionWidget(QWidget):
                 if col in self.df.columns and col not in candidates:
                     candidates.append(col)
             skip_terms = {"x", "y", "z", "pos_x", "pos_y", "area", "eccentricity", "objectnumber", "cell_id"}
+            resolved_marker_cols = {
+                c for m in self.markers if (c := resolve_marker_col(self.df, m)) is not None
+            }
             for col in self.df.columns:
-                if col.lower() in skip_terms or col in self.markers or col in candidates:
+                if (
+                    col.lower() in skip_terms
+                    or col in self.markers
+                    or col in resolved_marker_cols
+                    or col in candidates
+                ):
                     continue
                 if (
                     self.df[col].dtype == 'object'
@@ -405,9 +414,15 @@ class IrisMarkerExpressionWidget(QWidget):
 
         self.celltype_col = ct_col
 
-        valid_markers = [m for m in self.markers if m in df_work.columns and pd.api.types.is_numeric_dtype(df_work[m])]
-        if not valid_markers:
+        resolved_pairs = []
+        for m in self.markers:
+            col = resolve_marker_col(df_work, m)
+            if col is not None and pd.api.types.is_numeric_dtype(df_work[col]):
+                resolved_pairs.append((m, col))
+        if not resolved_pairs:
             return
+        valid_markers = [m for m, _ in resolved_pairs]
+        col_names = [col for _, col in resolved_pairs]
 
         if ct_col.lower() == "cluster":
             if pd.api.types.is_numeric_dtype(df_work[ct_col]):
@@ -428,7 +443,8 @@ class IrisMarkerExpressionWidget(QWidget):
         if df_work.empty:
             return
 
-        matrix = df_work.groupby(ct_col, observed=True)[valid_markers].mean().fillna(0)
+        matrix = df_work.groupby(ct_col, observed=True)[col_names].mean().fillna(0)
+        matrix.columns = valid_markers
         matrix.index = matrix.index.astype(str)
         if ct_col.lower() == "cluster":
             sorted_idx = sorted(

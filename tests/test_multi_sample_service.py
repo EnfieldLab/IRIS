@@ -13,18 +13,12 @@ import napari
 import numpy as np
 import pandas as pd
 import pytest
-from qtpy.QtWidgets import QApplication
 
 from iris_viewer.app.services.image_service import ImageService
 from iris_viewer.app.services.multi_sample_service import MultiSampleService, get_sample_sub_df
 from iris_viewer.core.context import AppContext
 from iris_viewer.core.state import ViewerAppState
 from iris_viewer.widgets.legend import ViewerLegendWidget
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def test_get_sample_sub_df_ensures_canonical_pos_x_pos_y():
@@ -126,9 +120,22 @@ def _create_sample_switching_context(tmp_path: Path) -> AppContext:
     return ctx
 
 
-def test_multi_sample_service_single_sample_switch_synchronizes_phenotype_legends(tmp_path, qapp):
-    """Verify switching between single samples correctly updates active cell phenotype legend rows."""
+@pytest.fixture
+def sample_switching_ctx(tmp_path, qapp):
+    """Yield a sample-switching AppContext and close its headless Napari viewer on teardown."""
     ctx = _create_sample_switching_context(tmp_path)
+    try:
+        yield ctx
+    finally:
+        ctx.viewer.close()
+        qapp.processEvents()
+
+
+def test_multi_sample_service_single_sample_switch_synchronizes_phenotype_legends(
+    sample_switching_ctx,
+):
+    """Verify switching between single samples correctly updates active cell phenotype legend rows."""
+    ctx = sample_switching_ctx
     legend_widget = ctx.legend_widget
     ms_svc = ctx.multi_sample_svc
 
@@ -189,9 +196,9 @@ def test_multi_sample_service_single_sample_switch_synchronizes_phenotype_legend
     assert "Epithelial" not in legend_names_a_again
 
 
-def test_multi_sample_service_legend_row_deduplication(tmp_path, qapp):
+def test_multi_sample_service_legend_row_deduplication(sample_switching_ctx):
     """Verify adding the same phenotype row multiple times does not produce duplicates."""
-    ctx = _create_sample_switching_context(tmp_path)
+    ctx = sample_switching_ctx
     legend_widget = ctx.legend_widget
 
     legend_widget.add_ref_ct_row(None, "B cells", "#FF0000")
@@ -203,9 +210,9 @@ def test_multi_sample_service_legend_row_deduplication(tmp_path, qapp):
     assert matching[0].hex_color == "#00FF00"
 
 
-def test_multi_sample_service_legend_clear_synchronizes_state(tmp_path, qapp):
+def test_multi_sample_service_legend_clear_synchronizes_state(sample_switching_ctx):
     """Verify calling clear() on legend_widget resets rows and empties tracking sets."""
-    ctx = _create_sample_switching_context(tmp_path)
+    ctx = sample_switching_ctx
     legend_widget = ctx.legend_widget
     ms_svc = ctx.multi_sample_svc
 

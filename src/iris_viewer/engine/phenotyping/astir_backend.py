@@ -30,6 +30,32 @@ class ASTIRBackend(PhenotypeBackend):
         self._model = None
         self._trained: bool = False
         self._cell_ids: Optional[List[int]] = None
+        self._dataset_fingerprint: Optional[tuple] = None
+
+    @staticmethod
+    def _compute_dataset_fingerprint(
+        features: pd.DataFrame,
+        cell_ids: List[int],
+        panel: Optional[CellTypePanel] = None,
+    ) -> tuple:
+        """Compute a lightweight fingerprint to detect dataset or panel changes."""
+        row_hash = int(pd.util.hash_pandas_object(features, index=True).sum())
+        panel_sig = (
+            tuple(
+                (r.cell_type, tuple(r.markers_positive), tuple(r.markers_negative))
+                for r in panel.rules
+            )
+            if panel is not None
+            else ()
+        )
+        return (
+            len(features),
+            tuple(cell_ids[:5]),
+            tuple(cell_ids[-5:]),
+            tuple(sorted(str(c) for c in features.columns)),
+            row_hash,
+            panel_sig,
+        )
 
     # Availability
 
@@ -100,6 +126,9 @@ class ASTIRBackend(PhenotypeBackend):
             batch_size=min(batch_size, max(len(expr), 1)),
         )
         self._trained = True
+        self._dataset_fingerprint = self._compute_dataset_fingerprint(
+            features, self._cell_ids, panel
+        )
 
     # Predict
 
@@ -124,7 +153,12 @@ class ASTIRBackend(PhenotypeBackend):
         if features.empty or panel is None or not panel.rules:
             return {int(cid): {} for cid in cell_ids}
 
-        if not self._trained or self._model is None:
+        fingerprint = self._compute_dataset_fingerprint(features, cell_ids, panel)
+        if (
+            not self._trained
+            or self._model is None
+            or self._dataset_fingerprint != fingerprint
+        ):
             try:
                 self.fit(features, cell_type_panel=panel, **kwargs)
             except Exception:
@@ -164,11 +198,15 @@ class ASTIRBackend(PhenotypeBackend):
                 markers = rule.markers_positive
                 if not markers:
                     continue
-                vals = [
-                    row[col] for m in markers
-                    for col in (f"{m}_mean", m)
-                    if col in features.columns
-                ]
+                vals = []
+                lower_cols = {str(c).lower(): c for c in features.columns}
+                for m in markers:
+                    col = next(
+                        (c for c in (m, f"{m}_mean") if c in features.columns),
+                        lower_cols.get(m.lower()) or lower_cols.get(f"{m.lower()}_mean"),
+                    )
+                    if col is not None:
+                        vals.append(row[col])
                 scores[ct] = float(np.mean(vals)) if vals else 0.0
 
             total = sum(scores.values())

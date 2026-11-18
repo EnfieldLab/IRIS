@@ -243,10 +243,15 @@ class BatchService:
         """
         ctx = self.ctx
         panel = ctx.segmentation_panel
+        tw = (
+            panel.pipeline_builder.tab_widget
+            if hasattr(panel, "pipeline_builder")
+            else panel.tab_widget
+        )
         groups: dict = {}
-        for i in range(panel.tab_widget.count()):
-            name = panel.tab_widget.tabText(i)
-            steps = panel.tab_widget.widget(i).get_steps()
+        for i in range(tw.count()):
+            name = tw.tabText(i)
+            steps = tw.widget(i).get_steps()
             if steps:
                 groups[name] = steps
         return groups

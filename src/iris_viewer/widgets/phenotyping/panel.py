@@ -17,7 +17,6 @@ import pandas as pd
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
@@ -40,6 +39,7 @@ from iris_viewer.widgets.phenotyping.manual_gating import ManualGatingWidget
 from iris_viewer.widgets.phenotyping.thresholding import (
     arcsinh_transform,
     find_sample_column,
+    resolve_marker_col,
 )
 from iris_viewer.widgets.styles import SHARED_DARK_THEME
 
@@ -701,25 +701,105 @@ class PhenotyperPanelWidget(QWidget):
         p_lyt.addWidget(scroll)
         return panel
 
+    def _should_run_async(self) -> bool:
+        return (
+            self.ctx is not None
+            and getattr(self.ctx, "track_worker", None) is not None
+        )
+
+    def _dispatch_heavy_task(
+        self,
+        fn,
+        on_done,
+        on_error,
+        error_title: str,
+        error_prefix: str,
+    ) -> None:
+        """Run *fn* off the main thread via thread_worker when ctx.track_worker exists."""
+        if self._should_run_async():
+            from napari.qt import thread_worker
+
+            @thread_worker
+            def _worker():
+                return fn()
+
+            worker = _worker()
+            worker.returned.connect(on_done)
+            self.ctx.track_worker(
+                worker,
+                on_error=on_error,
+                error_title=error_title,
+                error_prefix=error_prefix,
+            )
+            self._active_worker = worker
+            worker.start()
+        else:
+            try:
+                result = fn()
+            except Exception as exc:
+                on_error(exc)
+                return
+            on_done(result)
+
+    def _resolve_panel_markers(self, raw_df: pd.DataFrame) -> List[str]:
+        """Resolve clean marker names present in *raw_df* directly or via suffix."""
+        avail = (
+            getattr(self.manual_gating, "available_markers", [])
+            if hasattr(self, "manual_gating")
+            else []
+        )
+        markers = [m for m in avail if resolve_marker_col(raw_df, m) is not None]
+        if not markers:
+            mean_cols = [
+                str(c)
+                for c in raw_df.columns
+                if str(c).endswith("_mean")
+                and pd.api.types.is_numeric_dtype(raw_df[c])
+            ]
+            if mean_cols:
+                markers = [c[:-5] for c in mean_cols]
+            else:
+                markers = [
+                    str(c)
+                    for c in raw_df.select_dtypes(include=[np.number]).columns
+                    if not str(c)
+                    .lower()
+                    .startswith(("x", "y", "z", "area", "id", "cell", "object", "pos"))
+                ]
+        return markers
+
+    @staticmethod
+    def _build_backend_feature_frame(
+        raw_df: pd.DataFrame,
+        markers: List[str],
+    ) -> pd.DataFrame:
+        """Build a thread-safe DataFrame copy with canonical `<marker>_mean` aliases."""
+        df_copy = raw_df.copy()
+        for m in markers:
+            col = resolve_marker_col(df_copy, m)
+            if col is not None and f"{m}_mean" not in df_copy.columns:
+                df_copy[f"{m}_mean"] = df_copy[col]
+        return df_copy
+
     def _run_astir(self):
-        raw_df = self.manual_gating.get_active_dataframe() if hasattr(self, 'manual_gating') else None
+        raw_df = (
+            self.manual_gating.get_active_dataframe()
+            if hasattr(self, "manual_gating")
+            else None
+        )
         if raw_df is None or raw_df.empty:
             self.lbl_astir_status.setText("No active cell dataframe available.")
             self.lbl_astir_status.setStyleSheet("color: #FF5252; font-size: 11px;")
             return
+
         epochs = self.spin_astir_epochs.value()
         lr = self.spin_astir_lr.value()
         batch_size = self.spin_astir_batch.value()
         col = self.txt_astir_col.text().strip() or "ASTIR_CellType"
-        self.lbl_astir_status.setText(f"Running ASTIR VI optimization ({epochs} epochs, lr={lr})...")
-        self.lbl_astir_status.setStyleSheet("color: #44AAFF; font-size: 11px;")
-        QApplication.processEvents()
+        cutoff = self.spin_astir_cutoff.value()
+        unk_cutoff = self.spin_astir_unk.value()
 
-        markers = [m for m in self.manual_gating.available_markers if m in raw_df.columns]
-        if not markers:
-            markers = [c for c in raw_df.select_dtypes(include=[np.number]).columns
-                       if not c.lower().startswith(('x', 'y', 'z', 'area', 'id', 'cell', 'object', 'pos'))]
-
+        markers = self._resolve_panel_markers(raw_df)
         if not markers:
             self.lbl_astir_status.setText("ASTIR failed: No numeric marker columns detected.")
             self.lbl_astir_status.setStyleSheet("color: #FF5252; font-size: 11px;")
@@ -728,13 +808,15 @@ class PhenotyperPanelWidget(QWidget):
         from iris_viewer.core.types import CellTypePanel, CellTypeRule, MarkerPanel
         from iris_viewer.engine.phenotyping.astir_backend import ASTIRBackend
 
-        backend = ASTIRBackend()
-        is_astir_installed = backend.is_available()
-
-        tree_nodes = [
-            n for n in self.manual_gating.hierarchy_root.get_all_nodes()
-            if n.parent is not None and n.markers
-        ] if hasattr(self.manual_gating, 'hierarchy_root') else []
+        tree_nodes = (
+            [
+                n
+                for n in self.manual_gating.hierarchy_root.get_all_nodes()
+                if n.parent is not None and n.markers
+            ]
+            if hasattr(self.manual_gating, "hierarchy_root")
+            else []
+        )
 
         rules = []
         if len(tree_nodes) >= 2:
@@ -746,10 +828,20 @@ class PhenotyperPanelWidget(QWidget):
 
         panel = CellTypePanel(rules=rules)
         mp = MarkerPanel(markers=markers)
+        df_input = self._build_backend_feature_frame(raw_df, markers)
+        cids = ASTIRBackend._cell_ids_from_features(df_input)
 
-        try:
+        self.btn_run_astir.setEnabled(False)
+        self.lbl_astir_status.setText(
+            f"Running ASTIR VI optimization ({epochs} epochs, lr={lr})..."
+        )
+        self.lbl_astir_status.setStyleSheet("color: #44AAFF; font-size: 11px;")
+
+        def _compute():
+            backend = ASTIRBackend()
+            is_astir_installed = backend.is_available()
             prob_dict = backend.predict(
-                raw_df,
+                df_input,
                 cell_type_panel=panel,
                 marker_panel=mp,
                 max_epochs=epochs,
@@ -757,12 +849,7 @@ class PhenotyperPanelWidget(QWidget):
                 batch_size=batch_size,
                 arcsinh_cofactor=5.0,
             )
-
-            cutoff = self.spin_astir_cutoff.value()
-            unk_cutoff = self.spin_astir_unk.value()
-
             assignments = []
-            cids = backend._cell_ids_from_features(raw_df)
             for cid in cids:
                 probs = prob_dict.get(cid, {})
                 if probs:
@@ -775,39 +862,68 @@ class PhenotyperPanelWidget(QWidget):
                         assignments.append(f"{best_type} (Low Conf)")
                 else:
                     assignments.append("Unassigned")
+            return assignments, is_astir_installed
 
-            raw_df[col] = assignments
+        def _on_done(result):
+            try:
+                assignments, is_astir_installed = result
+                raw_df[col] = assignments
+                palette = [
+                    "#00E5FF", "#FF0055", "#76FF03", "#FFD600", "#D500F9",
+                    "#FF6D00", "#00B0FF", "#00E676", "#FF1744", "#651FFF",
+                ]
+                unique_cts = [
+                    ct for ct in raw_df[col].unique() if ct not in ("Unknown", "Unassigned")
+                ]
+                for idx, ct_name in enumerate(unique_cts):
+                    m_pos = raw_df[col] == ct_name
+                    match_cnt = int(m_pos.sum())
+                    self.manual_gating.on_gate_applied({
+                        "label": ct_name,
+                        "color": palette[idx % len(palette)],
+                        "target_col": col,
+                        "count": match_cnt,
+                        "pct": (match_cnt / len(raw_df)) * 100.0,
+                        "markers": tuple(markers),
+                        "mask": m_pos,
+                    })
 
-            palette = [
-                '#00E5FF', '#FF0055', '#76FF03', '#FFD600', '#D500F9',
-                '#FF6D00', '#00B0FF', '#00E676', '#FF1744', '#651FFF'
-            ]
-            unique_cts = [ct for ct in raw_df[col].unique() if ct not in ('Unknown', 'Unassigned')]
-            for idx, ct_name in enumerate(unique_cts):
-                m_pos = (raw_df[col] == ct_name)
-                match_cnt = int(m_pos.sum())
-                self.manual_gating.on_gate_applied({
-                    'label': ct_name,
-                    'color': palette[idx % len(palette)],
-                    'target_col': col,
-                    'count': match_cnt,
-                    'pct': (match_cnt / len(raw_df)) * 100.0,
-                    'markers': tuple(markers),
-                    'mask': m_pos,
-                })
+                if is_astir_installed:
+                    status_msg = (
+                        f"✓ ASTIR converged: classified {len(raw_df):,} cells "
+                        f"into {len(unique_cts)} types -> '{col}'."
+                    )
+                else:
+                    status_msg = (
+                        f"✓ ASTIR rule fallback complete: {len(raw_df):,} cells "
+                        f"classified -> '{col}'."
+                    )
+                self.lbl_astir_status.setText(status_msg)
+                self.lbl_astir_status.setStyleSheet(
+                    "color: #76FF03; font-weight: bold; font-size: 11px;"
+                )
+            finally:
+                self.btn_run_astir.setEnabled(True)
 
-            status_msg = f"✓ ASTIR converged: classified {len(raw_df):,} cells into {len(unique_cts)} types -> '{col}'."
-            if not is_astir_installed:
-                status_msg = f"✓ ASTIR rule fallback complete: {len(raw_df):,} cells classified -> '{col}'."
-            self.lbl_astir_status.setText(status_msg)
-            self.lbl_astir_status.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
-
-        except Exception as e:
-            self.lbl_astir_status.setText(f"ASTIR execution error: {str(e)[:50]}")
+        def _on_error(exc: Exception):
+            self.btn_run_astir.setEnabled(True)
+            self.lbl_astir_status.setText(f"ASTIR execution error: {str(exc)[:50]}")
             self.lbl_astir_status.setStyleSheet("color: #FF5252; font-size: 11px;")
 
+        self._dispatch_heavy_task(
+            _compute,
+            _on_done,
+            _on_error,
+            error_title="ASTIR Phenotyping Error",
+            error_prefix="ASTIR phenotyping failed",
+        )
+
     def _run_maps(self):
-        raw_df = self.manual_gating.get_active_dataframe() if hasattr(self, 'manual_gating') else None
+        raw_df = (
+            self.manual_gating.get_active_dataframe()
+            if hasattr(self, "manual_gating")
+            else None
+        )
         if raw_df is None or raw_df.empty:
             self.lbl_maps_status.setText("No active cell dataframe available.")
             self.lbl_maps_status.setStyleSheet("color: #FF5252; font-size: 11px;")
@@ -816,15 +932,8 @@ class PhenotyperPanelWidget(QWidget):
         radius = self.spin_maps_radius.value()
         arch = self.combo_maps_arch.currentText()
         col = self.txt_maps_col.text().strip() or "MAPS_CellType"
-        self.lbl_maps_status.setText(f"Building {arch} with {radius}µm microenvironment graph...")
-        self.lbl_maps_status.setStyleSheet("color: #44AAFF; font-size: 11px;")
-        QApplication.processEvents()
 
-        markers = [m for m in self.manual_gating.available_markers if m in raw_df.columns]
-        if not markers:
-            markers = [c for c in raw_df.select_dtypes(include=[np.number]).columns
-                       if not c.lower().startswith(('x', 'y', 'z', 'area', 'id', 'cell', 'object', 'pos'))]
-
+        markers = self._resolve_panel_markers(raw_df)
         if not markers:
             self.lbl_maps_status.setText("MAPS failed: No marker columns detected.")
             self.lbl_maps_status.setStyleSheet("color: #FF5252; font-size: 11px;")
@@ -833,15 +942,23 @@ class PhenotyperPanelWidget(QWidget):
         from iris_viewer.core.types import CellTypePanel, CellTypeRule
         from iris_viewer.engine.phenotyping.maps_backend import MAPSBackend
 
-        backend = MAPSBackend()
         rules = [CellTypeRule(cell_type=f"MAPS_{m}+", markers_positive=[m]) for m in markers[:8]]
         panel = CellTypePanel(rules=rules)
+        df_input = self._build_backend_feature_frame(raw_df, markers)
+        cids = [
+            int(row.get("ObjectNumber", row.get("Cell_ID", row.get("cell_id", idx))))
+            for idx, row in df_input.iterrows()
+        ]
 
-        try:
-            preds = backend.predict(raw_df, cell_types=panel)
-            cids = [int(row.get("ObjectNumber", row.get("Cell_ID", row.get("cell_id", idx))))
-                    for idx, row in raw_df.iterrows()]
+        self.btn_run_maps.setEnabled(False)
+        self.lbl_maps_status.setText(
+            f"Building {arch} with {radius}µm microenvironment graph..."
+        )
+        self.lbl_maps_status.setStyleSheet("color: #44AAFF; font-size: 11px;")
 
+        def _compute():
+            backend = MAPSBackend()
+            preds = backend.predict(df_input, cell_types=panel)
             assignments = []
             for cid in cids:
                 p = preds.get(cid, {})
@@ -850,27 +967,46 @@ class PhenotyperPanelWidget(QWidget):
                     assignments.append(best_ct)
                 else:
                     assignments.append("Unresolved")
+            return assignments
 
-            raw_df[col] = assignments
-            palette = ['#00FFFF', '#FF00AA', '#00FF66', '#FFBB00', '#7700FF', '#00AAFF']
-            unique_cts = [ct for ct in raw_df[col].unique() if ct != "Unresolved"]
-            for idx, ct_name in enumerate(unique_cts):
-                m_pos = (raw_df[col] == ct_name)
-                match_cnt = int(m_pos.sum())
-                self.manual_gating.on_gate_applied({
-                    'label': ct_name,
-                    'color': palette[idx % len(palette)],
-                    'target_col': col,
-                    'count': match_cnt,
-                    'pct': (match_cnt / len(raw_df)) * 100.0,
-                    'markers': tuple(markers),
-                    'mask': m_pos,
-                })
-            self.lbl_maps_status.setText(f"✓ MAPS spatial phenotyping finished: {len(raw_df):,} cells classified -> '{col}'.")
-            self.lbl_maps_status.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
-        except Exception as e:
-            self.lbl_maps_status.setText(f"MAPS error: {str(e)[:50]}")
+        def _on_done(assignments):
+            try:
+                raw_df[col] = assignments
+                palette = ["#00FFFF", "#FF00AA", "#00FF66", "#FFBB00", "#7700FF", "#00AAFF"]
+                unique_cts = [ct for ct in raw_df[col].unique() if ct != "Unresolved"]
+                for idx, ct_name in enumerate(unique_cts):
+                    m_pos = raw_df[col] == ct_name
+                    match_cnt = int(m_pos.sum())
+                    self.manual_gating.on_gate_applied({
+                        "label": ct_name,
+                        "color": palette[idx % len(palette)],
+                        "target_col": col,
+                        "count": match_cnt,
+                        "pct": (match_cnt / len(raw_df)) * 100.0,
+                        "markers": tuple(markers),
+                        "mask": m_pos,
+                    })
+                self.lbl_maps_status.setText(
+                    f"✓ MAPS spatial phenotyping finished: {len(raw_df):,} cells classified -> '{col}'."
+                )
+                self.lbl_maps_status.setStyleSheet(
+                    "color: #76FF03; font-weight: bold; font-size: 11px;"
+                )
+            finally:
+                self.btn_run_maps.setEnabled(True)
+
+        def _on_error(exc: Exception):
+            self.btn_run_maps.setEnabled(True)
+            self.lbl_maps_status.setText(f"MAPS error: {str(exc)[:50]}")
             self.lbl_maps_status.setStyleSheet("color: #FF5252; font-size: 11px;")
+
+        self._dispatch_heavy_task(
+            _compute,
+            _on_done,
+            _on_error,
+            error_title="MAPS Phenotyping Error",
+            error_prefix="MAPS phenotyping failed",
+        )
 
     def _get_selected_samples(self) -> List[str]:
         if hasattr(self, 'manual_gating') and hasattr(self.manual_gating, '_get_selected_samples'):
@@ -941,12 +1077,26 @@ class PhenotyperPanelWidget(QWidget):
         if not hasattr(self, 'list_cluster_markers'):
             return
         raw_df = self.manual_gating.get_active_dataframe() if hasattr(self, 'manual_gating') else None
-        all_markers = [m for m in self.manual_gating.available_markers if raw_df is not None and m in raw_df.columns] if hasattr(self, 'manual_gating') else []
-        if not all_markers and raw_df is not None:
-            all_markers = [
-                c for c in raw_df.select_dtypes(include=[np.number]).columns
-                if not c.lower().startswith(('x', 'y', 'z', 'area', 'id', 'cell', 'pos', 'object'))
+        all_markers = (
+            [
+                m for m in self.manual_gating.available_markers
+                if raw_df is not None and resolve_marker_col(raw_df, m) is not None
             ]
+            if hasattr(self, 'manual_gating')
+            else []
+        )
+        if not all_markers and raw_df is not None:
+            mean_cols = [
+                str(c) for c in raw_df.columns
+                if str(c).endswith("_mean") and pd.api.types.is_numeric_dtype(raw_df[c])
+            ]
+            if mean_cols:
+                all_markers = [c[:-5] for c in mean_cols]
+            else:
+                all_markers = [
+                    c for c in raw_df.select_dtypes(include=[np.number]).columns
+                    if not c.lower().startswith(('x', 'y', 'z', 'area', 'id', 'cell', 'pos', 'object'))
+                ]
 
         curr_checked = set(self._get_checked_clustering_markers())
         self.list_cluster_markers.blockSignals(True)
@@ -1058,7 +1208,7 @@ class PhenotyperPanelWidget(QWidget):
 
     def _run_clustering(self):
         raw_df = None
-        if hasattr(self, 'manual_gating'):
+        if hasattr(self, "manual_gating"):
             raw_df = self.manual_gating.get_active_dataframe()
         if raw_df is None or raw_df.empty:
             self.lbl_cluster_status.setText("⚠ No active cell dataframe available.")
@@ -1094,16 +1244,22 @@ class PhenotyperPanelWidget(QWidget):
 
         markers = self._get_checked_clustering_markers()
         if not markers:
-            markers = [m for m in self.manual_gating.available_markers if m in raw_df.columns] if hasattr(self, 'manual_gating') else []
-            if not markers:
-                markers = [c for c in raw_df.select_dtypes(include=[np.number]).columns if not c.lower().startswith(('x', 'y', 'z', 'area', 'id', 'cell', 'pos', 'object'))]
+            markers = self._resolve_panel_markers(raw_df)
 
-        if not markers:
+        marker_pairs = []
+        for m in markers:
+            col = resolve_marker_col(raw_df, m)
+            if col is not None and pd.api.types.is_numeric_dtype(raw_df[col]):
+                marker_pairs.append((m, col))
+
+        if not marker_pairs:
             self.lbl_cluster_status.setText("⚠ Please select at least one marker for clustering.")
             self.lbl_cluster_status.setStyleSheet("color: #FF5252; font-size: 11px;")
             return
 
-        self.last_clustered_markers = list(markers)
+        display_markers = [m for m, _ in marker_pairs]
+        marker_cols = [c for _, c in marker_pairs]
+        self.last_clustered_markers = list(display_markers)
 
         n_subset = int(mask_cells.sum())
         if n_subset < 2:
@@ -1112,40 +1268,63 @@ class PhenotyperPanelWidget(QWidget):
             return
 
         method = self.combo_cluster_method.currentText()
-        self.lbl_cluster_status.setText(f"Clustering {n_subset:,} cells across {scope_desc} using {len(markers)} markers with {method}...")
-        self.lbl_cluster_status.setStyleSheet("color: #44AAFF; font-size: 11px;")
-        QApplication.processEvents()
+        knn = self.spin_leiden_knn.value()
+        res = self.spin_leiden_res.value()
+        k_val = self.spin_pheno_k.value()
+        min_size = self.spin_pheno_min_size.value()
+        kmeans_k = self.spin_kmeans_k.value()
+        kmeans_batch = self.spin_kmeans_batch.value()
+        sub_df = raw_df.loc[mask_cells, marker_cols].copy()
 
-        try:
-            sub_df = raw_df.loc[mask_cells]
-            X = arcsinh_transform(sub_df[markers].fillna(0).to_numpy())
+        self.btn_run_cluster.setEnabled(False)
+        self.lbl_cluster_status.setText(
+            f"Clustering {n_subset:,} cells across {scope_desc} "
+            f"using {len(display_markers)} markers with {method}..."
+        )
+        self.lbl_cluster_status.setStyleSheet("color: #44AAFF; font-size: 11px;")
+
+        def _compute():
+            X = arcsinh_transform(sub_df.fillna(0).to_numpy())
+            fallback_msg = None
 
             if "Leiden" in method:
-                knn = self.spin_leiden_knn.value()
-                res = self.spin_leiden_res.value()
                 try:
                     import anndata as ad
                     import scanpy as sc
+
                     adata = ad.AnnData(X=X)
                     sc.pp.neighbors(adata, n_neighbors=min(knn, max(2, len(X) - 1)))
                     try:
-                        sc.tl.leiden(adata, resolution=res, flavor="igraph", n_iterations=2, directed=False)
+                        sc.tl.leiden(
+                            adata,
+                            resolution=res,
+                            flavor="igraph",
+                            n_iterations=2,
+                            directed=False,
+                        )
                     except (TypeError, ValueError, Exception):
                         sc.tl.leiden(adata, resolution=res)
-                    labels = adata.obs['leiden'].astype(int).to_numpy()
+                    labels = adata.obs["leiden"].astype(int).to_numpy()
                 except Exception as sc_err:
                     from sklearn.cluster import MiniBatchKMeans
-                    k_est = max(2, min(int(round(res * 10)), 30))
-                    model = MiniBatchKMeans(n_clusters=k_est, random_state=42, batch_size=min(1024, len(X)))
+
+                    k_est = max(2, min(int(round(res * 10)), 30, len(X)))
+                    model = MiniBatchKMeans(
+                        n_clusters=k_est,
+                        random_state=42,
+                        batch_size=min(1024, len(X)),
+                    )
                     labels = model.fit_predict(X)
-                    self.lbl_cluster_status.setText(f"Leiden fallback (Scanpy unavailable: {str(sc_err)[:30]}). Fitted k={k_est}.")
+                    fallback_msg = (
+                        f"Leiden fallback (Scanpy unavailable: {str(sc_err)[:30]}). "
+                        f"Fitted k={k_est}."
+                    )
 
             elif "PhenoGraph" in method:
-                k_val = self.spin_pheno_k.value()
-                min_size = self.spin_pheno_min_size.value()
                 try:
                     import phenograph
-                    communities, graph, Q = phenograph.cluster(
+
+                    communities, _graph, _q = phenograph.cluster(
                         X,
                         k=min(k_val, max(2, len(X) - 1)),
                         min_cluster_size=min_size,
@@ -1155,115 +1334,188 @@ class PhenotyperPanelWidget(QWidget):
                     try:
                         import anndata as ad
                         import scanpy as sc
+
                         adata = ad.AnnData(X=X)
                         sc.pp.neighbors(adata, n_neighbors=min(k_val, max(2, len(X) - 1)))
                         try:
-                            sc.tl.leiden(adata, resolution=1.0, flavor="igraph", n_iterations=2, directed=False)
+                            sc.tl.leiden(
+                                adata,
+                                resolution=1.0,
+                                flavor="igraph",
+                                n_iterations=2,
+                                directed=False,
+                            )
                         except (TypeError, ValueError, Exception):
                             sc.tl.leiden(adata, resolution=1.0)
-                        labels = adata.obs['leiden'].astype(int).to_numpy()
-                        self.lbl_cluster_status.setText("PhenoGraph fallback (pkg not installed). Used graph Leiden.")
+                        labels = adata.obs["leiden"].astype(int).to_numpy()
+                        fallback_msg = (
+                            "PhenoGraph fallback (pkg not installed). Used graph Leiden."
+                        )
                     except Exception:
                         from sklearn.cluster import MiniBatchKMeans
-                        model = MiniBatchKMeans(n_clusters=8, random_state=42, batch_size=min(1024, len(X)))
+
+                        model = MiniBatchKMeans(
+                            n_clusters=min(8, len(X)),
+                            random_state=42,
+                            batch_size=min(1024, len(X)),
+                        )
                         labels = model.fit_predict(X)
                 except Exception:
                     from sklearn.cluster import MiniBatchKMeans
-                    model = MiniBatchKMeans(n_clusters=8, random_state=42, batch_size=min(1024, len(X)))
+
+                    model = MiniBatchKMeans(
+                        n_clusters=min(8, len(X)),
+                        random_state=42,
+                        batch_size=min(1024, len(X)),
+                    )
                     labels = model.fit_predict(X)
 
             else:  # KMeans
-                k_val = self.spin_kmeans_k.value()
-                batch_val = min(self.spin_kmeans_batch.value(), len(X))
                 from sklearn.cluster import MiniBatchKMeans
-                model = MiniBatchKMeans(n_clusters=min(k_val, len(X)), batch_size=batch_val, random_state=42)
+
+                batch_val = min(kmeans_batch, len(X))
+                model = MiniBatchKMeans(
+                    n_clusters=min(kmeans_k, len(X)),
+                    batch_size=batch_val,
+                    random_state=42,
+                )
                 labels = model.fit_predict(X)
 
-            # Format cluster labels
-            formatted_labels = [f"Cluster {c}" if c >= 0 else "Noise / Outlier" for c in labels]
+            formatted_labels = [
+                f"Cluster {c}" if c >= 0 else "Noise / Outlier" for c in labels
+            ]
 
-            if 'Cluster' not in raw_df.columns:
-                raw_df['Cluster'] = "Unassigned"
-            raw_df.loc[mask_cells, 'Cluster'] = formatted_labels
-
-            # Propagate Cluster to master_df, resolved_dfs, and current_mapped_df
-            if self.ctx and getattr(self.ctx, 'state', None) is not None:
-                if self.ctx.state.master_df is not None and len(self.ctx.state.master_df) == len(raw_df):
-                    self.ctx.state.master_df['Cluster'] = raw_df['Cluster'].values
-                if hasattr(self.ctx.state, 'resolved_dfs') and self.ctx.state.resolved_dfs:
-                    scol_name = find_sample_column(raw_df)
-                    for sname in list(self.ctx.state.resolved_dfs.keys()):
-                        if scol_name:
-                            m_s = (raw_df[scol_name].astype(str).str.strip() == str(sname).strip())
-                            if m_s.any() and len(self.ctx.state.resolved_dfs[sname]) == m_s.sum():
-                                self.ctx.state.resolved_dfs[sname]['Cluster'] = raw_df.loc[m_s, 'Cluster'].values
-                if getattr(self.ctx.state, 'current_mapped_df', None) is not None:
-                    if len(self.ctx.state.current_mapped_df) == len(raw_df):
-                        self.ctx.state.current_mapped_df['Cluster'] = raw_df['Cluster'].values
-
-            # Compute marker z-scores per cluster across the clustered subset
-            m_means = sub_df[markers].mean()
-            m_stds = sub_df[markers].std().replace(0, 1.0) + 1e-6
-            z_df = (sub_df[markers] - m_means) / m_stds
-
-            self.cluster_profiles = {}
-            self.list_clusters.clear()
+            sub_renamed = sub_df.copy()
+            sub_renamed.columns = display_markers
+            m_means = sub_renamed.mean()
+            m_stds = sub_renamed.std().replace(0, 1.0) + 1e-6
+            z_df = (sub_renamed - m_means) / m_stds
 
             unique_c = sorted(
                 [str(x) for x in np.unique(formatted_labels) if str(x) != "Noise / Outlier"],
-                key=lambda s: (0, int(re.search(r'\d+', s).group())) if re.search(r'\d+', s) else (1, s)
+                key=lambda s: (
+                    (0, int(re.search(r"\d+", s).group()))
+                    if re.search(r"\d+", s)
+                    else (1, s)
+                ),
             )
             if "Noise / Outlier" in formatted_labels:
                 unique_c.append("Noise / Outlier")
 
+            profiles = {}
+            label_arr = np.array(formatted_labels)
             for c in unique_c:
-                c_mask = (np.array(formatted_labels) == c)
+                c_mask = label_arr == c
                 c_cnt = int(c_mask.sum())
                 c_pct = (c_cnt / len(formatted_labels)) * 100.0
-
                 c_mean_z = z_df[c_mask].mean()
                 top_z = c_mean_z.sort_values(ascending=False).head(4)
                 pos_markers = [m for m, val in top_z.items() if val > 0.35]
                 if not pos_markers:
                     pos_markers = list(top_z.head(2).index)
-                profile_desc = ", ".join([f"{m}+ (z={c_mean_z[m]:+.1f})" for m in pos_markers[:3]])
+                profile_desc = ", ".join(
+                    [f"{m}+ (z={c_mean_z[m]:+.1f})" for m in pos_markers[:3]]
+                )
                 short_names = [f"{m}+" for m in pos_markers[:2]]
-
-                prof = {
-                    'name': c,
-                    'count': c_cnt,
-                    'pct': c_pct,
-                    'profile_desc': profile_desc,
-                    'short_names': short_names,
-                    'suggested_label': f"{' '.join(short_names)} Population" if short_names else f"{c} Population",
-                    'top_z': c_mean_z.to_dict(),
+                profiles[c] = {
+                    "name": c,
+                    "count": c_cnt,
+                    "pct": c_pct,
+                    "profile_desc": profile_desc,
+                    "short_names": short_names,
+                    "suggested_label": (
+                        f"{' '.join(short_names)} Population"
+                        if short_names
+                        else f"{c} Population"
+                    ),
+                    "top_z": c_mean_z.to_dict(),
                 }
-                self.cluster_profiles[c] = prof
 
-                item = QListWidgetItem(f"{c}: {c_cnt:,} cells ({c_pct:.1f}%) — {', '.join(short_names)}")
-                item.setData(Qt.UserRole, c)
-                item.setData(Qt.UserRole + 1, prof)
-                self.list_clusters.addItem(item)
+            return formatted_labels, fallback_msg, profiles, unique_c
 
-            self.lbl_cluster_status.setText(f"✓ {method} complete: {len(unique_c)} clusters across {scope_desc} ({n_subset:,} cells).")
-            self.lbl_cluster_status.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+        def _on_done(result):
+            try:
+                formatted_labels, fallback_msg, profiles, unique_c = result
 
-            if self.list_clusters.count() > 0:
-                self.list_clusters.setCurrentRow(0)
+                if "Cluster" not in raw_df.columns:
+                    raw_df["Cluster"] = "Unassigned"
+                raw_df.loc[mask_cells, "Cluster"] = formatted_labels
 
-            if self.ctx and hasattr(self.ctx, 'marker_widget') and self.ctx.marker_widget:
-                try:
-                    self.ctx.marker_widget.set_data(
-                        df=raw_df,
-                        markers=markers,
-                        celltype_col='Cluster',
+                if self.ctx and getattr(self.ctx, "state", None) is not None:
+                    if (
+                        self.ctx.state.master_df is not None
+                        and len(self.ctx.state.master_df) == len(raw_df)
+                    ):
+                        self.ctx.state.master_df["Cluster"] = raw_df["Cluster"].values
+                    if hasattr(self.ctx.state, "resolved_dfs") and self.ctx.state.resolved_dfs:
+                        scol_name = find_sample_column(raw_df)
+                        for sname in list(self.ctx.state.resolved_dfs.keys()):
+                            if scol_name:
+                                m_s = (
+                                    raw_df[scol_name].astype(str).str.strip()
+                                    == str(sname).strip()
+                                )
+                                if (
+                                    m_s.any()
+                                    and len(self.ctx.state.resolved_dfs[sname]) == m_s.sum()
+                                ):
+                                    self.ctx.state.resolved_dfs[sname]["Cluster"] = (
+                                        raw_df.loc[m_s, "Cluster"].values
+                                    )
+                    if getattr(self.ctx.state, "current_mapped_df", None) is not None:
+                        if len(self.ctx.state.current_mapped_df) == len(raw_df):
+                            self.ctx.state.current_mapped_df["Cluster"] = raw_df["Cluster"].values
+
+                self.cluster_profiles = profiles
+                self.list_clusters.clear()
+                for c in unique_c:
+                    prof = profiles[c]
+                    item = QListWidgetItem(
+                        f"{c}: {prof['count']:,} cells ({prof['pct']:.1f}%) "
+                        f"— {', '.join(prof['short_names'])}"
                     )
-                except Exception:
-                    pass
+                    item.setData(Qt.UserRole, c)
+                    item.setData(Qt.UserRole + 1, prof)
+                    self.list_clusters.addItem(item)
 
-        except Exception as e:
-            self.lbl_cluster_status.setText(f"Clustering failed: {str(e)[:45]}")
+                if fallback_msg:
+                    self.lbl_cluster_status.setText(fallback_msg)
+                else:
+                    self.lbl_cluster_status.setText(
+                        f"✓ {method} complete: {len(unique_c)} clusters "
+                        f"across {scope_desc} ({n_subset:,} cells)."
+                    )
+                self.lbl_cluster_status.setStyleSheet(
+                    "color: #76FF03; font-weight: bold; font-size: 11px;"
+                )
+
+                if self.list_clusters.count() > 0:
+                    self.list_clusters.setCurrentRow(0)
+
+                if self.ctx and hasattr(self.ctx, "marker_widget") and self.ctx.marker_widget:
+                    try:
+                        self.ctx.marker_widget.set_data(
+                            df=raw_df,
+                            markers=display_markers,
+                            celltype_col="Cluster",
+                        )
+                    except Exception:
+                        pass
+            finally:
+                self.btn_run_cluster.setEnabled(True)
+
+        def _on_error(exc: Exception):
+            self.btn_run_cluster.setEnabled(True)
+            self.lbl_cluster_status.setText(f"Clustering failed: {str(exc)[:45]}")
             self.lbl_cluster_status.setStyleSheet("color: #FF5252; font-size: 11px;")
+
+        self._dispatch_heavy_task(
+            _compute,
+            _on_done,
+            _on_error,
+            error_title="Clustering Error",
+            error_prefix="Unsupervised clustering failed",
+        )
 
     def _show_cluster_heatmap(self):
         raw_df = self.manual_gating.get_active_dataframe() if hasattr(self, 'manual_gating') else None
@@ -1282,9 +1534,7 @@ class PhenotyperPanelWidget(QWidget):
         if not markers:
             markers = self._get_checked_clustering_markers()
         if not markers:
-            markers = [m for m in self.manual_gating.available_markers if m in raw_df.columns] if hasattr(self, 'manual_gating') else []
-        if not markers:
-            markers = [c for c in raw_df.select_dtypes(include=[np.number]).columns if not c.lower().startswith(('x', 'y', 'z', 'area', 'id', 'cell', 'pos', 'object'))]
+            markers = self._resolve_panel_markers(raw_df)
 
         if self.ctx and hasattr(self.ctx, 'marker_widget') and self.ctx.marker_widget:
             try:

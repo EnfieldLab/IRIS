@@ -32,7 +32,8 @@ class CanvasScaleBarOverlay(QWidget):
         self.layout.addWidget(self.lbl_bar)
 
         self._scale_val = 1.0
-        self._unit = "px"
+        self._calibrated: bool = True
+        self._unit = "µm" if self._calibrated else "px"
         self._position = "bottom_left"
         self._font_size = 26
         self._thickness = 10
@@ -86,10 +87,22 @@ class CanvasScaleBarOverlay(QWidget):
         self._position = pos
         self._reposition()
 
-    def set_physical_scale(self, scale_val: float):
+    def set_calibrated(self, calibrated: bool) -> None:
+        """Set whether physical unit calibration (um) or pixel units are active."""
+        self._calibrated = bool(calibrated)
+        self._unit = "µm" if self._calibrated else "px"
+        self._update_scale_bar()
+
+    def set_physical_scale(
+        self,
+        scale_val: float,
+        calibrated: bool | None = None,
+    ) -> None:
         """Called when the user changes physical scale in the UI."""
-        self._scale_val = scale_val
-        self._unit = "µm" if scale_val != 1.0 else "px"
+        if calibrated is not None:
+            self._calibrated = bool(calibrated)
+        self._scale_val = float(scale_val)
+        self._unit = "µm" if self._calibrated else "px"
         self._update_scale_bar()
 
     def eventFilter(self, obj, event):

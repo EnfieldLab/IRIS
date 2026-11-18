@@ -38,10 +38,11 @@ from iris_viewer.widgets.phenotyping.gating_studio_dialog import GatingStudioDia
 from iris_viewer.widgets.phenotyping.hierarchy import GatingHierarchyNode
 from iris_viewer.widgets.phenotyping.sample_impact_dialog import SampleImpactDialog
 from iris_viewer.widgets.phenotyping.thresholding import (
-    arcsinh_transform,
     assess_gating_quality,
     compute_optimal_threshold,
     find_sample_column,
+    resolve_marker_col,
+    transform_values,
 )
 from iris_viewer.widgets.styles import SHARED_DARK_THEME
 
@@ -211,7 +212,7 @@ class ManualGatingWidget(QWidget):
             }
             QPushButton:hover { background-color: #3D75A8; }
         """)
-        self.btn_popout.clicked.connect(self.open_popup_window)
+        self.btn_popout.clicked.connect(lambda _checked=False: self.open_popup_window(0))
         plot_header.addWidget(self.btn_popout)
         bl_plot.addLayout(plot_header)
 
@@ -222,7 +223,7 @@ class ManualGatingWidget(QWidget):
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.canvas.setFixedHeight(180)
         self.canvas.setMinimumHeight(150)
-        self.canvas.mouseDoubleClickEvent = lambda event: self.open_popup_window()
+        self.canvas.mouseDoubleClickEvent = lambda event: self.open_popup_window(0)
         bl_plot.addWidget(self.canvas)
 
         self.lbl_quad_info = QLabel("Q2: 0 cells (0.0% Parent) | Q1: 0 (0% Parent)")
@@ -331,7 +332,7 @@ class ManualGatingWidget(QWidget):
 
         self.btn_view_tree = QPushButton("⤢ Hierarchy Tree")
         self.btn_view_tree.setToolTip("Open full hierarchical tree view in Studio Dialog")
-        self.btn_view_tree.clicked.connect(self.open_popup_window)
+        self.btn_view_tree.clicked.connect(lambda _checked=False: self.open_popup_window(1))
         btn_row_apply.addWidget(self.btn_view_tree)
         bl_class.addLayout(btn_row_apply)
 
@@ -506,14 +507,19 @@ class ManualGatingWidget(QWidget):
         elif "Q3" in txt:
             self.txt_phenotype_name.setText(f"{mx}- {my}-")
 
+    def _transform_vector(self, arr: np.ndarray) -> np.ndarray:
+        scale_mode = self.combo_scale.currentText() if hasattr(self, "combo_scale") else "Arcsinh (Cofactor = 5)"
+        return transform_values(arr, scale_mode)
+
     def _auto_threshold(self, axis: str, method: str):
         data = self._get_filtered_parent_data()
         if data is None or data.empty:
             return
         m_name = self.combo_x.currentText() if axis == 'x' else self.combo_y.currentText()
-        if m_name not in data.columns:
+        col = resolve_marker_col(data, m_name)
+        if col is None:
             return
-        vals = arcsinh_transform(data[m_name].to_numpy())
+        vals = self._transform_vector(data[col].to_numpy())
         val = compute_optimal_threshold(vals, method)
         if axis == 'x':
             self.spin_tx.setValue(float(val))
@@ -553,14 +559,16 @@ class ManualGatingWidget(QWidget):
         df = self._get_filtered_parent_data()
         mx = self.combo_x.currentText()
         my = self.combo_y.currentText()
-        if df is not None and not df.empty and mx in df.columns:
-            vx = arcsinh_transform(df[mx].dropna().to_numpy())
+        col_x = resolve_marker_col(df, mx)
+        col_y = resolve_marker_col(df, my)
+        if df is not None and not df.empty and col_x is not None:
+            vx = self._transform_vector(df[col_x].to_numpy())
             tx = compute_optimal_threshold(vx, 'otsu')
             self.spin_tx.blockSignals(True)
             self.spin_tx.setValue(float(tx))
             self.spin_tx.blockSignals(False)
-        if df is not None and not df.empty and my in df.columns:
-            vy = arcsinh_transform(df[my].dropna().to_numpy())
+        if df is not None and not df.empty and col_y is not None:
+            vy = self._transform_vector(df[col_y].to_numpy())
             ty = compute_optimal_threshold(vy, 'otsu')
             self.spin_ty.blockSignals(True)
             self.spin_ty.setValue(float(ty))
@@ -576,7 +584,9 @@ class ManualGatingWidget(QWidget):
         df = self._get_filtered_parent_data()
         mx = self.combo_x.currentText()
         my = self.combo_y.currentText()
-        if df is None or df.empty or mx not in df.columns:
+        col_x = resolve_marker_col(df, mx)
+        col_y = resolve_marker_col(df, my)
+        if df is None or df.empty or col_x is None:
             ax = self.figure.add_subplot(111)
             ax.set_facecolor('#1f232b')
             ax.text(0.5, 0.5, "No data available", color='#777', ha='center', va='center', fontsize=10)
@@ -584,10 +594,16 @@ class ManualGatingWidget(QWidget):
             return
 
         sample_df = df.sample(n=min(len(df), 6000), random_state=42)
-        vx = arcsinh_transform(sample_df[mx].dropna().to_numpy())
-        vy = arcsinh_transform(sample_df[my].dropna().to_numpy()) if my in df.columns else np.zeros_like(vx)
-        min_len = min(len(vx), len(vy))
-        vx, vy = vx[:min_len], vy[:min_len]
+        vx_raw = self._transform_vector(sample_df[col_x].to_numpy())
+        if col_y is not None:
+            vy_raw = self._transform_vector(sample_df[col_y].to_numpy())
+            valid_mask = np.isfinite(vx_raw) & np.isfinite(vy_raw)
+            vx = vx_raw[valid_mask]
+            vy = vy_raw[valid_mask]
+        else:
+            valid_mask = np.isfinite(vx_raw)
+            vx = vx_raw[valid_mask]
+            vy = np.zeros_like(vx)
 
         ax = self.figure.add_subplot(111)
         ax.set_facecolor('#1f232b')
@@ -625,16 +641,18 @@ class ManualGatingWidget(QWidget):
 
         mx = self.combo_x.currentText()
         my = self.combo_y.currentText()
-        if mx not in raw_df.columns:
+        col_x = resolve_marker_col(raw_df, mx)
+        col_y = resolve_marker_col(raw_df, my)
+        if col_x is None:
             return
 
-        vx = arcsinh_transform(raw_df[mx].to_numpy())
+        vx = self._transform_vector(raw_df[col_x].to_numpy())
         tx = self.spin_tx.value()
         lbl_q, color_hex, score = assess_gating_quality(vx, tx)
         self.lbl_sep_quality.setText(f"{lbl_q} (Score: {score:.1f})")
         self.lbl_sep_quality.setStyleSheet(f"color: {color_hex}; font-weight: bold; font-size: 11px;")
 
-        vy = arcsinh_transform(raw_df[my].to_numpy()) if my in raw_df.columns else np.zeros_like(vx)
+        vy = self._transform_vector(raw_df[col_y].to_numpy()) if col_y is not None else np.zeros_like(vx)
         ty = self.spin_ty.value()
         target_pop = self.combo_target_pop.currentText()
         if "Q2" in target_pop:
@@ -653,10 +671,11 @@ class ManualGatingWidget(QWidget):
 
         sample_col = find_sample_column(raw_df)
         if sample_col:
+            mask_series = pd.Series(mask, index=raw_df.index)
             core_pcts = []
             for _, grp in raw_df.groupby(sample_col):
                 if len(grp) > 0:
-                    g_mask = mask[grp.index]
+                    g_mask = mask_series.loc[grp.index]
                     core_pcts.append((g_mask.sum() / len(grp)) * 100.0)
             if core_pcts:
                 mn_p, mx_p = min(core_pcts), max(core_pcts)
@@ -680,12 +699,18 @@ class ManualGatingWidget(QWidget):
             QMessageBox.warning(self, "No Data", "No active cell dataframe found.")
             return
 
+        col_x = resolve_marker_col(raw_df, mx)
+        col_y = resolve_marker_col(raw_df, my)
+        if col_x is None:
+            QMessageBox.warning(self, "Missing Marker", f"Marker '{mx}' was not found in active data.")
+            return
+
         tx = self.spin_tx.value()
         ty = self.spin_ty.value()
         target_pop = self.combo_target_pop.currentText()
 
-        vx = arcsinh_transform(raw_df[mx].to_numpy())
-        vy = arcsinh_transform(raw_df[my].to_numpy()) if my in raw_df.columns else np.zeros_like(vx)
+        vx = self._transform_vector(raw_df[col_x].to_numpy())
+        vy = self._transform_vector(raw_df[col_y].to_numpy()) if col_y is not None else np.zeros_like(vx)
 
         if "Q2" in target_pop:
             mask = (vx >= tx) & (vy >= ty)
@@ -799,11 +824,21 @@ class ManualGatingWidget(QWidget):
             except Exception:
                 pass
 
-    def open_popup_window(self):
+    def _on_impact_sample_selected(self, sample_name: str) -> None:
+        if self.ctx and hasattr(self.ctx, "control_widget") and self.ctx.control_widget:
+            combo = getattr(self.ctx.control_widget, "combo_sample", None)
+            if combo is not None:
+                idx = combo.findText(sample_name)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
+    def open_popup_window(self, tab_index: Optional[int] = None) -> None:
         if self.popup_dialog is None:
             self.popup_dialog = GatingStudioDialog(parent=self.window(), host_widget=self)
             self.popup_dialog.gateApplied.connect(self.on_gate_applied)
         self.popup_dialog._sync_from_host()
+        if isinstance(tab_index, int) and not isinstance(tab_index, bool):
+            self.popup_dialog.tabs.setCurrentIndex(tab_index)
         self.popup_dialog.show()
         self.popup_dialog.raise_()
         self.popup_dialog.activateWindow()
@@ -811,13 +846,24 @@ class ManualGatingWidget(QWidget):
     def open_impact_window(self):
         if self.impact_dialog is None:
             self.impact_dialog = SampleImpactDialog(parent=self.window())
+            self.impact_dialog.sampleSelected.connect(self._on_impact_sample_selected)
 
         raw_df = self.get_active_dataframe()
         if raw_df is not None and not raw_df.empty:
             mx = self.combo_x.currentText()
             my = self.combo_y.currentText()
-            vx = arcsinh_transform(raw_df[mx].to_numpy()) if mx in raw_df.columns else np.zeros(len(raw_df))
-            vy = arcsinh_transform(raw_df[my].to_numpy()) if my in raw_df.columns else np.zeros_like(vx)
+            col_x = resolve_marker_col(raw_df, mx)
+            col_y = resolve_marker_col(raw_df, my)
+            vx = (
+                self._transform_vector(raw_df[col_x].to_numpy())
+                if col_x is not None
+                else np.zeros(len(raw_df))
+            )
+            vy = (
+                self._transform_vector(raw_df[col_y].to_numpy())
+                if col_y is not None
+                else np.zeros_like(vx)
+            )
             tx = self.spin_tx.value()
             ty = self.spin_ty.value()
             target_pop = self.combo_target_pop.currentText()

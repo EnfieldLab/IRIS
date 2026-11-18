@@ -72,13 +72,22 @@ scratch/
 # Deep Learning Model Checkpoints & Large Data
 *.pt
 *.pth
+*.pth.tar
+*.ckpt
 *.bin
 *.safetensors
 *.onnx
+*.h5
+*.hdf5
+*.npz
+*.tar.gz
+*.zip
 cpsam*
 src/iris_viewer/data/
 /data/
+benchmarks/
+IRIS_Benchmarks/
+upstream_repo/
 *.h5ad
 *.qptiff
 *.ndpi
-

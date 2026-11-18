@@ -59,13 +59,22 @@ def extract_cell_features(
         DataFrame containing one row per cell with spatial coordinates (Pos_X, Pos_Y),
         object IDs (ObjectNumber), and requested feature columns.
     """
-    if mask is None or np.max(mask) == 0: return pd.DataFrame()
+    if mask is None or np.max(mask) == 0:
+        return pd.DataFrame()
 
-    morph_keys = list(MORPHOLOGY_FEATURES.keys()) if selected_morphology is None else [k for k in selected_morphology if k in MORPHOLOGY_FEATURES]
-    intensity_stats = INTENSITY_FEATURES.copy() if selected_intensity is None else [s for s in selected_intensity if s in INTENSITY_FEATURES]
+    morph_keys = (
+        list(MORPHOLOGY_FEATURES.keys())
+        if selected_morphology is None
+        else [k for k in selected_morphology if k in MORPHOLOGY_FEATURES]
+    )
+    intensity_stats = (
+        INTENSITY_FEATURES.copy()
+        if selected_intensity is None
+        else [s for s in selected_intensity if s in INTENSITY_FEATURES]
+    )
 
     # Morphological features via regionprops
-    base_props = ['label', 'centroid']
+    base_props = ["label", "centroid"]
     regionprops_keys = base_props + morph_keys
 
     try:
@@ -74,43 +83,63 @@ def extract_cell_features(
         props_table = regionprops_table(mask, properties=base_props)
 
     df = pd.DataFrame(props_table)
-    df.rename(columns={'label': 'ObjectNumber', 'centroid-1': 'Pos_X', 'centroid-0': 'Pos_Y'}, inplace=True)
+    df.rename(
+        columns={"label": "ObjectNumber", "centroid-1": "Pos_X", "centroid-0": "Pos_Y"},
+        inplace=True,
+    )
 
     # Scale calibrated linear and areal metrics
     if scale_factor != 1.0:
-        if 'area' in df.columns: df['area'] *= (scale_factor ** 2)
-        if 'perimeter' in df.columns: df['perimeter'] *= scale_factor
-        if 'major_axis_length' in df.columns: df['major_axis_length'] *= scale_factor
-        if 'minor_axis_length' in df.columns: df['minor_axis_length'] *= scale_factor
-        if 'equivalent_diameter_area' in df.columns: df['equivalent_diameter_area'] *= scale_factor
+        if "area" in df.columns:
+            df["area"] *= scale_factor ** 2
+        if "perimeter" in df.columns:
+            df["perimeter"] *= scale_factor
+        if "major_axis_length" in df.columns:
+            df["major_axis_length"] *= scale_factor
+        if "minor_axis_length" in df.columns:
+            df["minor_axis_length"] *= scale_factor
+        if "equivalent_diameter_area" in df.columns:
+            df["equivalent_diameter_area"] *= scale_factor
 
     # Per-channel intensity features
     if raw_image is not None and len(markers) > 0 and len(intensity_stats) > 0:
         n_channels = min(raw_image.shape[0], len(markers))
-        intensity_prop_map = {'mean': 'intensity_mean', 'max': 'intensity_max', 'min': 'intensity_min'}
+        intensity_prop_map = {
+            "mean": "intensity_mean",
+            "max": "intensity_max",
+            "min": "intensity_min",
+        }
 
         for ch_idx in range(n_channels):
             marker_name = markers[ch_idx]
             ch_data = raw_image[ch_idx]
-            skimage_props = [intensity_prop_map[s] for s in intensity_stats if s in intensity_prop_map]
+            skimage_props = [
+                intensity_prop_map[s]
+                for s in intensity_stats
+                if s in intensity_prop_map
+            ]
 
             extra_props = []
-            if 'sum' in intensity_stats: extra_props.append(custom_sum_intensity)
-            if 'median' in intensity_stats: extra_props.append(custom_median_intensity)
+            if "sum" in intensity_stats:
+                extra_props.append(custom_sum_intensity)
+            if "median" in intensity_stats:
+                extra_props.append(custom_median_intensity)
 
             if skimage_props or extra_props:
                 ch_table = regionprops_table(
                     mask,
                     intensity_image=ch_data,
                     properties=skimage_props,
-                    extra_properties=extra_props
+                    extra_properties=extra_props,
                 )
 
                 for req_stat, ski_key in intensity_prop_map.items():
                     if req_stat in intensity_stats:
                         df[f"{marker_name}_{req_stat}"] = ch_table[ski_key]
 
-                if 'sum' in intensity_stats: df[f"{marker_name}_sum"] = ch_table['custom_sum_intensity']
-                if 'median' in intensity_stats: df[f"{marker_name}_median"] = ch_table['custom_median_intensity']
+                if "sum" in intensity_stats:
+                    df[f"{marker_name}_sum"] = ch_table["custom_sum_intensity"]
+                if "median" in intensity_stats:
+                    df[f"{marker_name}_median"] = ch_table["custom_median_intensity"]
 
     return df

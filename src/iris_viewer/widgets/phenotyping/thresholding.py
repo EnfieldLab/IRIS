@@ -33,6 +33,66 @@ def log10_transform(arr: np.ndarray) -> np.ndarray:
     return np.log10(np.maximum(arr_clean, 0.0) + 1.0)
 
 
+def transform_values(arr: np.ndarray, scale_mode: str) -> np.ndarray:
+    """Transform intensity values according to the selected scale mode.
+
+    Supports:
+    - ``"Arcsinh (Cofactor = 5)"``
+    - ``"Log10(1 + x)"``
+    - ``"Linear (Raw)"``
+    - ``"Min-Max Normalized"``
+    """
+    arr_clean = np.asarray(arr, dtype=float)
+    mode = (scale_mode or "").lower()
+    if "arcsinh" in mode:
+        return arcsinh_transform(arr_clean, cofactor=5.0)
+    if "log10" in mode:
+        return log10_transform(arr_clean)
+    if "min-max" in mode or "minmax" in mode:
+        finite = arr_clean[np.isfinite(arr_clean)]
+        if finite.size == 0:
+            return arr_clean
+        mn = float(np.min(finite))
+        mx = float(np.max(finite))
+        denom = mx - mn
+        if denom <= 0.0:
+            out = np.zeros_like(arr_clean, dtype=float)
+            out[~np.isfinite(arr_clean)] = np.nan
+            return out
+        return (arr_clean - mn) / denom
+    return arr_clean
+
+
+def resolve_marker_col(
+    df: Optional[pd.DataFrame],
+    marker: str,
+    preferred_stat: str = "mean",
+) -> Optional[str]:
+    """Resolve a marker name to an existing column in *df*.
+
+    Resolution order:
+    1. Exact match (``marker``)
+    2. Preferred stat suffix (``{marker}_{preferred_stat}``)
+    3. Case-insensitive match for ``marker`` or ``{marker}_{preferred_stat}``
+    """
+    if df is None or not marker:
+        return None
+    if marker in df.columns:
+        return marker
+    suffixed = f"{marker}_{preferred_stat}"
+    if suffixed in df.columns:
+        return suffixed
+
+    lower_map = {str(c).lower(): c for c in df.columns}
+    m_low = marker.lower()
+    if m_low in lower_map:
+        return lower_map[m_low]
+    s_low = f"{m_low}_{preferred_stat.lower()}"
+    if s_low in lower_map:
+        return lower_map[s_low]
+    return None
+
+
 def compute_optimal_threshold(arr: np.ndarray, method: str = 'otsu') -> float:
     """
     Computes mathematically and biologically grounded cutoff thresholds:
@@ -86,8 +146,11 @@ def compute_optimal_threshold(arr: np.ndarray, method: str = 'otsu') -> float:
         mean2 = (np.cumsum((hist * bin_centers)[::-1]) / np.maximum(weight2[::-1], 1e-12))[::-1]
         variance = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
         variance = np.nan_to_num(variance, nan=0.0)
-        idx = int(np.argmax(variance))
-        return float(bin_centers[idx])
+        max_var = float(np.max(variance))
+        best_idxs = np.where(np.isclose(variance, max_var, rtol=1e-12, atol=1e-12))[0]
+        if best_idxs.size > 0:
+            return float(np.mean(bin_centers[best_idxs]))
+        return float(bin_centers[int(np.argmax(variance))])
 
     return float(np.median(valid))
 

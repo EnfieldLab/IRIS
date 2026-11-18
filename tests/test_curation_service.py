@@ -14,16 +14,10 @@ import napari
 import numpy as np
 import pandas as pd
 import pytest
-from qtpy.QtWidgets import QApplication
 
 from iris_viewer.app.services.curation_service import CurationService
 from iris_viewer.core.layers import get_layer_base_name
 from iris_viewer.core.state import ViewerAppState
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _create_mock_context():
@@ -118,11 +112,22 @@ def _create_mock_context():
     return ctx
 
 
+@pytest.fixture
+def mock_ctx(qapp):
+    """Yield a mock application context and close its headless Napari viewer on teardown."""
+    ctx = _create_mock_context()
+    try:
+        yield ctx
+    finally:
+        ctx.viewer.close()
+        qapp.processEvents()
+
+
 class TestCurationServiceMultiSample:
     """Tests for multi-sample canvas curation workflows."""
 
-    def test_curation_service_get_cell_at_position_resolves_sample(self, qapp):
-        ctx = _create_mock_context()
+    def test_curation_service_get_cell_at_position_resolves_sample(self, mock_ctx):
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         # Cursor in sample_A cell 101: position (15.0, 15.0)
@@ -140,9 +145,9 @@ class TestCurationServiceMultiSample:
         assert obj_id is None
         assert sample_name is None
 
-    def test_curation_service_get_cell_at_position_fallback_without_labels(self, qapp):
+    def test_curation_service_get_cell_at_position_fallback_without_labels(self, mock_ctx):
         """When Labels layer is missing or removed, fallback to bbox translation works."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         # Remove the Labels layer from sample_B
         ctx.state.sample_layers_map["sample_B"] = [
             l for l in ctx.state.sample_layers_map["sample_B"]
@@ -154,8 +159,8 @@ class TestCurationServiceMultiSample:
         assert obj_id == 201
         assert sample_name == "sample_B"
 
-    def test_curation_service_get_cell_phenotype_retrieval(self, qapp):
-        ctx = _create_mock_context()
+    def test_curation_service_get_cell_phenotype_retrieval(self, mock_ctx):
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         # Cell 101 in sample_A is Tumor
@@ -170,8 +175,8 @@ class TestCurationServiceMultiSample:
         p_unknown = svc._get_cell_phenotype(999, "sample_B", "cell_type")
         assert p_unknown == "Unassigned"
 
-    def test_curation_service_apply_quick_phenotype_change_updates_dataframes(self, qapp):
-        ctx = _create_mock_context()
+    def test_curation_service_apply_quick_phenotype_change_updates_dataframes(self, mock_ctx):
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         # Reclassify sample_B cell 201 from "B cell" to "Tumor"
@@ -195,9 +200,9 @@ class TestCurationServiceMultiSample:
         assert m_row["cell_type"] == "Tumor"
         assert m_row["Verified_CellType"] == "Tumor"
 
-    def test_curation_service_apply_quick_phenotype_change_creates_layer(self, qapp):
+    def test_curation_service_apply_quick_phenotype_change_creates_layer(self, mock_ctx):
         """When target phenotype has no layer in sample_B, it must be created dynamically."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         s_layers_b = ctx.state.sample_layers_map["sample_B"]
@@ -218,9 +223,9 @@ class TestCurationServiceMultiSample:
         assert bcell_layer is not None
         assert bcell_layer.data[15, 15] == 0
 
-    def test_curation_service_handle_canvas_click_via_comparison_widget(self, qapp):
+    def test_curation_service_handle_canvas_click_via_comparison_widget(self, mock_ctx):
         """Quick curation triggered from comparison_widget works seamlessly."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         # Enable quick curate on comparison_widget
@@ -237,9 +242,9 @@ class TestCurationServiceMultiSample:
         s_df = ctx.state.resolved_dfs["sample_A"]
         assert s_df.loc[s_df["ObjectNumber"] == 101, "cell_type"].iloc[0] == "Stroma"
 
-    def test_curation_service_get_available_phenotypes_excludes_lowercase_colors(self, qapp):
+    def test_curation_service_get_available_phenotypes_excludes_lowercase_colors(self, mock_ctx):
         """Available phenotypes must strictly reflect dataset cell types without lowercase color dictionary keys."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         ctx.state.celltype_colors = {"tumor": "#FF0000", "stroma": "#00FF00", "b cell": "#0000FF"}
         svc = CurationService(ctx)
 
@@ -250,10 +255,10 @@ class TestCurationServiceMultiSample:
         assert "b cell" not in types_list
         assert set(types_list) == {"B cell", "Stroma", "T cell", "Tumor"}
 
-    def test_curation_service_apply_quick_curate_with_dask_channel_layer(self, qapp):
+    def test_curation_service_apply_quick_curate_with_dask_channel_layer(self, mock_ctx):
         """Dask array image channels in sample_layers must not raise IndexError during curation."""
         import dask.array as da
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         ctx.state.markers = ["DAPI", "CK"]
 
         # Add a 2D Dask array layer as DAPI
@@ -268,9 +273,9 @@ class TestCurationServiceMultiSample:
         s_df = ctx.state.resolved_dfs["sample_A"]
         assert s_df.loc[s_df["ObjectNumber"] == 101, "cell_type"].iloc[0] == "Stroma"
 
-    def test_curation_service_apply_quick_curate_with_centroids_points_layer(self, qapp):
+    def test_curation_service_apply_quick_curate_with_centroids_points_layer(self, mock_ctx):
         """Points layer ('Centroids') with shape (N, 2) in sample_layers must not be indexed with 2D mask."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
 
         # Add a Points layer with shape (50, 2)
         pts_coords = np.random.rand(50, 2) * 100
@@ -284,9 +289,9 @@ class TestCurationServiceMultiSample:
         s_df = ctx.state.resolved_dfs["sample_A"]
         assert s_df.loc[s_df["ObjectNumber"] == 101, "cell_type"].iloc[0] == "Stroma"
 
-    def test_curation_service_multiple_successive_phenotype_changes_mutual_exclusion(self, qapp):
+    def test_curation_service_multiple_successive_phenotype_changes_mutual_exclusion(self, mock_ctx):
         """Cell can be reclassified repeatedly without limit and layers maintain strict mutual exclusion."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         # Cell 101 starts as Tumor
@@ -321,9 +326,9 @@ class TestCurationServiceMultiSample:
             assert len(active_matching_layers) == 1, f"Expected 1 active layer, found: {active_matching_layers}"
             assert active_matching_layers[0] == target_type
 
-    def test_curation_service_handle_canvas_click_via_control_widget(self, qapp):
+    def test_curation_service_handle_canvas_click_via_control_widget(self, mock_ctx):
         """Quick curation triggered from primary control_widget works seamlessly."""
-        ctx = _create_mock_context()
+        ctx = mock_ctx
         svc = CurationService(ctx)
 
         # Enable quick curate on control_widget

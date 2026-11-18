@@ -23,12 +23,16 @@ __all__ = [
 ]
 
 
-def get_available_backends():
-    """Returns instantiated backends that have their dependencies installed."""
-    backends = []
-    for cls in AVAILABLE_BACKENDS:
-        backend = cls()
-        backends.append(backend)
+def get_available_backends(only_available: bool = True):
+    """Return instantiated segmentation backends.
+
+    Args:
+        only_available: If True (default), include only backends whose runtime
+            dependencies are installed. If False, return all registered backends.
+    """
+    backends = [cls() for cls in AVAILABLE_BACKENDS]
+    if only_available:
+        return [b for b in backends if b.is_available()]
     return backends
 
 

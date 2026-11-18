@@ -54,6 +54,8 @@ class ImageControlWidget(QWidget):
     saveBoundsTriggered = Signal()
     viewLockToggled = Signal(bool)
     colChanged = Signal()
+    saveSessionTriggered = Signal()
+    loadSessionTriggered = Signal()
 
     def __init__(self, viewer=None, parent=None):
         super().__init__(parent)
@@ -143,6 +145,25 @@ class ImageControlWidget(QWidget):
         self.btn_load_celltype_color.clicked.connect(self._on_load_celltype_color_clicked)
         row_colors.addWidget(self.btn_load_celltype_color)
         layout.addLayout(row_colors)
+
+        # Load existing mask & session controls
+        self.btn_load_mask = QPushButton("Load Mask File")
+        self.btn_load_mask.setToolTip("Load an existing segmentation mask TIFF file")
+        self.btn_load_mask.clicked.connect(self._on_load_mask_clicked)
+        layout.addWidget(self.btn_load_mask)
+
+        row_session = QHBoxLayout()
+        row_session.setSpacing(8)
+        self.btn_save_session = QPushButton("Save Session")
+        self.btn_save_session.setToolTip("Save current workspace session metadata to JSON")
+        self.btn_save_session.clicked.connect(self.saveSessionTriggered.emit)
+        row_session.addWidget(self.btn_save_session)
+
+        self.btn_load_session = QPushButton("Load Session")
+        self.btn_load_session.setToolTip("Load saved workspace session metadata from JSON")
+        self.btn_load_session.clicked.connect(self.loadSessionTriggered.emit)
+        row_session.addWidget(self.btn_load_session)
+        layout.addLayout(row_session)
 
         self.main_layout.addWidget(box)
 
@@ -822,6 +843,16 @@ class ImageControlWidget(QWidget):
         if path:
             self.lbl_annotation.setText(os.path.basename(path))
             self.loadAnnotationDataTriggered.emit(path)
+
+    def _on_load_mask_clicked(self) -> None:
+        fname, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Segmentation Mask",
+            "",
+            "TIFF Images (*.tiff *.tif *.ome.tif *.ome.tiff);;All Files (*)",
+        )
+        if fname:
+            self.loadExistingMaskTriggered.emit(fname)
 
     # Public API
     def update_sample_list(self, sample_names: List[str]):

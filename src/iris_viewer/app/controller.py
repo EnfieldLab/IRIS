@@ -385,6 +385,7 @@ class ViewerController:
         cp.generateConsensusRequested.connect(self._generate_consensus)
         cp.thresholdChanged.connect(self.review_svc.update_confidence_overlay)
         cp.cellOverrideRequested.connect(self.review_svc.apply_manual_override)
+        cp.undoOverrideRequested.connect(self.review_svc.undo_override)
         cp.btn_next_issue.clicked.connect(self.review_svc.next_issue)
         cp.btn_prev_issue.clicked.connect(self.review_svc.prev_issue)
         cp.chk_enable_review.toggled.connect(self._toggle_interactive_review)

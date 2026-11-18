@@ -64,10 +64,10 @@ from qtpy.QtWidgets import (
 from iris_viewer.widgets.phenotyping.hierarchy import GatingHierarchyNode
 from iris_viewer.widgets.phenotyping.sample_impact_dialog import SampleImpactDialog
 from iris_viewer.widgets.phenotyping.thresholding import (
-    arcsinh_transform,
     compute_optimal_threshold,
     find_sample_column,
-    log10_transform,
+    resolve_marker_col,
+    transform_values,
 )
 
 if TYPE_CHECKING:
@@ -89,6 +89,7 @@ class GatingStudioDialog(QDialog):
         self.setWindowTitle("Manual Gating Studio")
         self.resize(1260, 840)
         self.setMinimumSize(980, 680)
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
 
         self.setStyleSheet("""
             QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
@@ -540,6 +541,11 @@ class GatingStudioDialog(QDialog):
         if len(markers) > 2:
             self.combo_z.setCurrentIndex(2)
 
+        if hasattr(self.host_widget, "combo_scale") and hasattr(self, "combo_scale"):
+            self.combo_scale.blockSignals(True)
+            self.combo_scale.setCurrentText(self.host_widget.combo_scale.currentText())
+            self.combo_scale.blockSignals(False)
+
         self.spin_tx.setValue(self.host_widget.spin_tx.value())
         self.spin_ty.setValue(self.host_widget.spin_ty.value())
 
@@ -627,14 +633,16 @@ class GatingStudioDialog(QDialog):
         data = self._get_filtered_parent_data()
         mx = self.combo_x.currentText()
         my = self.combo_y.currentText()
-        if data is not None and not data.empty and mx in data.columns:
-            vx = self._transform_vector(data[mx].to_numpy())
+        col_x = resolve_marker_col(data, mx)
+        col_y = resolve_marker_col(data, my)
+        if data is not None and not data.empty and col_x is not None:
+            vx = self._transform_vector(data[col_x].to_numpy())
             tx = compute_optimal_threshold(vx, 'otsu')
             self.spin_tx.blockSignals(True)
             self.spin_tx.setValue(float(tx))
             self.spin_tx.blockSignals(False)
-        if data is not None and not data.empty and my in data.columns:
-            vy = self._transform_vector(data[my].to_numpy())
+        if data is not None and not data.empty and col_y is not None:
+            vy = self._transform_vector(data[col_y].to_numpy())
             ty = compute_optimal_threshold(vy, 'otsu')
             self.spin_ty.blockSignals(True)
             self.spin_ty.setValue(float(ty))
@@ -647,9 +655,10 @@ class GatingStudioDialog(QDialog):
         if data is None or data.empty:
             return
         m_name = self.combo_x.currentText() if axis == 'x' else self.combo_y.currentText()
-        if m_name not in data.columns:
+        col = resolve_marker_col(data, m_name)
+        if col is None:
             return
-        vals = self._transform_vector(data[m_name].to_numpy())
+        vals = self._transform_vector(data[col].to_numpy())
         val = compute_optimal_threshold(vals, method)
         if axis == 'x':
             self.spin_tx.setValue(float(val))
@@ -772,15 +781,7 @@ class GatingStudioDialog(QDialog):
         return df
 
     def _transform_vector(self, arr: np.ndarray) -> np.ndarray:
-        scale_name = self.combo_scale.currentText()
-        if "Arcsinh" in scale_name:
-            return arcsinh_transform(arr, cofactor=5.0)
-        elif "Log10" in scale_name:
-            return log10_transform(arr)
-        elif "Min-Max" in scale_name:
-            mn, mx = np.nanmin(arr), np.nanmax(arr)
-            return (arr - mn) / (mx - mn + 1e-8)
-        return arr
+        return transform_values(arr, self.combo_scale.currentText())
 
     # Interactive Plotting & Quadrant Rendering
     def _render_plot(self):
@@ -801,7 +802,11 @@ class GatingStudioDialog(QDialog):
         mz = self.combo_z.currentText()
         mode = self.combo_mode.currentText()
 
-        if mx not in df.columns:
+        col_x = resolve_marker_col(df, mx)
+        col_y = resolve_marker_col(df, my)
+        col_z = resolve_marker_col(df, mz)
+
+        if col_x is None:
             self.canvas.draw()
             return
 
@@ -809,15 +814,17 @@ class GatingStudioDialog(QDialog):
         if len(df) > 25000:
             sample_df = df.sample(n=25000, random_state=42)
 
-        vx = self._transform_vector(sample_df[mx].dropna().to_numpy())
+        vx_raw = self._transform_vector(sample_df[col_x].to_numpy())
 
         if mode.startswith("3D"):
-            if my not in df.columns or mz not in df.columns:
+            if col_y is None or col_z is None:
                 return
-            vy = self._transform_vector(sample_df[my].dropna().to_numpy())
-            vz = self._transform_vector(sample_df[mz].dropna().to_numpy())
-            min_len = min(len(vx), len(vy), len(vz))
-            vx, vy, vz = vx[:min_len], vy[:min_len], vz[:min_len]
+            vy_raw = self._transform_vector(sample_df[col_y].to_numpy())
+            vz_raw = self._transform_vector(sample_df[col_z].to_numpy())
+            valid_mask = np.isfinite(vx_raw) & np.isfinite(vy_raw) & np.isfinite(vz_raw)
+            vx = vx_raw[valid_mask]
+            vy = vy_raw[valid_mask]
+            vz = vz_raw[valid_mask]
 
             ax = self.figure.add_subplot(111, projection='3d')
             ax.set_facecolor('#14161d')
@@ -832,6 +839,7 @@ class GatingStudioDialog(QDialog):
             self.ax = ax
 
         elif mode.startswith("1D"):
+            vx = vx_raw[np.isfinite(vx_raw)]
             ax = self.figure.add_subplot(111)
             ax.set_facecolor('#14161d')
             ax.hist(vx, bins=60, color='#3A6A9A', edgecolor='#14161d', alpha=0.85)
@@ -843,11 +851,12 @@ class GatingStudioDialog(QDialog):
             self.line_x = ax.axvline(self.spin_tx.value(), color='#FF3B30', linestyle='--', linewidth=2.0)
 
         else:
-            if my not in df.columns:
+            if col_y is None:
                 return
-            vy = self._transform_vector(sample_df[my].dropna().to_numpy())
-            min_len = min(len(vx), len(vy))
-            vx, vy = vx[:min_len], vy[:min_len]
+            vy_raw = self._transform_vector(sample_df[col_y].to_numpy())
+            valid_mask = np.isfinite(vx_raw) & np.isfinite(vy_raw)
+            vx = vx_raw[valid_mask]
+            vy = vy_raw[valid_mask]
 
             ax = self.figure.add_subplot(111)
             ax.set_facecolor('#14161d')
@@ -879,14 +888,12 @@ class GatingStudioDialog(QDialog):
             return
         mx = self.combo_x.currentText()
         my = self.combo_y.currentText()
-        if mx not in df.columns:
+        col_x = resolve_marker_col(df, mx)
+        col_y = resolve_marker_col(df, my)
+        if col_x is None:
             return
 
-        vx = self._transform_vector(df[mx].dropna().to_numpy())
-        total = len(vx)
-        if total == 0:
-            return
-
+        vx_raw = self._transform_vector(df[col_x].to_numpy())
         tx = self.spin_tx.value()
         ty = self.spin_ty.value()
 
@@ -909,16 +916,24 @@ class GatingStudioDialog(QDialog):
 
         mode = self.combo_mode.currentText()
         if mode.startswith("1D"):
+            vx = vx_raw[np.isfinite(vx_raw)]
+            total = len(vx)
+            if total == 0:
+                return
             pos_cnt = int((vx >= tx).sum())
             neg_cnt = total - pos_cnt
             p_pos = (pos_cnt / total) * 100.0 if total > 0 else 0.0
             p_neg = (neg_cnt / total) * 100.0 if total > 0 else 0.0
             _set_quad_cell(0, f"{pos_cnt:,} ({p_pos:.1f}%)")
             _set_quad_cell(1, f"{neg_cnt:,} ({p_neg:.1f}%)")
-        elif mode.startswith("2D") and my in df.columns:
-            vy = self._transform_vector(df[my].dropna().to_numpy())
-            min_len = min(len(vx), len(vy))
-            vx, vy = vx[:min_len], vy[:min_len]
+        elif mode.startswith("2D") and col_y is not None:
+            vy_raw = self._transform_vector(df[col_y].to_numpy())
+            valid_mask = np.isfinite(vx_raw) & np.isfinite(vy_raw)
+            vx = vx_raw[valid_mask]
+            vy = vy_raw[valid_mask]
+            total = len(vx)
+            if total == 0:
+                return
 
             m_q1 = (vx < tx) & (vy >= ty)
             m_q2 = (vx >= tx) & (vy >= ty)
@@ -1041,8 +1056,14 @@ class GatingStudioDialog(QDialog):
             QMessageBox.warning(self, "No Cells", "No cells in active parent population.")
             return
 
-        vx = self._transform_vector(raw_df[mx].to_numpy())
-        vy = self._transform_vector(raw_df[my].to_numpy()) if my in raw_df.columns else np.zeros_like(vx)
+        col_x = resolve_marker_col(raw_df, mx)
+        col_y = resolve_marker_col(raw_df, my)
+        if col_x is None:
+            QMessageBox.warning(self, "Missing Marker", f"Marker '{mx}' was not found in active data.")
+            return
+
+        vx = self._transform_vector(raw_df[col_x].to_numpy())
+        vy = self._transform_vector(raw_df[col_y].to_numpy()) if col_y is not None else np.zeros_like(vx)
 
         tx = self.spin_tx.value()
         ty = self.spin_ty.value()
@@ -1290,10 +1311,20 @@ class GatingStudioDialog(QDialog):
             pd.DataFrame(rows).to_csv(path, index=False)
             QMessageBox.information(self, "Export Complete", f"Exported {len(rows)} gates to {Path(path).name}")
 
+    def _on_impact_sample_selected(self, sample_name: str) -> None:
+        ctx = getattr(self.host_widget, "ctx", None) if self.host_widget else None
+        if ctx and hasattr(ctx, "control_widget") and ctx.control_widget:
+            combo = getattr(ctx.control_widget, "combo_sample", None)
+            if combo is not None:
+                idx = combo.findText(sample_name)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
     # Multi-Sample Impact Window Integration
     def _open_impact_window(self):
         if self.impact_dialog is None:
             self.impact_dialog = SampleImpactDialog(parent=self)
+            self.impact_dialog.sampleSelected.connect(self._on_impact_sample_selected)
         self._update_impact_window_live()
         self.impact_dialog.show()
         self.impact_dialog.raise_()
@@ -1308,11 +1339,13 @@ class GatingStudioDialog(QDialog):
 
         mx = self.combo_x.currentText()
         my = self.combo_y.currentText()
-        if mx not in raw_df.columns:
+        col_x = resolve_marker_col(raw_df, mx)
+        col_y = resolve_marker_col(raw_df, my)
+        if col_x is None:
             return
 
-        vx = self._transform_vector(raw_df[mx].to_numpy())
-        vy = self._transform_vector(raw_df[my].to_numpy()) if my in raw_df.columns else np.zeros_like(vx)
+        vx = self._transform_vector(raw_df[col_x].to_numpy())
+        vy = self._transform_vector(raw_df[col_y].to_numpy()) if col_y is not None else np.zeros_like(vx)
         tx = self.spin_tx.value()
         ty = self.spin_ty.value()
         target_pop = self.combo_target_pop.currentText()

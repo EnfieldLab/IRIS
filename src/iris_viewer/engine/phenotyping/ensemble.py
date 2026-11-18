@@ -318,32 +318,26 @@ class PhenotypingEnsemble:
         Returns a copy of *features* with the new columns appended.
         """
         df = features.copy()
-        id_col = "ObjectNumber" if "ObjectNumber" in df.columns else df.index
-
-        def _lookup(cell_id: int, d: dict, default):
-            return d.get(int(cell_id), default)
+        cell_ids = (
+            df["ObjectNumber"].astype(int).tolist()
+            if "ObjectNumber" in df.columns
+            else [int(i) for i in df.index]
+        )
 
         df["cell_type"] = [
-            _lookup(cid, final_types, self.UNRESOLVED_LABEL)
-            for cid in (df[id_col.name] if hasattr(id_col, "name") else df.index)
+            final_types.get(cid, self.UNRESOLVED_LABEL) for cid in cell_ids
         ]
         df["cell_type_confidence"] = [
-            _lookup(cid, confidences, 0.0)
-            for cid in (df[id_col.name] if hasattr(id_col, "name") else df.index)
+            float(confidences.get(cid, 0.0)) for cid in cell_ids
         ]
 
         # Per-method breakdown columns
-        all_methods: set = set()
+        all_methods: set[str] = set()
         for breakdown in per_method.values():
             all_methods.update(breakdown.keys())
         for m_name in sorted(all_methods):
             df[f"{m_name}_cell_type"] = [
-                per_method.get(
-                    int(cid) if hasattr(id_col, "name") else i, {}
-                ).get(m_name, "")
-                for i, cid in enumerate(
-                    df[id_col.name] if hasattr(id_col, "name") else df.index
-                )
+                per_method.get(cid, {}).get(m_name, "") for cid in cell_ids
             ]
 
         return df

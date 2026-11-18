@@ -48,6 +48,7 @@ from qtpy.QtWidgets import (
 )
 
 from iris_viewer.widgets.marker_expression.subset_dialog import SampleSubsetDialog
+from iris_viewer.widgets.phenotyping.thresholding import resolve_marker_col
 
 
 class MarkerExpressionDialog(QDialog):
@@ -543,8 +544,16 @@ class MarkerExpressionDialog(QDialog):
                 if col in self.df.columns and col not in candidates:
                     candidates.append(col)
             skip_terms = {"x", "y", "z", "pos_x", "pos_y", "area", "eccentricity", "objectnumber", "cell_id"}
+            resolved_marker_cols = {
+                c for m in self.markers if (c := resolve_marker_col(self.df, m)) is not None
+            }
             for col in self.df.columns:
-                if col.lower() in skip_terms or col in self.markers or col in candidates:
+                if (
+                    col.lower() in skip_terms
+                    or col in self.markers
+                    or col in resolved_marker_cols
+                    or col in candidates
+                ):
                     continue
                 if (
                     self.df[col].dtype == 'object'
@@ -969,11 +978,17 @@ class MarkerExpressionDialog(QDialog):
 
         self.celltype_col = ct_col
 
-        # Filter valid numeric markers
-        valid_markers = [m for m in self.markers if m in df_work.columns and pd.api.types.is_numeric_dtype(df_work[m])]
-        if not valid_markers:
+        # Filter valid numeric markers via column aliasing
+        resolved_pairs = []
+        for m in self.markers:
+            col = resolve_marker_col(df_work, m)
+            if col is not None and pd.api.types.is_numeric_dtype(df_work[col]):
+                resolved_pairs.append((m, col))
+        if not resolved_pairs:
             self._render_empty_canvas("No valid numeric marker columns found.")
             return
+        valid_markers = [m for m, _ in resolved_pairs]
+        col_names = [col for _, col in resolved_pairs]
 
         # Format cluster column labels if numeric or digit-string
         if ct_col.lower() == "cluster":
@@ -999,7 +1014,8 @@ class MarkerExpressionDialog(QDialog):
             return
 
         # Aggregate expression across phenotypes by mean
-        raw_matrix = df_work.groupby(ct_col, observed=True)[valid_markers].mean().fillna(0)
+        raw_matrix = df_work.groupby(ct_col, observed=True)[col_names].mean().fillna(0)
+        raw_matrix.columns = valid_markers
         raw_matrix.index = raw_matrix.index.astype(str)
 
         # If grouping by cluster, sort rows numerically
@@ -1127,6 +1143,32 @@ class MarkerExpressionDialog(QDialog):
             self._populate_list_widgets()
             self.render_heatmap()
 
+    @staticmethod
+    def _zscore_matrix(mat_df: pd.DataFrame) -> pd.DataFrame:
+        """Compute per-marker column-wise Z-scores matching heatmap display."""
+        col_mean = mat_df.mean(axis=0)
+        col_std = mat_df.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
+        col_std[col_std == 0] = 1e-8
+        z_vals = np.nan_to_num(((mat_df - col_mean) / col_std).values, nan=0.0)
+        return pd.DataFrame(z_vals, index=mat_df.index, columns=mat_df.columns)
+
+    def _get_export_matrix(self) -> Optional[pd.DataFrame]:
+        """Return the visible submatrix, Z-scored if Z-Score mode is active."""
+        if self.cached_matrix is None:
+            return None
+        safe_rows = [
+            r for r in self.ordered_cell_types
+            if r in self.cached_matrix.index and r in self.visible_cell_types
+        ]
+        safe_cols = [
+            c for c in self.ordered_markers
+            if c in self.cached_matrix.columns and c in self.visible_markers
+        ]
+        out_df = self.cached_matrix.loc[safe_rows, safe_cols].copy()
+        if "Z-Score" in self.current_mode:
+            return self._zscore_matrix(out_df)
+        return out_df
+
     def _perform_hierarchical_clustering(self) -> None:
         """
         Computes hierarchical clustering on currently visible rows and columns,
@@ -1150,10 +1192,7 @@ class MarkerExpressionDialog(QDialog):
             mat_df = self.cached_matrix.loc[safe_rows, safe_cols].copy()
             is_zscore = "Z-Score" in self.current_mode
             if is_zscore:
-                col_mean = mat_df.mean(axis=0)
-                col_std = mat_df.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
-                col_std[col_std == 0] = 1e-8
-                mat = np.nan_to_num(((mat_df - col_mean) / col_std).values, nan=0.0)
+                mat = self._zscore_matrix(mat_df).values
             else:
                 mat = np.nan_to_num(mat_df.values, nan=0.0)
 
@@ -1241,10 +1280,7 @@ class MarkerExpressionDialog(QDialog):
         is_zscore = "Z-Score" in self.current_mode
 
         if is_zscore:
-            col_mean = matrix.mean(axis=0)
-            col_std = matrix.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
-            col_std[col_std == 0] = 1e-8
-            plot_values = np.nan_to_num(((matrix - col_mean) / col_std).values, nan=0.0)
+            plot_values = self._zscore_matrix(matrix).values
             cbar_label = "Z-Score (Per Marker)"
             finite_abs = np.abs(plot_values)[np.isfinite(plot_values)]
             max_abs = max(1.0, float(np.max(finite_abs))) if finite_abs.size > 0 else 1.0
@@ -1280,10 +1316,7 @@ class MarkerExpressionDialog(QDialog):
                 safe_cols = [c for c in self.ordered_markers if c in self.cached_matrix.columns and c in self.visible_markers]
                 matrix = self.cached_matrix.loc[safe_rows, safe_cols].copy()
                 if is_zscore:
-                    col_mean = matrix.mean(axis=0)
-                    col_std = matrix.std(axis=0, ddof=0).replace(0, 1e-8).fillna(1.0)
-                    col_std[col_std == 0] = 1e-8
-                    plot_values = np.nan_to_num(((matrix - col_mean) / col_std).values, nan=0.0)
+                    plot_values = self._zscore_matrix(matrix).values
                 else:
                     plot_values = np.nan_to_num(matrix.values, nan=0.0)
                 n_rows, n_cols = plot_values.shape
@@ -1643,11 +1676,12 @@ class MarkerExpressionDialog(QDialog):
             "CSV Document (*.csv)",
         )
         if filepath:
-            safe_rows = [r for r in self.ordered_cell_types if r in self.cached_matrix.index and r in self.visible_cell_types]
-            safe_cols = [c for c in self.ordered_markers if c in self.cached_matrix.columns and c in self.visible_markers]
-            out_df = self.cached_matrix.loc[safe_rows, safe_cols]
-            out_df.to_csv(filepath)
-            QMessageBox.information(self, "Export Complete", f"Matrix saved to {Path(filepath).name}.")
+            out_df = self._get_export_matrix()
+            if out_df is not None:
+                out_df.to_csv(filepath)
+                QMessageBox.information(
+                    self, "Export Complete", f"Matrix saved to {Path(filepath).name}."
+                )
 
     def update_data(
         self,

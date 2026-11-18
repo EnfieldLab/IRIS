@@ -44,6 +44,7 @@ class SegmentationStudioDialog(QDialog):
         self.feature_panel = feature_panel
         self.setWindowTitle("Segmentation Module")
         self.resize(1150, 750)
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
 
         self.setStyleSheet("""
             QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
@@ -190,6 +191,16 @@ class SegmentationStudioDialog(QDialog):
         self.override_buttons_layout = QVBoxLayout()
         self.override_buttons_layout.setSpacing(3)
         ol.addLayout(self.override_buttons_layout)
+
+        self.btn_undo_override = QPushButton("Undo Override")
+        self.btn_undo_override.setToolTip("Revert the most recent manual cell override")
+        self.btn_undo_override.setStyleSheet(
+            "QPushButton { background-color: #444444; color: white; padding: 5px; "
+            "font-size: 11px; margin-top: 4px; border: 1px solid #666; }"
+            "QPushButton:hover { background-color: #5A5A5A; }"
+        )
+        self.btn_undo_override.clicked.connect(self._on_undo_override_clicked)
+        ol.addWidget(self.btn_undo_override)
         gl.addWidget(self.grp_override)
 
         ll.addWidget(grp_table)
@@ -356,6 +367,11 @@ class SegmentationStudioDialog(QDialog):
             item.setForeground(Qt.green if method != "Remove" else Qt.gray)
             self.table_issues.setItem(curr_row, 4, item)
 
+    def _on_undo_override_clicked(self) -> None:
+        if self.ctx and hasattr(self.ctx, "review_svc") and self.ctx.review_svc is not None:
+            self.ctx.review_svc.undo_override()
+            self.refresh_data()
+
     def refresh_data(self):
         """Refreshes KPI metrics, flagged issues table, and IoU histogram."""
         if self.consensus_panel is not None and hasattr(self.consensus_panel, "cached_stats"):
@@ -485,5 +501,7 @@ class SegmentationStudioDialog(QDialog):
     def _on_export_features_clicked(self):
         if self.feature_panel is not None:
             self.feature_panel.exportTriggered.emit()
+
+    _sync_state = refresh_data
 
 
