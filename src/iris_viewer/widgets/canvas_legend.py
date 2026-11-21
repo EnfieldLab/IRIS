@@ -81,7 +81,7 @@ class CanvasLegendOverlay(QWidget):
             self._update_legend()
 
     def _on_layers_changed(self, event):
-        # We need to bind to visibility/colormap changes for new layers
+        # We need to bind to visibility/colormap/data changes for new layers
         for layer in self.viewer.layers:
             if not hasattr(layer, '_legend_bound'):
                 layer.events.visible.connect(self._update_legend)
@@ -92,7 +92,13 @@ class CanvasLegendOverlay(QWidget):
                         layer.events.color.connect(self._update_legend)
                     if hasattr(layer.events, 'name'):
                         layer.events.name.connect(self._update_legend)
+                    if hasattr(layer.events, 'data'):
+                        layer.events.data.connect(self._update_legend)
                 layer._legend_bound = True
+        self._update_legend()
+
+    def refresh(self):
+        """Force immediate redraw of on-canvas legend entries."""
         self._update_legend()
 
     def _update_legend(self, *args):
@@ -120,23 +126,58 @@ class CanvasLegendOverlay(QWidget):
         added_channels = set()
         import re
 
+        def _append_legend_row(label_text: str, color_hex: str) -> None:
+            nonlocal has_items
+            if (label_text, color_hex) in added_channels:
+                return
+            added_channels.add((label_text, color_hex))
+
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+
+            color_box = QLabel()
+            color_box.setFixedSize(12, 12)
+            color_box.setStyleSheet(
+                f"background-color: {color_hex}; border: 1px solid #AAA; border-radius: 2px;"
+            )
+
+            name_lbl = QLabel(label_text)
+            name_lbl.setStyleSheet(
+                f"color: {color_hex}; font-size: {self._font_size}px; font-weight: bold;"
+            )
+
+            row.addWidget(color_box)
+            row.addWidget(name_lbl)
+            row.addStretch()
+
+            self.layout.addLayout(row)
+            has_items = True
+
         for layer in self.viewer.layers:
             if not layer.visible:
                 continue
 
-            # Skip bounding boxes or utility layers if desired, but we can just show them
+            # Skip bounding boxes or utility layers
             if "Bounds" in layer.name:
+                continue
+
+            meta = getattr(layer, "metadata", None)
+            if isinstance(meta, dict) and meta.get("method_colors") and meta.get("layer_type") in (
+                "disagreement_method_overlay",
+                "disagreement_isolation",
+            ):
+                for m_name, m_hex in meta["method_colors"].items():
+                    _append_legend_row(f"{m_name} (QC)", str(m_hex))
                 continue
 
             base_name = re.sub(r' \[\d+\]$', '', layer.name)
 
             color_hex = "#FFFFFF"
             if hasattr(layer, 'colormap'):
-                # Extract color from colormap (usually custom colormaps for markers end with the color)
-                # Napari colormaps have colors attribute
+                # Extract color from colormap
                 try:
                     colors = layer.colormap.colors
-                    # Get the most intense color (usually the last one in the map)
                     c = colors[-1]
                     r, g, b = int(c[0]*255), int(c[1]*255), int(c[2]*255)
                     color_hex = f"#{r:02x}{g:02x}{b:02x}"
@@ -152,27 +193,7 @@ class CanvasLegendOverlay(QWidget):
                 except Exception:
                     pass
 
-            if (base_name, color_hex) in added_channels:
-                continue
-            added_channels.add((base_name, color_hex))
-
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-
-            color_box = QLabel()
-            color_box.setFixedSize(12, 12)
-            color_box.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #AAA; border-radius: 2px;")
-
-            name_lbl = QLabel(base_name)
-            name_lbl.setStyleSheet(f"color: {color_hex}; font-size: {self._font_size}px; font-weight: bold;")
-
-            row.addWidget(color_box)
-            row.addWidget(name_lbl)
-            row.addStretch()
-
-            self.layout.addLayout(row)
-            has_items = True
+            _append_legend_row(base_name, color_hex)
 
         if not has_items:
             empty = QLabel("No active layers")

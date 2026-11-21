@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from qtpy.QtWidgets import QMessageBox
 
+from iris_common.logging import iris_log, log_error
 from iris_viewer.engine.geometry import (
     compute_tissue_boundary_mask,
     recompute_area_from_vertices,
@@ -119,10 +120,14 @@ class BoundaryService:
 
                 segmented_count += 1
             except Exception as exc:
-                print(f"[IRIS-Viewer] Boundary computation error for {sample_name}: {exc}")
+                log_error("IRIS-Viewer", "Boundary", f"Computation error for {sample_name}: {exc}")
 
         if segmented_count > 0:
-            print(f"[IRIS-Viewer] Auto-segmented tissue boundary for {segmented_count} sample(s).")
+            iris_log(
+                "IRIS-Viewer",
+                "Boundary",
+                f"Auto-segmented tissue boundary for {segmented_count} sample(s).",
+            )
         else:
             QMessageBox.warning(
                 ctx.control_widget,
@@ -201,9 +206,10 @@ class BoundaryService:
                         )
                     saved_count += 1
                 except Exception as exc:
-                    print(f"[IRIS-Viewer] Failed saving boundary for {sample_name}: {exc}")
+                    log_error("IRIS-Viewer", "Boundary", f"Failed saving boundary for {sample_name}: {exc}")
 
         if saved_count > 0:
+            iris_log("IRIS-Viewer", "Boundary", f"Saved {saved_count} tissue boundary file(s).")
             QMessageBox.information(
                 ctx.control_widget,
                 "Success",

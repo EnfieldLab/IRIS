@@ -1,12 +1,17 @@
 """
 IRIS-Viewer Computational Engines
 
-Segmentation pipelines, consensus ensemble voting, feature extraction,
+Segmentation pipelines, multi-model disagreement QC, feature extraction,
 spatial geometry, and cellular neighborhood clustering.
 """
 from __future__ import annotations
 
-from .consensus import apply_manual_override, compute_consensus_mask
+from .disagreement import (
+    DisagreementItem,
+    DisagreementReport,
+    compute_model_disagreement,
+    render_disagreement_contours_rgba,
+)
 from .feature_extraction import extract_cell_features
 from .geometry import (
     compute_tissue_boundary_mask,
@@ -14,15 +19,23 @@ from .geometry import (
     recompute_area_from_vertices,
 )
 from .neighborhood import identify_cellular_neighborhoods
-from .pipeline import PipelineService, SegmentationSequence, SegmentationStep
+from .pipeline import (
+    PipelineService,
+    SegmentationSequence,
+    SegmentationStep,
+    crop_roi_and_segment_sync,
+)
 
 __all__ = [
-    "compute_consensus_mask",
-    "apply_manual_override",
+    "DisagreementItem",
+    "DisagreementReport",
+    "compute_model_disagreement",
+    "render_disagreement_contours_rgba",
     "extract_cell_features",
     "PipelineService",
     "SegmentationSequence",
     "SegmentationStep",
+    "crop_roi_and_segment_sync",
     "compute_tissue_boundary_mask",
     "recompute_area_from_vertices",
     "ensure_spatial_coordinates",

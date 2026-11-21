@@ -322,10 +322,10 @@ class TestGroupComparisons:
 class TestThemeAndHeadlessIsolation:
     def test_theme_tokens_present(self):
         assert "#1f232b" in SHARED_DARK_THEME
-        assert "#1a1d24" in DIALOG_DARK_THEME
+        assert "#1f232b" in DIALOG_DARK_THEME
         assert "#2D5F8B" in POPOUT_BUTTON_STYLE
-        assert "Publication White (Nature)" in PUBLICATION_RC_PRESETS
-        assert PUBLICATION_RC_PRESETS["Publication White (Nature)"]["pdf.fonttype"] == 42
+        assert "Classic White" in PUBLICATION_RC_PRESETS
+        assert PUBLICATION_RC_PRESETS["Classic White"]["pdf.fonttype"] == 42
 
     def test_configure_independent_window(self, qapp):
         from qtpy.QtCore import Qt

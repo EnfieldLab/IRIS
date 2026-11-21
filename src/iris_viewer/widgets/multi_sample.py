@@ -21,7 +21,6 @@ from qtpy.QtCore import Qt, Signal
 from qtpy.QtWidgets import (
     QCheckBox,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -34,7 +33,13 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.styles import (
+    BUTTON_DANGER,
+    BUTTON_STUDIO,
+    SECTION_SUBTITLE_STYLE,
+    SHARED_DARK_THEME,
+    create_section_card,
+)
 
 
 class MultiSampleComparisonWidget(QWidget):
@@ -79,19 +84,10 @@ class MultiSampleComparisonWidget(QWidget):
     # Groups
 
     def _build_comparison_group(self) -> None:
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("TMA Core & Sample Selection")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
-
-        info = QLabel("Select specific cores or samples to arrange on the canvas.")
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #888; font-size: 11px; font-style: italic;")
-        layout.addWidget(info)
+        box, layout = create_section_card(
+            "TMA Core & Sample Selection",
+            "Select specific cores or samples to arrange on the canvas.",
+        )
 
         self.chk_select_all = QCheckBox("Select All")
         self.chk_select_all.toggled.connect(self._on_select_all_toggled)
@@ -99,54 +95,28 @@ class MultiSampleComparisonWidget(QWidget):
 
         self.list_samples = QListWidget()
         self.list_samples.setMinimumHeight(240)
-        self.list_samples.setStyleSheet("""
-            QListWidget {
-                background: #1E222B; border: 1px solid #444; border-radius: 6px; padding: 2px;
-            }
-            QListWidget::item { padding: 4px 6px; border-bottom: 1px solid #2A303C; }
-            QListWidget::item:hover { background: #2D3748; }
-            QListWidget::item:selected { background: #3A6A9A; color: white; }
-        """)
         self.list_samples.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.list_samples)
 
         self.btn_add = QPushButton("Add Selected Samples to Canvas")
-        self.btn_add.setStyleSheet("""
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 4px; padding: 6px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-            QPushButton:disabled { background-color: #2A3A4A; color: #777; }
-        """)
+        self.btn_add.setMinimumHeight(28)
+        self.btn_add.setStyleSheet(BUTTON_STUDIO)
         self.btn_add.clicked.connect(self._on_add_clicked)
         layout.addWidget(self.btn_add)
 
         self.btn_clear = QPushButton("Clear Canvas")
-        self.btn_clear.setStyleSheet("""
-            QPushButton {
-                background-color: #5A2A2A; color: white; font-weight: bold;
-                border: 1px solid #7A3A3A; border-radius: 4px; padding: 5px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #7A3A3A; }
-        """)
+        self.btn_clear.setMinimumHeight(28)
+        self.btn_clear.setStyleSheet(BUTTON_DANGER)
         self.btn_clear.clicked.connect(self.clearCanvasTriggered.emit)
         layout.addWidget(self.btn_clear)
 
         self._main_layout.addWidget(box)
 
-
     def _build_layout_group(self) -> None:
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Canvas Layout & Spacing")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Canvas Layout & Spacing")
 
         row_gap = QHBoxLayout()
+        row_gap.setSpacing(8)
         row_gap.addWidget(QLabel("Grid gap (px):"))
         self.spin_gap = QSpinBox()
         self.spin_gap.setRange(0, 5000)
@@ -163,7 +133,7 @@ class MultiSampleComparisonWidget(QWidget):
             "are arranged automatically in a proportional matrix."
         )
         info.setWordWrap(True)
-        info.setStyleSheet("color: #777; font-size: 10px; font-style: italic;")
+        info.setStyleSheet(SECTION_SUBTITLE_STYLE)
         layout.addWidget(info)
 
         self._main_layout.addWidget(box)
@@ -207,7 +177,7 @@ class MultiSampleComparisonWidget(QWidget):
             )
             return
         self.btn_add.setEnabled(False)
-        self.btn_add.setText("Loading…")
+        self.btn_add.setText("Loading...")
         self.addSamplesTriggered.emit(selected)
 
     # Public API

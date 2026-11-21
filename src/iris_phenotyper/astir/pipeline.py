@@ -23,6 +23,7 @@ import yaml
 from scipy import stats
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from iris_common.logging import iris_log
 from iris_common.schema import (
     CELL_ID_ALIASES,
     COL_CELL_ID,
@@ -1385,6 +1386,12 @@ class ASTIRPipeline:
         )
         self._type_model = best_model
         self._type_losses = best_model.get_losses()
+        iris_log(
+            "IRIS-Phenotyper",
+            "ASTIR",
+            f"Fitted cell-type VI model ({len(self._type_dset):,} cells, "
+            f"{len(self._type_dset.get_classes())} cell types, epochs={remaining_epochs}).",
+        )
         return self
 
     def fit_state(

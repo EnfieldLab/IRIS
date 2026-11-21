@@ -1,10 +1,10 @@
 """
-IRIS Publication-Ready Figure Studio and Nature Source Data Exporter.
+IRIS Figure Studio and Source Data Exporter.
 
-Provides reusable journal-grade Matplotlib styling, collision-free significance
-bracket rendering, Illustrator-compatible vector/raster export, high-DPI
-clipboard rendering, multi-sheet Nature Source Data Excel export, and Qt widgets
-for interactive customization across IRIS modules.
+Provides reusable publication-grade Matplotlib styling, collision-free
+significance bracket rendering, Illustrator-compatible vector/raster export,
+high-DPI clipboard rendering, multi-sheet Source Data Excel export, and Qt
+widgets for interactive customization across IRIS modules.
 """
 from __future__ import annotations
 
@@ -42,7 +42,6 @@ from qtpy.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -70,16 +69,36 @@ except ImportError:
     except ImportError:
         NavigationToolbar = None
 
+from iris_common.widgets.theme import (
+    BUTTON_CTA,
+    BUTTON_STUDIO,
+    DIALOG_DARK_THEME,
+    create_section_card,
+    style_section_header,
+)
+
 logger = logging.getLogger(__name__)
 
 ThemeType = Literal[
     "IRIS Dark",
-    "Publication White (Nature)",
-    "Cell Press Boxed",
+    "Classic White",
+    "Boxed White",
     "Minimal Grid",
 ]
 GridModeType = Literal["None", "Y-Axis", "X-Axis", "Both"]
 PDisplayModeType = Literal["stars", "p_value", "q_value"]
+
+_LEGACY_THEME_ALIASES: Dict[str, str] = {
+    "Publication White (Nature)": "Classic White",
+    "Cell Press Boxed": "Boxed White",
+}
+
+_LEGACY_PALETTE_ALIASES: Dict[str, str] = {
+    "Nature NPG": "Vibrant",
+    "Lancet": "Clinical Blue",
+    "JCO": "Clinical Blue",
+    "Viridis": "viridis",
+}
 
 FONT_FAMILIES: Tuple[str, ...] = (
     "Arial",
@@ -108,6 +127,15 @@ def _sample_cmap_hex(cmap_name: str, n: int = 8) -> List[str]:
     return [mcolors.to_hex(cmap(pos)) for pos in np.linspace(low, high, n)]
 
 
+def _discrete_cmap_hex(cmap_name: str) -> List[str]:
+    """Extract discrete hex colors from a Matplotlib qualitative colormap."""
+    cmap = plt.colormaps.get_cmap(cmap_name)
+    colors = getattr(cmap, "colors", None)
+    if colors is not None:
+        return [mcolors.to_hex(c) for c in colors]
+    return _sample_cmap_hex(cmap_name, 8)
+
+
 SCIENTIFIC_PALETTES: Dict[str, List[str]] = {
     "Okabe-Ito": [
         "#E69F00",
@@ -119,7 +147,7 @@ SCIENTIFIC_PALETTES: Dict[str, List[str]] = {
         "#CC79A7",
         "#000000",
     ],
-    "Nature NPG": [
+    "Vibrant": [
         "#E64B35",
         "#4DBBD5",
         "#00A087",
@@ -131,7 +159,7 @@ SCIENTIFIC_PALETTES: Dict[str, List[str]] = {
         "#7E6148",
         "#B09C85",
     ],
-    "Lancet": [
+    "Clinical Blue": [
         "#00468B",
         "#ED0000",
         "#42B540",
@@ -142,21 +170,10 @@ SCIENTIFIC_PALETTES: Dict[str, List[str]] = {
         "#ADB6B6",
         "#1B1919",
     ],
-    "JCO": [
-        "#0073C2",
-        "#EFC000",
-        "#868686",
-        "#CD534C",
-        "#7AA6DC",
-        "#003C67",
-        "#8F7700",
-        "#3B3B3B",
-        "#A73030",
-        "#4A6990",
-    ],
-    "Viridis": _sample_cmap_hex("viridis", 8),
-    "RdBu_r": _sample_cmap_hex("RdBu_r", 8),
-    "coolwarm": _sample_cmap_hex("coolwarm", 8),
+    "Set2": _discrete_cmap_hex("Set2"),
+    "Paired": _discrete_cmap_hex("Paired"),
+    "viridis": _sample_cmap_hex("viridis", 8),
+    "tab10": _discrete_cmap_hex("tab10"),
 }
 
 THEME_PRESETS: Dict[str, Dict[str, Any]] = {
@@ -179,7 +196,7 @@ THEME_PRESETS: Dict[str, Dict[str, Any]] = {
         "font_family": "Arial",
         "is_dark": True,
     },
-    "Publication White (Nature)": {
+    "Classic White": {
         "figure_facecolor": "#FFFFFF",
         "axes_facecolor": "#FFFFFF",
         "text_color": "#000000",
@@ -198,7 +215,7 @@ THEME_PRESETS: Dict[str, Dict[str, Any]] = {
         "font_family": "Arial",
         "is_dark": False,
     },
-    "Cell Press Boxed": {
+    "Boxed White": {
         "figure_facecolor": "#FFFFFF",
         "axes_facecolor": "#FFFFFF",
         "text_color": "#111111",
@@ -238,93 +255,7 @@ THEME_PRESETS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-STUDIO_DARK_STYLESHEET = """
-    QDialog, QWidget {
-        background-color: #1f232b;
-        color: #E0E0E0;
-        font-size: 12px;
-    }
-    QGroupBox {
-        border: 1px solid #444444;
-        border-radius: 6px;
-        margin-top: 8px;
-        padding-top: 8px;
-        font-weight: bold;
-        color: #DDDDDD;
-    }
-    QGroupBox::title {
-        subcontrol-origin: margin;
-        subcontrol-position: top left;
-        padding: 0 6px;
-        color: #DDDDDD;
-    }
-    QLabel {
-        color: #DDDDDD;
-        background-color: transparent;
-    }
-    QPushButton {
-        background-color: #3A6A9A;
-        color: white;
-        font-weight: bold;
-        border-radius: 4px;
-        padding: 5px 10px;
-        border: none;
-    }
-    QPushButton:hover {
-        background-color: #4A7FBA;
-    }
-    QPushButton:pressed {
-        background-color: #2A5A7A;
-    }
-    QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-        background-color: #2A2A2A;
-        color: white;
-        border: 1px solid #555555;
-        border-radius: 4px;
-        padding: 3px 6px;
-        min-height: 22px;
-    }
-    QCheckBox {
-        color: #DDDDDD;
-        spacing: 6px;
-    }
-    QScrollArea {
-        border: none;
-        background-color: #1f232b;
-    }
-    QTabWidget::pane {
-        border: 1px solid #444444;
-        background: #14161d;
-    }
-    QTabBar::tab {
-        background: #2A2E39;
-        color: #CCCCCC;
-        padding: 6px 14px;
-        border: 1px solid #444444;
-        border-bottom: none;
-        border-top-left-radius: 4px;
-        border-top-right-radius: 4px;
-    }
-    QTabBar::tab:selected {
-        background: #14161d;
-        color: #FFFFFF;
-        font-weight: bold;
-    }
-    QTableWidget {
-        background-color: #1e2128;
-        alternate-background-color: #262a33;
-        color: #E0E0E0;
-        gridline-color: #333842;
-        border: 1px solid #444444;
-    }
-    QHeaderView::section {
-        background-color: #2A2E39;
-        color: white;
-        padding: 4px;
-        border: 1px solid #3c424f;
-        font-weight: bold;
-    }
-"""
+STUDIO_DARK_STYLESHEET = DIALOG_DARK_THEME
 
 
 @dataclass
@@ -362,6 +293,12 @@ class PlotStyleConfig:
     hide_ns: bool = True
     p_display_mode: PDisplayModeType = "stars"
 
+    def __post_init__(self) -> None:
+        if self.theme in _LEGACY_THEME_ALIASES:
+            self.theme = _LEGACY_THEME_ALIASES[self.theme]  # type: ignore[assignment]
+        if self.palette_name in _LEGACY_PALETTE_ALIASES:
+            self.palette_name = _LEGACY_PALETTE_ALIASES[self.palette_name]
+
     @property
     def size_inches(self) -> Tuple[float, float]:
         """Return target physical figure size in inches."""
@@ -376,11 +313,12 @@ class PlotStyleConfig:
         return asdict(self)
 
     @classmethod
-    def from_theme(cls, theme: ThemeType, **overrides: Any) -> PlotStyleConfig:
+    def from_theme(cls, theme: str, **overrides: Any) -> PlotStyleConfig:
         """Construct a configuration initialized with defaults from *theme*."""
-        preset = THEME_PRESETS.get(theme, THEME_PRESETS["IRIS Dark"])
+        canonical_theme = _LEGACY_THEME_ALIASES.get(theme, theme)
+        preset = THEME_PRESETS.get(canonical_theme, THEME_PRESETS["IRIS Dark"])
         kwargs: Dict[str, Any] = {
-            "theme": theme,
+            "theme": canonical_theme,
             "font_family": preset["font_family"],
             "despine_top": preset["despine_top"],
             "despine_right": preset["despine_right"],
@@ -395,14 +333,15 @@ class PlotStyleConfig:
 
 def get_palette_colors(palette_name: str, n: Optional[int] = None) -> List[str]:
     """Return hex colors for *palette_name*, cycling or sampling to length *n*."""
-    cmap_map = {"Viridis": "viridis", "RdBu_r": "RdBu_r", "coolwarm": "coolwarm"}
-    if n is not None and n > 0 and palette_name in cmap_map:
-        return _sample_cmap_hex(cmap_map[palette_name], n)
+    canonical = _LEGACY_PALETTE_ALIASES.get(palette_name, palette_name)
+    cmap_map = {"viridis": "viridis", "RdBu_r": "RdBu_r", "coolwarm": "coolwarm"}
+    if n is not None and n > 0 and canonical in cmap_map:
+        return _sample_cmap_hex(cmap_map[canonical], n)
 
-    base = SCIENTIFIC_PALETTES.get(palette_name)
+    base = SCIENTIFIC_PALETTES.get(canonical)
     if base is None:
-        if palette_name in plt.colormaps:
-            return _sample_cmap_hex(palette_name, n or 8)
+        if canonical in plt.colormaps:
+            return _sample_cmap_hex(canonical, n or 8)
         base = SCIENTIFIC_PALETTES["Okabe-Ito"]
 
     if n is None:
@@ -727,7 +666,8 @@ def apply_plot_style(
     config: PlotStyleConfig,
 ) -> None:
     """Style figure and axes backgrounds, spines, ticks, fonts, grid, and legends."""
-    preset = THEME_PRESETS.get(config.theme, THEME_PRESETS["IRIS Dark"])
+    canonical_theme = _LEGACY_THEME_ALIASES.get(config.theme, config.theme)
+    preset = THEME_PRESETS.get(canonical_theme, THEME_PRESETS["IRIS Dark"])
     fig.patch.set_facecolor(preset["figure_facecolor"])
     fig.patch.set_alpha(0.0 if config.transparent else 1.0)
 
@@ -884,7 +824,8 @@ def draw_significance_brackets(
     effective_hide_ns = cfg.hide_ns if hide_ns is None else bool(hide_ns)
     effective_mode = cfg.p_display_mode if p_display_mode is None else p_display_mode
 
-    preset = THEME_PRESETS.get(cfg.theme, THEME_PRESETS["IRIS Dark"])
+    canonical_theme = _LEGACY_THEME_ALIASES.get(cfg.theme, cfg.theme)
+    preset = THEME_PRESETS.get(canonical_theme, THEME_PRESETS["IRIS Dark"])
     if color is not None:
         bracket_color = color
     elif config is not None:
@@ -1225,7 +1166,7 @@ def _write_dataframe_sheet(
     df: pd.DataFrame,
     empty_note: str,
 ) -> None:
-    """Write a DataFrame to an openpyxl worksheet with Nature Source Data formatting."""
+    """Write a DataFrame to an openpyxl worksheet with Source Data formatting."""
     header_fill = PatternFill(start_color="E8EEF5", end_color="E8EEF5", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="111111")
     body_font = Font(name="Calibri", size=10, color="111111")
@@ -1295,7 +1236,7 @@ def _build_metadata_dataframe(
             ("Export_Timestamp_UTC", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
         )
     if "Format" not in existing_keys:
-        rows.append(("Format", "Nature Source Data Workbook"))
+        rows.append(("Format", "Source Data Workbook"))
 
     return pd.DataFrame(rows, columns=["Parameter", "Value"])
 
@@ -1310,7 +1251,7 @@ def export_source_data_excel(
     include_empty_sheets: bool = False,
 ) -> Path:
     """
-    Write a Nature-style multi-sheet Source Data workbook (.xlsx) via openpyxl.
+    Write a multi-sheet Source Data workbook (.xlsx) via openpyxl.
 
     Sheets written:
     - `Summary_Data` (always)
@@ -1355,7 +1296,7 @@ class PublicationStyleSidebar(QWidget):
     exportFigureRequested : Signal()
         Emitted when the user requests exporting the figure.
     exportSourceDataRequested : Signal()
-        Emitted when the user requests exporting Nature-style Source Data (.xlsx).
+        Emitted when the user requests exporting Source Data (.xlsx).
     copyClipboardRequested : Signal()
         Emitted when the user requests copying the figure to clipboard.
     """
@@ -1409,8 +1350,8 @@ class PublicationStyleSidebar(QWidget):
         self._build_action_buttons(root_layout)
 
     def _build_theme_group(self) -> None:
-        group = QGroupBox("Theme & Palette")
-        form = QFormLayout(group)
+        group, card_layout = create_section_card("Theme & Palette")
+        form = QFormLayout()
         form.setSpacing(6)
 
         self.combo_theme = QComboBox()
@@ -1423,11 +1364,12 @@ class PublicationStyleSidebar(QWidget):
         self.combo_palette.currentTextChanged.connect(self._on_palette_changed)
         form.addRow("Palette:", self.combo_palette)
 
+        card_layout.addLayout(form)
         self._form_container.addWidget(group)
 
     def _build_typography_group(self) -> None:
-        group = QGroupBox("Typography")
-        form = QFormLayout(group)
+        group, card_layout = create_section_card("Typography")
+        form = QFormLayout()
         form.setSpacing(6)
 
         self.combo_font = QComboBox()
@@ -1462,11 +1404,12 @@ class PublicationStyleSidebar(QWidget):
         self.spin_tick_rotation.valueChanged.connect(self._on_control_changed)
         form.addRow("X-Tick Angle:", self.spin_tick_rotation)
 
+        card_layout.addLayout(form)
         self._form_container.addWidget(group)
 
     def _build_labels_group(self) -> None:
-        group = QGroupBox("Labels & Titles")
-        form = QFormLayout(group)
+        group, card_layout = create_section_card("Labels & Titles")
+        form = QFormLayout()
         form.setSpacing(6)
 
         self.edit_title = self._make_line_edit("Auto / plot default")
@@ -1479,11 +1422,12 @@ class PublicationStyleSidebar(QWidget):
         form.addRow("Y Label:", self.edit_ylabel)
         form.addRow("Legend Title:", self.edit_legend_title)
 
+        card_layout.addLayout(form)
         self._form_container.addWidget(group)
 
     def _build_axes_group(self) -> None:
-        group = QGroupBox("Axes, Spines & Grid")
-        form = QFormLayout(group)
+        group, card_layout = create_section_card("Axes, Spines & Grid")
+        form = QFormLayout()
         form.setSpacing(6)
 
         self.chk_despine_top = QCheckBox("Hide Top Spine")
@@ -1510,11 +1454,12 @@ class PublicationStyleSidebar(QWidget):
         self.spin_grid_alpha = self._make_double_spin(0.05, 1.0, 0.05, 2, 0.35)
         form.addRow("Grid Alpha:", self.spin_grid_alpha)
 
+        card_layout.addLayout(form)
         self._form_container.addWidget(group)
 
     def _build_stats_group(self) -> None:
-        group = QGroupBox("Statistics Annotations")
-        form = QFormLayout(group)
+        group, card_layout = create_section_card("Statistics Annotations")
+        form = QFormLayout()
         form.setSpacing(6)
 
         self.chk_hide_ns = QCheckBox("Hide Non-Significant (ns)")
@@ -1526,12 +1471,11 @@ class PublicationStyleSidebar(QWidget):
         self.combo_p_mode.currentTextChanged.connect(self._on_control_changed)
         form.addRow("Display Mode:", self.combo_p_mode)
 
+        card_layout.addLayout(form)
         self._form_container.addWidget(group)
 
     def _build_categories_group(self) -> None:
-        self.group_categories = QGroupBox("Category Colors & Labels")
-        outer = QVBoxLayout(self.group_categories)
-        outer.setSpacing(6)
+        self.group_categories, outer = create_section_card("Category Colors & Labels")
 
         self._cat_rows_layout = QVBoxLayout()
         self._cat_rows_layout.setSpacing(4)
@@ -1544,8 +1488,8 @@ class PublicationStyleSidebar(QWidget):
         self._form_container.addWidget(self.group_categories)
 
     def _build_dimensions_group(self) -> None:
-        group = QGroupBox("Page Size & Export")
-        form = QFormLayout(group)
+        group, card_layout = create_section_card("Page Size & Export")
+        form = QFormLayout()
         form.setSpacing(6)
 
         self.combo_size_preset = QComboBox()
@@ -1574,6 +1518,7 @@ class PublicationStyleSidebar(QWidget):
         self.chk_transparent.toggled.connect(self._on_control_changed)
         form.addRow("", self.chk_transparent)
 
+        card_layout.addLayout(form)
         self._form_container.addWidget(group)
 
     def _build_action_buttons(self, root_layout: QVBoxLayout) -> None:
@@ -1581,14 +1526,17 @@ class PublicationStyleSidebar(QWidget):
         btn_box.setSpacing(5)
 
         self.btn_copy_clipboard = QPushButton("Copy to Clipboard")
+        self.btn_copy_clipboard.setStyleSheet(BUTTON_STUDIO)
         self.btn_copy_clipboard.clicked.connect(self.copyClipboardRequested.emit)
         btn_box.addWidget(self.btn_copy_clipboard)
 
         self.btn_export_figure = QPushButton("Export Figure")
+        self.btn_export_figure.setStyleSheet(BUTTON_CTA)
         self.btn_export_figure.clicked.connect(self.exportFigureRequested.emit)
         btn_box.addWidget(self.btn_export_figure)
 
         self.btn_export_source_data = QPushButton("Export Source Data (.xlsx)")
+        self.btn_export_source_data.setStyleSheet(BUTTON_CTA)
         self.btn_export_source_data.clicked.connect(self.exportSourceDataRequested.emit)
         btn_box.addWidget(self.btn_export_source_data)
 
@@ -1620,7 +1568,8 @@ class PublicationStyleSidebar(QWidget):
     def _on_theme_selected(self, theme_name: str) -> None:
         if self._updating:
             return
-        preset = THEME_PRESETS.get(theme_name)
+        canonical_theme = _LEGACY_THEME_ALIASES.get(theme_name, theme_name)
+        preset = THEME_PRESETS.get(canonical_theme)
         if preset is None:
             return
         self._updating = True
@@ -1717,37 +1666,42 @@ class PublicationStyleSidebar(QWidget):
 
     def set_config(self, config: PlotStyleConfig, emit: bool = False) -> None:
         """Synchronize sidebar widgets from *config*."""
-        self._config = config.copy()
+        cfg = config.copy()
+        if cfg.theme in _LEGACY_THEME_ALIASES:
+            cfg.theme = _LEGACY_THEME_ALIASES[cfg.theme]  # type: ignore[assignment]
+        if cfg.palette_name in _LEGACY_PALETTE_ALIASES:
+            cfg.palette_name = _LEGACY_PALETTE_ALIASES[cfg.palette_name]
+        self._config = cfg
         self._updating = True
         try:
-            self.combo_theme.setCurrentText(config.theme)
-            self.combo_palette.setCurrentText(config.palette_name)
-            self.combo_font.setCurrentText(config.font_family)
-            self.spin_title_size.setValue(float(config.title_size))
-            self.spin_label_size.setValue(float(config.label_size))
-            self.spin_tick_size.setValue(float(config.tick_size))
-            self.spin_legend_size.setValue(float(config.legend_size))
-            self.spin_stat_size.setValue(float(config.stat_size))
-            self.chk_bold_title.setChecked(bool(config.bold_title))
-            self.chk_bold_labels.setChecked(bool(config.bold_labels))
-            self.spin_tick_rotation.setValue(int(config.tick_rotation))
-            self.edit_title.setText(config.title)
-            self.edit_xlabel.setText(config.xlabel)
-            self.edit_ylabel.setText(config.ylabel)
-            self.edit_legend_title.setText(config.legend_title)
-            self.chk_despine_top.setChecked(bool(config.despine_top))
-            self.chk_despine_right.setChecked(bool(config.despine_right))
-            self.spin_spine_width.setValue(float(config.spine_linewidth))
-            self.combo_grid.setCurrentText(config.grid_mode)
-            self.combo_grid_style.setCurrentText(config.grid_linestyle)
-            self.spin_grid_alpha.setValue(float(config.grid_alpha))
-            self.combo_size_preset.setCurrentText(config.size_preset)
-            self.spin_width_mm.setValue(float(config.width_mm))
-            self.spin_height_mm.setValue(float(config.height_mm))
-            self.combo_dpi.setCurrentText(str(int(config.dpi)))
-            self.chk_transparent.setChecked(bool(config.transparent))
-            self.chk_hide_ns.setChecked(bool(config.hide_ns))
-            self.combo_p_mode.setCurrentText(config.p_display_mode)
+            self.combo_theme.setCurrentText(cfg.theme)
+            self.combo_palette.setCurrentText(cfg.palette_name)
+            self.combo_font.setCurrentText(cfg.font_family)
+            self.spin_title_size.setValue(float(cfg.title_size))
+            self.spin_label_size.setValue(float(cfg.label_size))
+            self.spin_tick_size.setValue(float(cfg.tick_size))
+            self.spin_legend_size.setValue(float(cfg.legend_size))
+            self.spin_stat_size.setValue(float(cfg.stat_size))
+            self.chk_bold_title.setChecked(bool(cfg.bold_title))
+            self.chk_bold_labels.setChecked(bool(cfg.bold_labels))
+            self.spin_tick_rotation.setValue(int(cfg.tick_rotation))
+            self.edit_title.setText(cfg.title)
+            self.edit_xlabel.setText(cfg.xlabel)
+            self.edit_ylabel.setText(cfg.ylabel)
+            self.edit_legend_title.setText(cfg.legend_title)
+            self.chk_despine_top.setChecked(bool(cfg.despine_top))
+            self.chk_despine_right.setChecked(bool(cfg.despine_right))
+            self.spin_spine_width.setValue(float(cfg.spine_linewidth))
+            self.combo_grid.setCurrentText(cfg.grid_mode)
+            self.combo_grid_style.setCurrentText(cfg.grid_linestyle)
+            self.spin_grid_alpha.setValue(float(cfg.grid_alpha))
+            self.combo_size_preset.setCurrentText(cfg.size_preset)
+            self.spin_width_mm.setValue(float(cfg.width_mm))
+            self.spin_height_mm.setValue(float(cfg.height_mm))
+            self.combo_dpi.setCurrentText(str(int(cfg.dpi)))
+            self.chk_transparent.setChecked(bool(cfg.transparent))
+            self.chk_hide_ns.setChecked(bool(cfg.hide_ns))
+            self.combo_p_mode.setCurrentText(cfg.p_display_mode)
             self._sync_category_widgets_from_config()
         finally:
             self._updating = False
@@ -1775,7 +1729,7 @@ class PublicationStyleSidebar(QWidget):
 
         if not self._categories:
             hint = QLabel("No categories detected for current plot.")
-            hint.setStyleSheet("color: #999999; font-style: italic;")
+            style_section_header(hint, subtitle=True)
             self._cat_rows_layout.addWidget(hint)
             self.btn_reset_categories.setEnabled(False)
             return
@@ -1784,6 +1738,8 @@ class PublicationStyleSidebar(QWidget):
         palette = get_palette_colors(self.combo_palette.currentText(), len(self._categories))
         for idx, cat in enumerate(self._categories):
             row_widget = QWidget()
+            row_widget.setObjectName("irisCardRow")
+            row_widget.setStyleSheet("QWidget#irisCardRow { background-color: transparent; }")
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(6)
@@ -1905,7 +1861,7 @@ class PublicationPlotStudioDialog(QDialog):
         stats_df: Optional[pd.DataFrame] = None,
         categories: Optional[Sequence[str]] = None,
         config: Optional[PlotStyleConfig] = None,
-        title: str = "IRIS Publication Figure Studio",
+        title: str = "IRIS Figure Studio",
         metadata: Optional[Dict[str, Any]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -1946,7 +1902,8 @@ class PublicationPlotStudioDialog(QDialog):
         preview_layout.setSpacing(4)
 
         self.figure = Figure(figsize=self.config.size_inches, dpi=100)
-        preset = THEME_PRESETS.get(self.config.theme, THEME_PRESETS["IRIS Dark"])
+        canonical_theme = _LEGACY_THEME_ALIASES.get(self.config.theme, self.config.theme)
+        preset = THEME_PRESETS.get(canonical_theme, THEME_PRESETS["IRIS Dark"])
         self.figure.patch.set_facecolor(preset["figure_facecolor"])
 
         self.canvas = FigureCanvas(self.figure)
@@ -1956,18 +1913,18 @@ class PublicationPlotStudioDialog(QDialog):
         if NavigationToolbar is not None:
             self.toolbar = NavigationToolbar(self.canvas, preview_tab)
             self.toolbar.setStyleSheet(
-                "QToolBar { background-color: #1f232b; border: 1px solid #333; "
+                "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
                 "spacing: 4px; padding: 2px; }"
                 "QToolButton { background-color: transparent; border: 1px solid transparent; "
                 "border-radius: 3px; padding: 3px; }"
-                "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #558; }"
+                "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
             )
             preview_layout.addWidget(self.toolbar)
 
         preview_layout.addWidget(self.canvas, 1)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("color: #AAAAAA; font-size: 11px; padding: 2px 4px;")
+        self.lbl_status.setStyleSheet("color: #9AA4B2; font-size: 11px; padding: 2px 4px;")
         preview_layout.addWidget(self.lbl_status)
 
         self.tabs.addTab(preview_tab, "Figure Preview")
@@ -2130,8 +2087,8 @@ class PublicationPlotStudioDialog(QDialog):
         """Prompt for an output path and export the styled figure."""
         filepath, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Publication Figure",
-            "iris_publication_figure.pdf",
+            "Export Figure",
+            "iris_figure.pdf",
             "Vector PDF (*.pdf);;Scalable Vector Graphics (*.svg);;"
             "Encapsulated PostScript (*.eps);;LZW TIFF (*.tiff *.tif);;PNG (*.png)",
         )
@@ -2146,7 +2103,7 @@ class PublicationPlotStudioDialog(QDialog):
             return None
 
     def export_source_data_to_path(self, filepath: Union[str, Path]) -> Path:
-        """Export Nature-style Source Data Excel workbook directly to *filepath*."""
+        """Export Source Data Excel workbook directly to *filepath*."""
         summary = self.summary_df if self.summary_df is not None else pd.DataFrame()
         meta: Dict[str, Any] = dict(self.metadata)
         meta.update({f"style.{k}": v for k, v in self.config.to_dict().items()})
@@ -2161,7 +2118,7 @@ class PublicationPlotStudioDialog(QDialog):
         return out
 
     def export_source_data(self) -> Optional[Path]:
-        """Prompt for an Excel path and export Nature-style Source Data."""
+        """Prompt for an Excel path and export Source Data."""
         filepath, _ = QFileDialog.getSaveFileName(
             self,
             "Export Source Data (Excel)",
@@ -2181,9 +2138,15 @@ class PublicationPlotStudioDialog(QDialog):
             return None
 
 
+FigureStudioDialog = PublicationPlotStudioDialog
+FigureStyleSidebar = PublicationStyleSidebar
+
+
 __all__ = [
     "DPI_OPTIONS",
     "FONT_FAMILIES",
+    "FigureStudioDialog",
+    "FigureStyleSidebar",
     "GRID_LINESTYLES",
     "GRID_MODES",
     "P_DISPLAY_MODES",
@@ -2192,6 +2155,7 @@ __all__ = [
     "PublicationStyleSidebar",
     "SCIENTIFIC_PALETTES",
     "SIZE_PRESETS",
+    "STUDIO_DARK_STYLESHEET",
     "THEME_PRESETS",
     "apply_plot_style",
     "copy_figure_to_clipboard",

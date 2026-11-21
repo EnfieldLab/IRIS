@@ -3,13 +3,14 @@ iris_viewer.widgets.segmentation_panel
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Unified Dockable Widget combining Segmentation Pipelines,
-Consensus Generation & Interactive Review, and Feature Extraction.
+Multi-Model Disagreement QC & Inspection, and Feature Extraction.
 """
-from typing import Optional
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Sequence
 
 from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -19,7 +20,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
+from iris_viewer.widgets.disagreement_panel import DisagreementPanelWidget
 from iris_viewer.widgets.feature_panel import FeaturePanelWidget
 from iris_viewer.widgets.segmentation_pipeline_builder import (
     MultiSelectButton,
@@ -28,16 +29,25 @@ from iris_viewer.widgets.segmentation_pipeline_builder import (
     StepWidget,
 )
 from iris_viewer.widgets.segmentation_studio_dialog import SegmentationStudioDialog
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.styles import (
+    POPOUT_BUTTON_STYLE,
+    SECTION_SUBTITLE_STYLE,
+    SECTION_TITLE_STYLE,
+    SHARED_DARK_THEME,
+    create_section_card,
+)
 
 
 class SegmentationPanelWidget(QWidget):
     """
     Unified Dockable Widget combining Segmentation Pipelines,
-    Consensus Generation & Interactive Review, and Feature Extraction.
+    Multi-Model Disagreement QC, and Feature Extraction.
     """
+
     runSequence = Signal(dict)
     cancelSequence = Signal()
+    previewRoiRequested = Signal(str, list)
+    drawPreviewRoiRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,57 +57,55 @@ class SegmentationPanelWidget(QWidget):
 
         self._build_ui()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(6)
 
         # Top Configuration Box
-        config_box = QGroupBox()
-        cb = QVBoxLayout(config_box)
-        cb.setContentsMargins(10, 3, 10, 10)
-        cb.setSpacing(6)
+        config_box, cb = create_section_card(margins=(10, 6, 10, 10), spacing=8)
 
         header_row = QHBoxLayout()
         title = QLabel("Segmentation Module")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        title.setStyleSheet(SECTION_TITLE_STYLE)
         header_row.addWidget(title)
         header_row.addStretch()
 
         self.btn_studio_popout = QPushButton("⤢ Pop-up Window")
-        self.btn_studio_popout.setToolTip("Open full-size interactive Segmentation Studio with multi-pane canvas")
-        self.btn_studio_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 4px; padding: 4px 10px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-        """)
+        self.btn_studio_popout.setToolTip("Open Segmentation Disagreement QC window")
+        self.btn_studio_popout.setStyleSheet(POPOUT_BUTTON_STYLE)
         self.btn_studio_popout.clicked.connect(self.open_studio_dialog)
         header_row.addWidget(self.btn_studio_popout)
         cb.addLayout(header_row)
 
         nav_row = QHBoxLayout()
-        nav_row.setSpacing(4)
+        nav_row.setSpacing(6)
         self.btn_nav_pipelines = QPushButton("Pipelines")
-        self.btn_nav_consensus = QPushButton("Consensus")
-        self.btn_nav_features  = QPushButton("Features")
+        self.btn_nav_disagreement = QPushButton("Disagreements")
+        self.btn_nav_features = QPushButton("Features")
 
-        self.nav_buttons = [self.btn_nav_pipelines, self.btn_nav_consensus, self.btn_nav_features]
+        self.nav_buttons = [
+            self.btn_nav_pipelines,
+            self.btn_nav_disagreement,
+            self.btn_nav_features,
+        ]
         for i, btn in enumerate(self.nav_buttons):
             btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, idx=i: self._switch_sub_panel(idx))
+            btn.setMinimumHeight(26)
+            btn.clicked.connect(lambda _checked, idx=i: self._switch_sub_panel(idx))
             nav_row.addWidget(btn)
         self.btn_nav_pipelines.setChecked(True)
         cb.addLayout(nav_row)
 
-        self.lbl_studio_summary = QLabel("Pipelines: Ready | Consensus: Ready | Features: Idle")
-        self.lbl_studio_summary.setStyleSheet("color: #888; font-size: 11px; font-style: italic; padding: 2px 2px;")
+        self.lbl_studio_summary = QLabel(
+            "Pipelines: Ready | Disagreements: Ready | Features: Idle"
+        )
+        self.lbl_studio_summary.setStyleSheet(SECTION_SUBTITLE_STYLE)
         cb.addWidget(self.lbl_studio_summary)
         main_layout.addWidget(config_box)
 
-        # Stacked Sub-panels with full-height expanding policies
+        # Stacked Sub-panels
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -105,13 +113,17 @@ class SegmentationPanelWidget(QWidget):
         self.pipeline_builder = PipelineBuilderWidget(self)
         self.pipeline_builder.runSequence.connect(self.runSequence.emit)
         self.pipeline_builder.cancelSequence.connect(self.cancelSequence.emit)
+        self.pipeline_builder.previewRoiRequested.connect(self.previewRoiRequested.emit)
+        self.pipeline_builder.drawPreviewRoiRequested.connect(
+            self.drawPreviewRoiRequested.emit
+        )
         self.pipeline_builder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stack.addWidget(self.pipeline_builder)
 
-        # 1: Consensus Panel
-        self.consensus_panel = ConsensusPanelWidget(self)
-        self.consensus_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.stack.addWidget(self.consensus_panel)
+        # 1: Disagreement Panel
+        self.disagreement_panel = DisagreementPanelWidget(self)
+        self.disagreement_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.stack.addWidget(self.disagreement_panel)
 
         # 2: Feature Panel
         self.feature_panel = FeaturePanelWidget(self)
@@ -122,27 +134,32 @@ class SegmentationPanelWidget(QWidget):
         self._update_nav_styles(0)
 
     @property
-    def lbl_consensus_status(self):
-        return self.pipeline_builder.lbl_consensus_status
+    def lbl_disagreement_status(self) -> QLabel:
+        return self.pipeline_builder.lbl_disagreement_status
 
-    def open_studio_dialog(self):
+    @property
+    def lbl_consensus_status(self) -> QLabel:
+        """Backward-compatible alias for lbl_disagreement_status."""
+        return self.pipeline_builder.lbl_disagreement_status
+
+    def open_studio_dialog(self) -> None:
         if self.popup_dialog is None:
             self.popup_dialog = SegmentationStudioDialog(
                 parent=self.window(),
                 ctx=self.ctx,
-                consensus_panel=self.consensus_panel,
-                feature_panel=self.feature_panel
+                disagreement_panel=self.disagreement_panel,
+                feature_panel=self.feature_panel,
             )
         self.popup_dialog.refresh_data()
         self.popup_dialog.show()
         self.popup_dialog.raise_()
         self.popup_dialog.activateWindow()
 
-    def _switch_sub_panel(self, idx: int):
+    def _switch_sub_panel(self, idx: int) -> None:
         self.stack.setCurrentIndex(idx)
         self._update_nav_styles(idx)
 
-    def _update_nav_styles(self, active_idx: int):
+    def _update_nav_styles(self, active_idx: int) -> None:
         for i, btn in enumerate(self.nav_buttons):
             btn.blockSignals(True)
             btn.setChecked(i == active_idx)
@@ -151,7 +168,8 @@ class SegmentationPanelWidget(QWidget):
                 btn.setStyleSheet("""
                     QPushButton {
                         background-color: #3A6A9A; color: white; font-weight: bold;
-                        border: 1px solid #5A8FCA; border-radius: 4px; padding: 5px; font-size: 11px;
+                        border: 1px solid #5A8FCA; border-radius: 4px;
+                        padding: 5px; font-size: 11px;
                     }
                 """)
             else:
@@ -163,29 +181,79 @@ class SegmentationPanelWidget(QWidget):
                     QPushButton:hover { background-color: #2D3748; color: #FFF; }
                 """)
 
-    def update_channel_dropdowns(self, markers: list):
+    def sync_available_results(
+        self,
+        methods: List[str],
+        active_method: Optional[str] = None,
+        cell_counts: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """Synchronize completed segmentation group names across Disagreement & Feature panels."""
+        self.disagreement_panel.update_available_methods(
+            methods,
+            active_method=active_method,
+            cell_counts=cell_counts,
+        )
+        self.feature_panel.update_mask_sources(methods, active=active_method)
+
+    def sync_sample_scope(
+        self,
+        all_samples: Sequence[str],
+        active_samples: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Synchronize sample scope lists across Pipeline Builder and Feature Panel."""
+        self.pipeline_builder.set_samples(all_samples, active_samples)
+        self.feature_panel.set_samples(all_samples, active_samples)
+
+    def update_channel_dropdowns(self, markers: list) -> None:
         self.pipeline_builder.update_channel_dropdowns(markers)
 
-    def update_available_methods(self, methods: list):
+    def update_available_methods(self, methods: list) -> None:
         self.pipeline_builder.update_available_methods(methods)
 
-    def update_step_status(self, group_name: str, step_idx: int, status: str):
+    def update_step_status(self, group_name: str, step_idx: int, status: str) -> None:
         self.pipeline_builder.update_step_status(group_name, step_idx, status)
 
-    def set_running_state(self, is_running: bool):
+    def set_progress(self, current: int, total: int, text: Optional[str] = None) -> None:
+        """Forward progress updates to the pipeline builder progress bar and summary label."""
+        self.pipeline_builder.set_progress(current, total, text=text)
+        if text:
+            self.lbl_studio_summary.setText(text)
+            self.lbl_studio_summary.setStyleSheet(
+                "color: #44AAFF; font-size: 11px; font-weight: bold;"
+            )
+
+    def stop_progress(self, summary_text: Optional[str] = None) -> None:
+        """Hide the progress bar and optionally update the summary text."""
+        self.pipeline_builder.stop_progress()
+        if summary_text is not None:
+            self.lbl_studio_summary.setText(summary_text)
+        self.lbl_studio_summary.setStyleSheet(
+            "color: #888; font-size: 11px; font-style: italic;"
+        )
+
+    def set_running_state(self, is_running: bool) -> None:
         self.pipeline_builder.set_running_state(is_running)
         if is_running:
-            self.lbl_studio_summary.setText("Pipelines: Running... | Consensus: Pending | Features: Idle")
-            self.lbl_studio_summary.setStyleSheet("color: #44AAFF; font-size: 11px; font-weight: bold;")
+            self.lbl_studio_summary.setText(
+                "Pipelines: Running... | Disagreements: Pending | Features: Idle"
+            )
+            self.lbl_studio_summary.setStyleSheet(
+                "color: #44AAFF; font-size: 11px; font-weight: bold;"
+            )
         else:
-            self.lbl_studio_summary.setText("Pipelines: Ready | Consensus: Ready | Features: Idle")
-            self.lbl_studio_summary.setStyleSheet("color: #888; font-size: 11px; font-style: italic;")
+            self.lbl_studio_summary.setText(
+                "Pipelines: Ready | Disagreements: Ready | Features: Idle"
+            )
+            self.lbl_studio_summary.setStyleSheet(
+                "color: #888; font-size: 11px; font-style: italic;"
+            )
 
 
 # Alias for backward compatibility
 IrisSegmentationWidget = SegmentationPanelWidget
 
 __all__ = [
+    "DisagreementPanelWidget",
     "MultiSelectButton",
     "StepWidget",
     "PipelineGroupWidget",

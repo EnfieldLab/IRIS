@@ -15,6 +15,7 @@ from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
+from iris_common.logging import iris_log, log_error
 from iris_viewer.app.services.multi_sample_service import get_sample_sub_df
 from iris_viewer.engine.neighborhood import identify_cellular_neighborhoods
 from iris_viewer.io.data_adapter import IrisPhenotypeMapper
@@ -75,6 +76,11 @@ class NeighborhoodService:
         self.last_cn_k = k_neighbors
         self.last_cn_method = method
         self.last_total_cn = n_niches
+        iris_log(
+            "IRIS-Viewer",
+            "Neighborhood",
+            f"Running {method} clustering (k={k_neighbors}, niches={n_niches}, cells={len(df):,})...",
+        )
 
         @thread_worker
         def _niche_worker():
@@ -136,6 +142,11 @@ class NeighborhoodService:
             ctx.state.current_mapped_df = updated_df
 
         total_cn = centers.shape[0]
+        iris_log(
+            "IRIS-Viewer",
+            "Neighborhood",
+            f"Identified {total_cn} cellular neighborhood(s) across {len(updated_df):,} cells.",
+        )
         widget = getattr(ctx, "neighborhood_widget", None)
         if widget is not None:
             widget.initialize_metadata_table(total_cn)
@@ -147,6 +158,7 @@ class NeighborhoodService:
     def _on_niche_error(self, exc: Exception) -> None:
         """Handles background calculation error."""
         ctx = self.ctx
+        log_error("IRIS-Viewer", "Neighborhood", f"Neighborhood extraction failed: {exc}")
         widget = getattr(ctx, "neighborhood_widget", None)
         if widget is not None:
             widget.btn_niche.setText("Extract Spatial Neighborhoods")

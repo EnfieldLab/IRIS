@@ -14,8 +14,6 @@ For each cell, produces:
     final_cell_type      : str
     cell_type_confidence : float   (fraction of methods that agree)
     per_method_breakdown : dict    {method_name: assigned_type}
-
-Analogous to the Viewer's ``compute_consensus_mask``.
 """
 from __future__ import annotations
 

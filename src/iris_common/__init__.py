@@ -6,6 +6,15 @@ and headless-safe UI theme/publication widgets shared across IRIS packages.
 """
 from __future__ import annotations
 
+from .logging import (
+    ALLOWED_MODULES,
+    format_iris_log,
+    iris_log,
+    log_error,
+    log_info,
+    log_warn,
+    resolve_iris_module,
+)
 from .schema import (
     COL_CELL_ID,
     COL_CELL_TYPE,
@@ -22,6 +31,13 @@ __version__ = "0.2.0"
 
 __all__ = [
     "__version__",
+    "ALLOWED_MODULES",
+    "resolve_iris_module",
+    "format_iris_log",
+    "iris_log",
+    "log_info",
+    "log_warn",
+    "log_error",
     "COL_SAMPLE",
     "COL_CELL_ID",
     "COL_X",

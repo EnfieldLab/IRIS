@@ -20,7 +20,6 @@ from qtpy.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -31,7 +30,44 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
 )
 
+from iris_common.widgets.sample_scope import (
+    SCOPE_ACTIVE,
+    SCOPE_ALL,
+    SCOPE_SELECTED,
+    _normalize_sample_name,
+)
+from iris_common.widgets.theme import (
+    BUTTON_CTA,
+    DIALOG_DARK_THEME,
+    create_section_card,
+    style_section_header,
+)
 from iris_viewer.widgets.phenotyping.thresholding import find_sample_column
+
+_LEGACY_SCOPE_MAP = {
+    "All Samples (Cohort)": SCOPE_ALL,
+    "Selected Sample": SCOPE_SELECTED,
+    "Actively Loaded Sample": SCOPE_ACTIVE,
+}
+
+
+class _ScopeComboBox(QComboBox):
+    """QComboBox accepting canonical and legacy scope labels seamlessly."""
+
+    @staticmethod
+    def _normalize_label(text: str) -> str:
+        return _LEGACY_SCOPE_MAP.get(text, text)
+
+    def findText(self, text: str, *args, **kwargs) -> int:
+        idx = super().findText(text, *args, **kwargs)
+        if idx < 0:
+            mapped = self._normalize_label(text)
+            if mapped != text:
+                return super().findText(mapped, *args, **kwargs)
+        return idx
+
+    def setCurrentText(self, text: str) -> None:
+        super().setCurrentText(self._normalize_label(text))
 
 
 class SampleImpactDialog(QDialog):
@@ -48,48 +84,7 @@ class SampleImpactDialog(QDialog):
         self.resize(900, 640)
         self.setMinimumSize(750, 500)
         self.setWindowFlags(self.windowFlags() | Qt.Window)
-        self.setStyleSheet("""
-            QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
-            QGroupBox { border: 1px solid #444; border-radius: 8px; margin-top: 6px; padding-top: 6px; font-weight: bold; color: #DDD; }
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 4px; padding: 5px 12px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-            QComboBox, QLineEdit {
-                background-color: #2A2A2A; color: white; border: 1px solid #555;
-                border-radius: 4px; padding: 3px 6px; font-size: 12px;
-            }
-            QLabel { color: #DDD; font-size: 12px; }
-            QTableWidget {
-                background-color: #1e2128;
-                alternate-background-color: #262a33;
-                color: #E0E0E0;
-                gridline-color: #333842;
-                border: 1px solid #3c424f;
-                border-radius: 6px;
-            }
-            QTableWidget::item {
-                color: #E0E0E0;
-                background-color: #1e2128;
-                padding: 4px 6px;
-            }
-            QTableWidget::item:alternate {
-                background-color: #262a33;
-                color: #E0E0E0;
-            }
-            QTableWidget::item:selected {
-                background-color: #3A6A9A;
-                color: #ffffff;
-            }
-            QHeaderView::section {
-                background-color: #2A2E39;
-                color: #E0E0E0;
-                padding: 5px;
-                border: 1px solid #3c424f;
-                font-weight: bold;
-            }
-        """)
+        self.setStyleSheet(DIALOG_DARK_THEME)
 
         self.last_df: Optional[pd.DataFrame] = None
         self.last_mask: Optional[np.ndarray] = None
@@ -108,8 +103,8 @@ class SampleImpactDialog(QDialog):
         # Top Control Row
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel("Scope:"))
-        self.combo_scope = QComboBox()
-        self.combo_scope.addItems(["All Samples (Cohort)", "Selected Samples", "Actively Loaded Sample"])
+        self.combo_scope = _ScopeComboBox()
+        self.combo_scope.addItems([SCOPE_ALL, SCOPE_SELECTED, SCOPE_ACTIVE])
         self.combo_scope.currentIndexChanged.connect(self._recalculate)
         top_bar.addWidget(self.combo_scope)
 
@@ -122,24 +117,19 @@ class SampleImpactDialog(QDialog):
         top_bar.addStretch(1)
 
         self.btn_export = QPushButton("Export CSV")
+        self.btn_export.setStyleSheet(BUTTON_CTA)
+        self.btn_export.setMinimumHeight(28)
         self.btn_export.clicked.connect(self._export_csv)
         top_bar.addWidget(self.btn_export)
 
         main_layout.addLayout(top_bar)
 
-        # KPI Summary Banner Box (Title placed underneath/inside box)
-        self.box_kpi = QGroupBox()
-        bl_kpi = QVBoxLayout(self.box_kpi)
-        bl_kpi.setContentsMargins(10, 3, 10, 10)
-        bl_kpi.setSpacing(6)
-
-        kpi_title = QLabel("Cohort Gating Assessment")
-        kpi_title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        bl_kpi.addWidget(kpi_title)
+        # KPI Summary Banner Box (Title placed inside card)
+        self.box_kpi, bl_kpi = create_section_card("Cohort Gating Assessment")
 
         row_kpi_vals = QHBoxLayout()
         self.lbl_gate_desc = QLabel("Active Gate: None")
-        self.lbl_gate_desc.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 12px;")
+        self.lbl_gate_desc.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 12px;")
         row_kpi_vals.addWidget(self.lbl_gate_desc)
 
         self.lbl_cohort_stats = QLabel("Cohort Total: 0 / 0 cells (0.0%)")
@@ -147,7 +137,7 @@ class SampleImpactDialog(QDialog):
         row_kpi_vals.addWidget(self.lbl_cohort_stats)
 
         self.lbl_sample_range = QLabel("Sample Range: 0.0% - 0.0% | Mean: 0.0%")
-        self.lbl_sample_range.setStyleSheet("color: #DDD; font-size: 11px;")
+        style_section_header(self.lbl_sample_range, subtitle=True)
         row_kpi_vals.addWidget(self.lbl_sample_range)
         row_kpi_vals.addStretch(1)
         bl_kpi.addLayout(row_kpi_vals)
@@ -158,30 +148,16 @@ class SampleImpactDialog(QDialog):
         splitter = QSplitter(Qt.Horizontal)
 
         # Chart container
-        chart_box = QGroupBox()
-        bl_chart = QVBoxLayout(chart_box)
-        bl_chart.setContentsMargins(10, 3, 10, 10)
-        bl_chart.setSpacing(6)
-
-        chart_title = QLabel("Per-Sample Positive Distribution")
-        chart_title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        bl_chart.addWidget(chart_title)
+        chart_box, bl_chart = create_section_card("Per-Sample Positive Distribution")
 
         self.figure = Figure(figsize=(5.5, 5.0), dpi=90)
-        self.figure.patch.set_facecolor('#1a1d24')
+        self.figure.patch.set_facecolor("#14161d")
         self.canvas = FigureCanvas(self.figure)
         bl_chart.addWidget(self.canvas)
         splitter.addWidget(chart_box)
 
         # Table container
-        table_box = QGroupBox()
-        bl_table = QVBoxLayout(table_box)
-        bl_table.setContentsMargins(10, 3, 10, 10)
-        bl_table.setSpacing(6)
-
-        table_title = QLabel("Sample Breakdown Table")
-        table_title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        bl_table.addWidget(table_title)
+        table_box, bl_table = create_section_card("Sample Breakdown Table")
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Sample", "Total Cells", "Positive", "% Positive", "Negative", "% Negative"])
@@ -231,10 +207,20 @@ class SampleImpactDialog(QDialog):
         mask = self.last_mask
 
         filter_indices = np.ones(len(df), dtype=bool)
-        if scope.startswith("Selected") and self.selected_samples:
-            filter_indices = df[sample_col].isin(self.selected_samples).to_numpy()
-        elif scope.startswith("Actively") and self.active_sample:
-            filter_indices = (df[sample_col] == self.active_sample).to_numpy()
+        if scope.startswith("Selected") and getattr(self, "selected_samples", None):
+            norm_targets = {_normalize_sample_name(s) for s in self.selected_samples}
+            exact_targets = {str(s).strip() for s in self.selected_samples}
+            s_vals = df[sample_col].astype(str).str.strip()
+            filter_indices = (
+                s_vals.isin(exact_targets) | s_vals.map(_normalize_sample_name).isin(norm_targets)
+            ).to_numpy()
+        elif scope.startswith("Active") and getattr(self, "active_sample", None):
+            act_str = str(self.active_sample).strip()
+            act_norm = _normalize_sample_name(act_str)
+            s_vals = df[sample_col].astype(str).str.strip()
+            filter_indices = (
+                (s_vals == act_str) | (s_vals.map(_normalize_sample_name) == act_norm)
+            ).to_numpy()
 
         sub_df = df[filter_indices]
         sub_mask = mask[filter_indices]
@@ -314,7 +300,7 @@ class SampleImpactDialog(QDialog):
 
         colors = ['#40916C' if p >= mean_p else '#2D5F8B' for p in pcts]
         ax.barh(y_pos, pcts, color=colors, height=0.65, edgecolor='#14161d', alpha=0.85)
-        ax.axvline(mean_p, color='#FF5252', linestyle='--', linewidth=1.5, label=f"Mean: {mean_p:.1f}%")
+        ax.axvline(mean_p, color='#E57373', linestyle='--', linewidth=1.5, label=f"Mean: {mean_p:.1f}%")
 
         ax.set_yticks(y_pos)
         ax.set_yticklabels(names, fontsize=8, color='#CCC')

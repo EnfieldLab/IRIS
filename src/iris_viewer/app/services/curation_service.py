@@ -25,6 +25,7 @@ try:
 except ImportError:
     Image = Labels = ()  # type: ignore
 
+from iris_common.logging import iris_log
 from iris_viewer.app.services.multi_sample_service import get_sample_sub_df
 from iris_viewer.core.layers import get_layer_base_name, get_layer_type
 from iris_viewer.widgets.styles import DEFAULT_CELLTYPE_PALETTE
@@ -469,6 +470,11 @@ class CurationService:
                 self._create_phenotype_layer(sample_name, new_type, mask_bool, s_layers)
 
         # 6. Trigger metrics and expression widget refresh
+        iris_log(
+            "IRIS-Viewer",
+            "Curation",
+            f"Reclassified cell #{obj_id} ({sample_name or 'active'}) -> '{new_type}'.",
+        )
         if hasattr(self.ctx, "_update_dashboard_metrics"):
             self.ctx._update_dashboard_metrics()
         if hasattr(self.ctx, "expression_widget") and hasattr(self.ctx.expression_widget, "refresh"):

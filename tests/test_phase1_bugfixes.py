@@ -630,33 +630,79 @@ class TestUIWiringWindowFlagsScalebarAndWorkers:
         mg.close()
         cw.close()
 
-    def test_consensus_and_studio_undo_override_wired(self, qapp):
+    def test_disagreement_and_studio_signals_wired(self, qapp):
         from iris_viewer.app.controller import ViewerController
-        from iris_viewer.widgets.consensus_panel import ConsensusPanelWidget
+        from iris_viewer.widgets.disagreement_panel import DisagreementPanelWidget
         from iris_viewer.widgets.segmentation_studio_dialog import SegmentationStudioDialog
 
-        cp = ConsensusPanelWidget()
+        dp = DisagreementPanelWidget()
         review_svc = MagicMock()
+        state = ViewerAppState()
+        state.segmentation_results = {
+            "Cellpose": {"nuclear": np.ones((8, 8), dtype=np.uint32), "cytoplasm": None},
+            "StarDist": {"nuclear": np.ones((8, 8), dtype=np.uint32), "cytoplasm": None},
+        }
         dummy_ctrl = types.SimpleNamespace(
-            consensus_panel=cp,
+            disagreement_panel=dp,
             review_svc=review_svc,
             legend_widget=MagicMock(),
-            _generate_consensus=MagicMock(),
+            _compute_disagreement=MagicMock(),
+            _on_active_segmentation_method_changed=MagicMock(),
             _toggle_interactive_review=MagicMock(),
             _select_layer=MagicMock(),
         )
-        ViewerController._bind_consensus_signals(dummy_ctrl)
+        ViewerController._bind_disagreement_signals(dummy_ctrl)
 
-        cp.btn_undo_override.click()
-        review_svc.undo_override.assert_called_once()
+        dp.btn_compute_disagreement.click()
+        dummy_ctrl._compute_disagreement.assert_called_once()
 
-        ctx = AppContext(review_svc=review_svc)
-        studio = SegmentationStudioDialog(ctx=ctx, consensus_panel=cp)
-        studio.btn_undo_override.click()
-        assert review_svc.undo_override.call_count == 2
+        dp.slider_threshold.setValue(72)
+        review_svc.update_disagreement_overlay.assert_called_with(0.72)
+
+        dp.hotspotSelected.emit(1)
+        review_svc.jump_to_issue.assert_called_with(1)
+
+        dp.btn_next_issue.click()
+        review_svc.next_issue.assert_called_once()
+
+        dp.btn_prev_issue.click()
+        review_svc.prev_issue.assert_called_once()
+
+        dp.update_available_methods(["Cellpose", "StarDist"], active_method="Cellpose")
+        dp.combo_active_method.setCurrentText("StarDist")
+        dummy_ctrl._on_active_segmentation_method_changed.assert_called_with("StarDist")
+
+        dp.btn_flicker.click()
+        review_svc.flicker_models.assert_called_once()
+
+        dp.combo_category_filter.setCurrentText("Split")
+        review_svc.set_category_filter.assert_called_with("Split")
+
+        dp.chk_show_heatmap.setChecked(False)
+        review_svc.toggle_overlay_visibility.assert_called_with(False, True)
+
+        dp.chk_enable_review.setChecked(True)
+        dummy_ctrl._toggle_interactive_review.assert_called_with(True)
+
+        ctx = AppContext(state=state, review_svc=review_svc)
+        studio = SegmentationStudioDialog(ctx=ctx, disagreement_panel=dp)
+        studio.btn_next_issue.click()
+        assert review_svc.next_issue.call_count == 2
+        studio.btn_prev_issue.click()
+        assert review_svc.prev_issue.call_count == 2
+
+        studio.combo_flicker_a.setCurrentText("Cellpose")
+        studio.combo_flicker_b.setCurrentText("StarDist")
+        studio.btn_flicker.click()
+        assert review_svc.flicker_models.call_count >= 2
+
+        studio.combo_active_method.setCurrentText("StarDist")
+        studio.btn_set_active_mask.click()
+        review_svc.set_active_mask_layers.assert_called_with("StarDist")
 
         studio.close()
-        cp.close()
+        dp.close()
+        qapp.processEvents()
 
     def test_neighborhood_export_buttons_wired(self, qapp, tmp_path):
         from iris_viewer.widgets.neighborhood import IrisCellularNeighborhoodsWidget

@@ -12,8 +12,9 @@ from .data_adapter import (
 from .exporters import (
     export_batch_summary,
     export_confidence_map,
-    export_consensus_mask,
+    export_disagreement_map,
     export_features_csv,
+    export_segmentation_mask,
 )
 from .loaders import (
     discover_image_files,
@@ -29,7 +30,8 @@ __all__ = [
     "load_existing_mask",
     "probe_channel_count",
     "probe_ome_channel_names",
-    "export_consensus_mask",
+    "export_segmentation_mask",
+    "export_disagreement_map",
     "export_features_csv",
     "export_confidence_map",
     "export_batch_summary",

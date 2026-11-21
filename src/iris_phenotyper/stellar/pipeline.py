@@ -24,6 +24,8 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
+from iris_common.logging import iris_log
+
 
 def _import_torch() -> Any:
     """Import PyTorch safely on macOS environments with multiple OpenMP runtimes."""
@@ -881,6 +883,12 @@ class STELLARPipeline:
             "mean_uncertainties": mean_uncertainties,
             "seed_losses": seed_losses,
         }
+        iris_log(
+            "IRIS-Phenotyper",
+            "STELLAR",
+            f"Completed graph transfer ({len(lx):,} ref -> {len(ux):,} target cells, "
+            f"backend={self.backend_used}, device={self.device_used}, {train_time_sec:.2f}s).",
+        )
         return result
 
     def predict_graph(

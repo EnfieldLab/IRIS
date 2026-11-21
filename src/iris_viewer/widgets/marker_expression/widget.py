@@ -17,7 +17,6 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from qtpy.QtWidgets import (
     QComboBox,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -27,9 +26,23 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from iris_common.logging import iris_log
+from iris_common.schema import find_sample_column
+from iris_common.widgets.sample_scope import (
+    SCOPE_ACTIVE,
+    SCOPE_ALL,
+    SCOPE_SELECTED,
+    SampleScopeBar,
+)
 from iris_viewer.widgets.marker_expression.dialog import MarkerExpressionDialog
 from iris_viewer.widgets.marker_expression.subset_dialog import SampleSubsetDialog
 from iris_viewer.widgets.phenotyping.thresholding import resolve_marker_col
+from iris_viewer.widgets.styles import (
+    POPOUT_BUTTON_STYLE,
+    SECTION_TITLE_STYLE,
+    SHARED_DARK_THEME,
+    create_section_card,
+)
 
 
 class IrisMarkerExpressionWidget(QWidget):
@@ -47,77 +60,59 @@ class IrisMarkerExpressionWidget(QWidget):
         self.selected_subset: Set[str] = set()
         self.selected_samples: List[str] = []
         self.assignment_callback: Optional[Callable[[List[str], str], None]] = None
+        self._user_customized_subset: bool = False
+        self._dataset_none: bool = False
 
         self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(5, 5, 5, 5)
-        self.main_layout.setSpacing(5)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(12)
         self.setLayout(self.main_layout)
 
-        self.setStyleSheet("""
-            QWidget { background-color: #1f232b; color: #E0E0E0; font-size: 12px; }
-            QGroupBox { border: 1px solid #444; border-radius: 8px; margin-top: 6px; padding-top: 6px; }
-            QLabel { color: #DDD; }
-            QSpinBox, QComboBox {
-                background-color: #2A2A2A; color: white; border: 1px solid #555;
-                border-radius: 4px; padding: 2px 4px; height: 22px;
-            }
-            QPushButton {
-                background-color: #3A6A9A; color: white; font-weight: bold;
-                border: 1px solid #558; border-radius: 4px; padding: 5px;
-            }
-            QPushButton:hover { background-color: #4A7FBA; }
-        """)
+        self.setStyleSheet(SHARED_DARK_THEME)
 
         self._build_ui()
         self.update_plot()
 
     def _get_image_col(self, df: Optional[pd.DataFrame]) -> Optional[str]:
-        if df is None:
-            return None
-        for col in (
-            "Image", "image", "Sample", "sample", "Sample_Name", "sample_name",
-            "SampleID", "sample_id", "Core", "core", "TMA_Core", "tma_core",
-            "Slide", "slide", "filename", "Filename", "File", "file"
-        ):
-            if col in df.columns:
-                return col
-        return None
+        return find_sample_column(df)
 
     def _build_ui(self) -> None:
-        # Configuration Box
-        config_box = QGroupBox()
-        cb = QVBoxLayout()
-        cb.setContentsMargins(10, 3, 10, 10)
-        cb.setSpacing(6)
-        config_box.setLayout(cb)
+        # Configuration Card
+        config_box, cb = create_section_card(
+            "Marker Expression Analysis",
+            margins=(10, 6, 10, 10),
+            spacing=8,
+        )
 
-        title = QLabel("Marker Expression Analysis")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        cb.addWidget(title)
+        # Sample scope bar (Active Sample(s) / Selected Samples dropdown / All Samples)
+        self.sample_scope_bar = SampleScopeBar(
+            default_mode=SCOPE_ACTIVE,
+            label="Dataset:",
+            compact=True,
+            parent=config_box,
+        )
+        self.combo_dataset = self.sample_scope_bar.combo_scope
+        self.sample_scope_bar.scopeChanged.connect(self._on_scope_changed)
+        cb.addWidget(self.sample_scope_bar)
 
-        # Row 1: Dataset, Filter & Group By
+        # Row 1: Group By & Custom Subset Filter
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Dataset:"))
-        self.combo_dataset = QComboBox()
-        self.combo_dataset.addItem("Selected Samples")
-        self.combo_dataset.addItem("All Samples")
-        self.combo_dataset.addItem("None")
-        self.combo_dataset.currentIndexChanged.connect(self._on_filter_changed)
-        row1.addWidget(self.combo_dataset, 1)
-
-        self.btn_subset = QPushButton("Filter Subsets...")
-        self.btn_subset.setToolTip("Select custom subset of samples")
-        self.btn_subset.clicked.connect(self._open_subset_dialog)
-        row1.addWidget(self.btn_subset)
-
+        row1.setSpacing(8)
         row1.addWidget(QLabel("Group By:"))
         self.combo_group_by = QComboBox()
         self.combo_group_by.currentIndexChanged.connect(self._on_group_by_changed)
         row1.addWidget(self.combo_group_by, 1)
+
+        self.btn_subset = QPushButton("Subsets...")
+        self.btn_subset.setMinimumHeight(28)
+        self.btn_subset.setToolTip("Open sample subset selection dialog")
+        self.btn_subset.clicked.connect(self._open_subset_dialog)
+        row1.addWidget(self.btn_subset)
         cb.addLayout(row1)
 
         # Row 2: Mode & Colormap
         row2 = QHBoxLayout()
+        row2.setSpacing(8)
         row2.addWidget(QLabel("Mode:"))
         self.combo_mode = QComboBox()
         self.combo_mode.addItems(["Raw Mean Intensity", "Z-Score (Per Marker)"])
@@ -133,35 +128,28 @@ class IrisMarkerExpressionWidget(QWidget):
 
         self.main_layout.addWidget(config_box, 0)
 
-        # Heatmap Plot Group
-        self.plot_group = QGroupBox()
-        pg = QVBoxLayout()
-        pg.setContentsMargins(6, 6, 6, 6)
-        pg.setSpacing(6)
-        self.plot_group.setLayout(pg)
+        # Heatmap Plot Card
+        self.plot_group, pg = create_section_card(
+            margins=(10, 6, 10, 10),
+            spacing=8,
+        )
 
         plot_hdr = QHBoxLayout()
         lbl_title = QLabel("Marker Expression Profile")
-        lbl_title.setStyleSheet("font-weight: bold; color: #EEE; font-size: 13px;")
+        lbl_title.setStyleSheet(SECTION_TITLE_STYLE)
         plot_hdr.addWidget(lbl_title)
         plot_hdr.addStretch(1)
 
-        # Enlargement symbol on pop-up window button as requested
         self.btn_popout = QPushButton("⤢ Pop-up Window")
         self.btn_popout.setToolTip("Open full-size interactive window to inspect and organize rows and columns")
-        self.btn_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 3px; padding: 3px 8px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-        """)
+        self.btn_popout.setStyleSheet(POPOUT_BUTTON_STYLE)
+        self.btn_popout.setMinimumHeight(28)
         self.btn_popout.clicked.connect(self.open_popup_window)
         plot_hdr.addWidget(self.btn_popout)
         pg.addLayout(plot_hdr)
 
         self.figure = Figure(figsize=(6, 5))
-        self.figure.patch.set_facecolor('#1f232b')
+        self.figure.patch.set_facecolor("#14161d")
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.canvas.setMinimumHeight(320)
@@ -279,25 +267,38 @@ class IrisMarkerExpressionWidget(QWidget):
 
     def set_current_dataset(self, dataset_name: str, subset_samples: Optional[List[str]] = None) -> None:
         """Sets the active dataset or cohort sample filter and updates the plot."""
+        self._dataset_none = False
+        ds = str(dataset_name or "").strip()
+
         if subset_samples:
             self.selected_subset = set(subset_samples)
-            n_sel = len(self.selected_subset)
-            custom_txt = f"Subset ({n_sel} samples)"
-            idx = self.combo_dataset.findText(custom_txt)
-            if idx < 0:
-                self.combo_dataset.addItem(custom_txt)
-                idx = self.combo_dataset.count() - 1
-            self.combo_dataset.blockSignals(True)
-            self.combo_dataset.setCurrentIndex(idx)
-            self.combo_dataset.blockSignals(False)
-        else:
-            idx = self.combo_dataset.findText(dataset_name)
-            if idx >= 0:
-                self.combo_dataset.blockSignals(True)
-                self.combo_dataset.setCurrentIndex(idx)
-                self.combo_dataset.blockSignals(False)
+            self._user_customized_subset = True
+            self.sample_scope_bar.set_checked_samples(list(subset_samples), emit=False)
+            self.sample_scope_bar.set_scope_mode(SCOPE_SELECTED, emit=False)
+        elif ds == "None":
+            self._dataset_none = True
+        elif ds == SCOPE_ALL or ds.lower() == "all":
+            self.sample_scope_bar.set_scope_mode(SCOPE_ALL, emit=False)
+        elif ds == SCOPE_ACTIVE or ds.lower().startswith("active"):
+            self.sample_scope_bar.set_scope_mode(SCOPE_ACTIVE, emit=False)
+        elif ds.startswith("Sample: "):
+            sname = ds.replace("Sample: ", "").strip()
+            self.selected_subset = {sname}
+            self._user_customized_subset = True
+            self.sample_scope_bar.set_checked_samples([sname], emit=False)
+            self.sample_scope_bar.set_scope_mode(SCOPE_SELECTED, emit=False)
+        elif ds == SCOPE_SELECTED or ds.startswith("Subset ("):
+            if self.selected_subset:
+                self.sample_scope_bar.set_checked_samples(list(self.selected_subset), emit=False)
+            elif self.selected_samples:
+                self.sample_scope_bar.set_checked_samples(list(self.selected_samples), emit=False)
+            self.sample_scope_bar.set_scope_mode(SCOPE_SELECTED, emit=False)
+
         if self.popup_dialog is not None and self.popup_dialog.isVisible():
-            self.popup_dialog.set_current_dataset(dataset_name, subset_samples=subset_samples)
+            self.popup_dialog.set_current_dataset(
+                self.sample_scope_bar.get_scope_mode() if not self._dataset_none else "None",
+                subset_samples=subset_samples or list(self.selected_subset) or None,
+            )
         self.update_plot()
 
     def set_assignment_callback(self, cb: Callable[[List[str], str], None]) -> None:
@@ -306,21 +307,40 @@ class IrisMarkerExpressionWidget(QWidget):
             self.popup_dialog.set_assignment_callback(cb)
 
     def _sync_sample_dropdown(self) -> None:
-        curr = self.combo_dataset.currentText() if self.combo_dataset.count() > 0 else "Selected Samples"
-        self.combo_dataset.blockSignals(True)
-        self.combo_dataset.clear()
-        self.combo_dataset.addItem("Selected Samples")
-        self.combo_dataset.addItem("All Samples")
-        self.combo_dataset.addItem("None")
-
         img_col = self._get_image_col(self.df)
+        all_samples: List[str] = []
         if self.df is not None and img_col is not None:
-            for s in sorted([str(x) for x in self.df[img_col].dropna().unique()]):
-                self.combo_dataset.addItem(f"Sample: {s}")
+            all_samples = list(dict.fromkeys(str(x).strip() for x in self.df[img_col].dropna().unique() if str(x).strip()))
+        for s in self.selected_samples:
+            s_str = str(s).strip()
+            if s_str and s_str not in all_samples:
+                all_samples.append(s_str)
 
-        idx = self.combo_dataset.findText(curr)
-        self.combo_dataset.setCurrentIndex(idx if idx >= 0 else 0)
-        self.combo_dataset.blockSignals(False)
+        self.sample_scope_bar.set_samples(
+            all_samples,
+            active_samples=self.selected_samples,
+            emit=False,
+        )
+        if not self._user_customized_subset and self.selected_samples:
+            self.sample_scope_bar.set_checked_samples(self.selected_samples, emit=False)
+            self.selected_subset = set(self.sample_scope_bar.get_checked_samples())
+
+    def _on_scope_changed(self, mode: str, resolved_samples: List[str]) -> None:
+        self._dataset_none = False
+        if mode == SCOPE_SELECTED:
+            self._user_customized_subset = True
+            self.selected_subset = set(resolved_samples)
+        iris_log(
+            "IRIS-Viewer",
+            "Marker Expression",
+            f"Scope set to '{mode}' ({len(resolved_samples)} sample(s)).",
+        )
+        if self.popup_dialog is not None and self.popup_dialog.isVisible():
+            self.popup_dialog.set_current_dataset(
+                mode,
+                subset_samples=resolved_samples if mode == SCOPE_SELECTED else None,
+            )
+        self.update_plot()
 
     def _open_subset_dialog(self) -> None:
         img_col = self._get_image_col(self.df)
@@ -329,78 +349,49 @@ class IrisMarkerExpressionWidget(QWidget):
             return
 
         all_samples = sorted([str(s) for s in self.df[img_col].dropna().unique()])
-        dialog = SampleSubsetDialog(all_samples, self.selected_subset, parent=self)
+        current_sel = set(self.sample_scope_bar.get_checked_samples()) or set(self.selected_subset)
+        dialog = SampleSubsetDialog(all_samples, current_sel, parent=self)
         if dialog.exec_():
-            self.selected_subset = dialog.selected_samples
-            n_sel = len(self.selected_subset)
-            custom_txt = f"Subset ({n_sel} samples)"
-            idx = self.combo_dataset.findText(custom_txt)
-            if idx < 0:
-                self.combo_dataset.addItem(custom_txt)
-                idx = self.combo_dataset.count() - 1
-            self.combo_dataset.setCurrentIndex(idx)
+            self._dataset_none = False
+            self._user_customized_subset = True
+            self.selected_subset = set(dialog.selected_samples)
+            self.sample_scope_bar.set_checked_samples(sorted(self.selected_subset), emit=False)
+            self.sample_scope_bar.set_scope_mode(SCOPE_SELECTED, emit=False)
+            iris_log(
+                "IRIS-Viewer",
+                "Marker Expression",
+                f"Selected {len(self.selected_subset)}/{len(all_samples)} samples via subset dialog.",
+            )
             self.update_plot()
 
     def _on_filter_changed(self) -> None:
         self.update_plot()
 
+    def _render_empty(self, message: str) -> None:
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.set_facecolor("#14161d")
+        ax.text(0.5, 0.5, message, color="#9AA4B2", ha="center", va="center", fontsize=11)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        self.canvas.draw()
+
     def update_plot(self) -> None:
         """Renders the embedded dock heatmap."""
         if self.df is None or self.df.empty or not self.markers:
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            ax.set_facecolor('#14161d')
-            ax.text(0.5, 0.5, "Load sample image and annotations to view marker profile.", color='#888', ha='center', va='center', fontsize=11)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            self.canvas.draw()
+            self._render_empty("Load sample image and annotations to view marker profile.")
             return
 
-        ds = self.combo_dataset.currentText()
-        df_work = self.df.copy()
-        img_col = self._get_image_col(df_work)
-
-        def _clean_str(val):
-            return re.sub(r'\.tiff?$', '', re.sub(r'_image$', '', str(val).lower().strip()))
-
-        if ds == "None":
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            ax.set_facecolor('#14161d')
-            ax.text(0.5, 0.5, "Dataset selection set to 'None'.", color='#888', ha='center', va='center', fontsize=11)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            self.canvas.draw()
+        if getattr(self, "_dataset_none", False):
+            self._render_empty("Dataset selection set to 'None'.")
             return
-        elif ds == "Selected Samples":
-            if img_col and self.selected_samples:
-                clean_selected = [str(s).strip() for s in self.selected_samples]
-                match_mask = df_work[img_col].astype(str).str.strip().isin(clean_selected)
-                if not match_mask.any():
-                    norm_targets = set(_clean_str(s) for s in clean_selected)
-                    norm_cols = df_work[img_col].apply(_clean_str)
-                    match_mask = norm_cols.isin(norm_targets)
-                if match_mask.any():
-                    df_work = df_work[match_mask]
-        elif ds.startswith("Sample: "):
-            sname = ds.replace("Sample: ", "").strip()
-            if img_col:
-                match_mask = (df_work[img_col].astype(str).str.strip() == sname)
-                if not match_mask.any():
-                    target_c = _clean_str(sname)
-                    norm_cols = df_work[img_col].apply(_clean_str)
-                    match_mask = (norm_cols == target_c)
-                df_work = df_work[match_mask]
-        elif ds.startswith("Subset (") and self.selected_subset:
-            if img_col:
-                clean_subset = [str(s).strip() for s in self.selected_subset]
-                match_mask = df_work[img_col].astype(str).str.strip().isin(clean_subset)
-                if not match_mask.any():
-                    norm_targets = set(_clean_str(s) for s in clean_subset)
-                    norm_cols = df_work[img_col].apply(_clean_str)
-                    match_mask = norm_cols.isin(norm_targets)
-                if match_mask.any():
-                    df_work = df_work[match_mask]
+
+        df_work = self.sample_scope_bar.filter_dataframe(self.df)
+        if df_work is None or df_work.empty:
+            self._render_empty(
+                f"No cells match scope '{self.sample_scope_bar.get_scope_mode()}'."
+            )
+            return
 
         ct_col = self.combo_group_by.currentText().strip() if hasattr(self, 'combo_group_by') and self.combo_group_by.count() > 0 else self.celltype_col
         if not ct_col or ct_col not in df_work.columns:
@@ -410,6 +401,7 @@ class IrisMarkerExpressionWidget(QWidget):
                     break
 
         if ct_col not in df_work.columns or df_work.empty:
+            self._render_empty("No grouping column available.")
             return
 
         self.celltype_col = ct_col
@@ -420,6 +412,7 @@ class IrisMarkerExpressionWidget(QWidget):
             if col is not None and pd.api.types.is_numeric_dtype(df_work[col]):
                 resolved_pairs.append((m, col))
         if not resolved_pairs:
+            self._render_empty("No numeric marker columns resolved.")
             return
         valid_markers = [m for m, _ in resolved_pairs]
         col_names = [col for _, col in resolved_pairs]
@@ -441,6 +434,7 @@ class IrisMarkerExpressionWidget(QWidget):
             df_work = df_work[df_work[ct_col] != "Unassigned"]
 
         if df_work.empty:
+            self._render_empty("No assigned cells in selected scope.")
             return
 
         matrix = df_work.groupby(ct_col, observed=True)[col_names].mean().fillna(0)
@@ -515,15 +509,18 @@ class IrisMarkerExpressionWidget(QWidget):
             QMessageBox.information(self, "No Data", "Please load sample data and annotations first.")
             return
 
+        mode = "None" if getattr(self, "_dataset_none", False) else self.sample_scope_bar.get_scope_mode()
+        checked = set(self.sample_scope_bar.get_checked_samples()) or set(self.selected_subset)
+
         if self.popup_dialog is None:
             self.popup_dialog = MarkerExpressionDialog(
                 df=self.df,
                 markers=self.markers,
                 celltype_col=self.celltype_col,
-                current_dataset=self.combo_dataset.currentText(),
+                current_dataset=mode,
                 current_mode=self.combo_mode.currentText(),
                 current_cmap=self.combo_cmap.currentText(),
-                selected_subset=self.selected_subset,
+                selected_subset=checked,
                 selected_samples=self.selected_samples,
                 assignment_callback=getattr(self, 'assignment_callback', None),
                 parent=self.window(),
@@ -539,8 +536,8 @@ class IrisMarkerExpressionWidget(QWidget):
                 self.popup_dialog.set_assignment_callback(self.assignment_callback)
             self.popup_dialog.set_group_by(self.celltype_col)
             self.popup_dialog.set_current_dataset(
-                self.combo_dataset.currentText(),
-                subset_samples=list(self.selected_subset) if self.selected_subset else None
+                mode,
+                subset_samples=list(checked) if mode == SCOPE_SELECTED and checked else None,
             )
 
         self.popup_dialog.show()

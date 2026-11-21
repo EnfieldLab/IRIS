@@ -38,18 +38,18 @@ def test_presets_and_config_defaults():
     """Verify required themes, palettes, presets, and PlotStyleConfig helpers."""
     assert set(THEME_PRESETS.keys()) == {
         "IRIS Dark",
-        "Publication White (Nature)",
-        "Cell Press Boxed",
+        "Classic White",
+        "Boxed White",
         "Minimal Grid",
     }
     assert set(SCIENTIFIC_PALETTES.keys()) == {
         "Okabe-Ito",
-        "Nature NPG",
-        "Lancet",
-        "JCO",
-        "Viridis",
-        "RdBu_r",
-        "coolwarm",
+        "Vibrant",
+        "Clinical Blue",
+        "Set2",
+        "Paired",
+        "viridis",
+        "tab10",
     }
     assert set(SIZE_PRESETS.keys()) == {
         "Single Column (89 mm)",
@@ -62,12 +62,12 @@ def test_presets_and_config_defaults():
     assert set(DPI_OPTIONS) == {150, 300, 600, 1200}
 
     cfg = PlotStyleConfig.from_theme(
-        "Publication White (Nature)",
+        "Classic White",
         width_mm=89.0,
         height_mm=70.0,
         dpi=600,
     )
-    assert cfg.theme == "Publication White (Nature)"
+    assert cfg.theme == "Classic White"
     assert cfg.grid_mode == "None"
     assert cfg.despine_top is True
     assert np.isclose(cfg.size_inches[0], 89.0 / 25.4)
@@ -79,11 +79,11 @@ def test_presets_and_config_defaults():
 
     colors = resolve_category_colors(
         ["A", "B", "C"],
-        PlotStyleConfig(palette_name="Nature NPG", custom_colors={"B": "#ABCDEF"}),
+        PlotStyleConfig(palette_name="Vibrant", custom_colors={"B": "#ABCDEF"}),
     )
     assert colors["B"] == "#ABCDEF"
-    assert colors["A"] == SCIENTIFIC_PALETTES["Nature NPG"][0]
-    assert len(get_palette_colors("Viridis", 12)) == 12
+    assert colors["A"] == SCIENTIFIC_PALETTES["Vibrant"][0]
+    assert len(get_palette_colors("viridis", 12)) == 12
 
 
 def test_apply_plot_style_dark_and_publication_white():
@@ -112,9 +112,9 @@ def test_apply_plot_style_dark_and_publication_white():
     assert ax.title.get_fontweight() == "bold"
 
     white_cfg = PlotStyleConfig(
-        theme="Publication White (Nature)",
+        theme="Classic White",
         font_family="DejaVu Sans",
-        title="Nature Panel A",
+        title="Panel A",
         xlabel="Subset",
         ylabel="Proportion (%)",
         legend_title="Group",
@@ -127,7 +127,7 @@ def test_apply_plot_style_dark_and_publication_white():
     apply_plot_style(fig, ax, white_cfg)
     assert fig.patch.get_facecolor()[:3] == pytest.approx((1.0, 1.0, 1.0))
     assert ax.patch.get_facecolor()[:3] == pytest.approx((1.0, 1.0, 1.0))
-    assert ax.get_title() == "Nature Panel A"
+    assert ax.get_title() == "Panel A"
     assert ax.get_xlabel() == "Subset"
     assert ax.get_ylabel() == "Proportion (%)"
     assert ax.get_xticklabels()[0].get_text() == "CD4+ T cells"
@@ -136,12 +136,12 @@ def test_apply_plot_style_dark_and_publication_white():
     assert ax.get_legend().get_frame_on() is False
 
     # Reapplying without custom label restores original tick label cleanly
-    white_cfg_cleared = PlotStyleConfig(theme="Publication White (Nature)")
+    white_cfg_cleared = PlotStyleConfig(theme="Classic White")
     apply_plot_style(fig, ax, white_cfg_cleared)
     assert ax.get_xticklabels()[0].get_text() == "CD4_T"
 
-    # Cell Press Boxed restores top/right spines; transparent sets patch alpha to 0
-    boxed_cfg = PlotStyleConfig.from_theme("Cell Press Boxed", transparent=True)
+    # Boxed White restores top/right spines; transparent sets patch alpha to 0
+    boxed_cfg = PlotStyleConfig.from_theme("Boxed White", transparent=True)
     apply_plot_style(fig, ax, boxed_cfg)
     assert ax.spines["top"].get_visible() is True
     assert ax.spines["right"].get_visible() is True
@@ -165,7 +165,7 @@ def test_draw_significance_brackets_stacking_and_modes():
         (2, 3, 0.35, 0.42),  # ns
     ]
 
-    cfg = PlotStyleConfig(theme="Publication White (Nature)", hide_ns=True, p_display_mode="stars")
+    cfg = PlotStyleConfig(theme="Classic White", hide_ns=True, p_display_mode="stars")
     drawn = draw_significance_brackets(ax, comparisons, x_pos, y_maxes, config=cfg)
 
     assert len(drawn) == 3
@@ -216,7 +216,7 @@ def test_export_publication_figure_formats_and_restore(tmp_path: Path):
     ax.set_ylabel("Density (cells/mm2)")
 
     cfg = PlotStyleConfig.from_theme(
-        "Publication White (Nature)",
+        "Classic White",
         width_mm=89.0,
         height_mm=70.0,
         dpi=150,
@@ -265,7 +265,7 @@ def test_copy_figure_to_clipboard_headless_and_gui(monkeypatch, qapp):
     fig = Figure(figsize=(4, 3), dpi=100)
     ax = fig.add_subplot(111)
     ax.plot([0, 1, 2], [1, 3, 2])
-    cfg = PlotStyleConfig(theme="Publication White (Nature)", dpi=150)
+    cfg = PlotStyleConfig(theme="Classic White", dpi=150)
 
     # Headless safety: QApplication.instance() returning None must not crash
     monkeypatch.setattr(QApplication, "instance", staticmethod(lambda: None))
@@ -306,7 +306,7 @@ def test_export_source_data_excel_multisheet(tmp_path: Path):
             "q_value": [0.0084],
         }
     )
-    cfg = PlotStyleConfig(theme="Publication White (Nature)", dpi=600, title="CD8 Density")
+    cfg = PlotStyleConfig(theme="Classic White", dpi=600, title="CD8 Density")
 
     xlsx_path = export_source_data_excel(
         tmp_path / "source_data.xlsx",
@@ -341,9 +341,9 @@ def test_export_source_data_excel_multisheet(tmp_path: Path):
 
     ws_meta = wb["Figure_Parameters"]
     params = {r[0]: r[1] for r in ws_meta.iter_rows(min_row=2, values_only=True)}
-    assert params["theme"] == "Publication White (Nature)"
+    assert params["theme"] == "Classic White"
     assert params["dpi"] == 600
-    assert params["Format"] == "Nature Source Data Workbook"
+    assert params["Format"] == "Source Data Workbook"
 
     # Minimal call without optional DataFrames still writes clean workbook
     min_path = export_source_data_excel(
@@ -378,7 +378,7 @@ def test_publication_style_sidebar_interactions(monkeypatch, qapp):
     sidebar.exportFigureRequested.connect(lambda: signals_fired.append("export_fig"))
     sidebar.exportSourceDataRequested.connect(lambda: signals_fired.append("export_xlsx"))
 
-    sidebar.combo_theme.setCurrentText("Publication White (Nature)")
+    sidebar.combo_theme.setCurrentText("Classic White")
     sidebar.combo_size_preset.setCurrentText("Single Column (89 mm)")
     assert sidebar.spin_width_mm.value() == pytest.approx(89.0)
 
@@ -398,7 +398,7 @@ def test_publication_style_sidebar_interactions(monkeypatch, qapp):
     qapp.processEvents()
     assert emitted_configs
     latest = emitted_configs[-1]
-    assert latest.theme == "Publication White (Nature)"
+    assert latest.theme == "Classic White"
     assert latest.width_mm == pytest.approx(110.0)
     assert latest.custom_labels == {"CD4_T": "CD4+ T cells"}
     assert latest.custom_colors["Macrophage"] == "#ff2244"
@@ -437,7 +437,7 @@ def test_publication_plot_studio_dialog_end_to_end(tmp_path: Path, qapp):
     assert dlg.stats_table.rowCount() == 1
 
     # Switch to white theme via sidebar and verify live figure update
-    dlg.sidebar.combo_theme.setCurrentText("Publication White (Nature)")
+    dlg.sidebar.combo_theme.setCurrentText("Classic White")
     qapp.processEvents()
     assert dlg.figure.patch.get_facecolor()[:3] == pytest.approx((1.0, 1.0, 1.0))
 
@@ -468,7 +468,7 @@ def test_publication_plot_studio_dialog_end_to_end(tmp_path: Path, qapp):
     assert dlg.config.custom_colors == {}
 
     # Transparent export on PNG and EPS executes cleanly
-    trans_cfg = PlotStyleConfig(theme="Publication White (Nature)", transparent=True, dpi=150)
+    trans_cfg = PlotStyleConfig(theme="Classic White", transparent=True, dpi=150)
     trans_png = export_publication_figure(dlg.figure, tmp_path / "trans.png", trans_cfg)
     trans_eps = export_publication_figure(dlg.figure, tmp_path / "trans.eps", trans_cfg)
     with Image.open(trans_png) as img_rgba:

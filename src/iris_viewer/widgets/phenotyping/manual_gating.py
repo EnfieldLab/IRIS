@@ -16,13 +16,13 @@ import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from qtpy.QtCore import Signal
 from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -34,9 +34,19 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from iris_common.logging import iris_log
+from iris_common.widgets.sample_scope import (
+    SCOPE_ACTIVE,
+    SCOPE_ALL,
+    SCOPE_SELECTED,
+    _normalize_sample_name,
+)
 from iris_viewer.widgets.phenotyping.gating_studio_dialog import GatingStudioDialog
 from iris_viewer.widgets.phenotyping.hierarchy import GatingHierarchyNode
-from iris_viewer.widgets.phenotyping.sample_impact_dialog import SampleImpactDialog
+from iris_viewer.widgets.phenotyping.sample_impact_dialog import (
+    SampleImpactDialog,
+    _ScopeComboBox,
+)
 from iris_viewer.widgets.phenotyping.thresholding import (
     assess_gating_quality,
     compute_optimal_threshold,
@@ -44,7 +54,12 @@ from iris_viewer.widgets.phenotyping.thresholding import (
     resolve_marker_col,
     transform_values,
 )
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.styles import (
+    BUTTON_CTA,
+    POPOUT_BUTTON_STYLE,
+    SHARED_DARK_THEME,
+    create_section_card,
+)
 
 
 class ManualGatingWidget(QWidget):
@@ -54,11 +69,15 @@ class ManualGatingWidget(QWidget):
     a dedicated Gating Quality & Sample Assessment section underneath the plot with its own
     pop-up window launcher, automated Otsu/Valley threshold discovery, and clean box titles.
     """
+
+    scopeChanged = Signal(str)
+
     def __init__(self, parent=None, ctx=None):
         super().__init__(parent)
         self.ctx = ctx
         self.setStyleSheet(SHARED_DARK_THEME)
         self.available_markers: List[str] = []
+        self._scoped_samples: List[str] = []
         self.popup_dialog: Optional[GatingStudioDialog] = None
         self.impact_dialog: Optional[SampleImpactDialog] = None
 
@@ -77,24 +96,21 @@ class ManualGatingWidget(QWidget):
         content = QWidget()
         content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(8, 4, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(12)
 
         # Gating Data & Projection Box
-        box_proj = QGroupBox()
-        bl_proj = QVBoxLayout(box_proj)
-        bl_proj.setContentsMargins(8, 2, 8, 8)
-        bl_proj.setSpacing(6)
-
-        title_proj = QLabel("Gating Data & Projection")
-        title_proj.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        bl_proj.addWidget(title_proj)
+        box_proj, bl_proj = create_section_card(
+            "Gating Data & Projection",
+            margins=(10, 6, 10, 10),
+            spacing=8,
+        )
 
         # Sample Scope & Selection Row
         row_scope = QHBoxLayout()
         row_scope.addWidget(QLabel("Scope:"))
-        self.combo_scope = QComboBox()
-        self.combo_scope.addItems(["All Samples (Cohort)", "Selected Sample", "Actively Loaded Sample"])
+        self.combo_scope = _ScopeComboBox()
+        self.combo_scope.addItems([SCOPE_ALL, SCOPE_SELECTED, SCOPE_ACTIVE])
         self.combo_scope.currentIndexChanged.connect(self._on_scope_changed)
         row_scope.addWidget(self.combo_scope)
         bl_proj.addLayout(row_scope)
@@ -192,33 +208,25 @@ class ManualGatingWidget(QWidget):
         layout.addWidget(box_proj)
 
         # Gating Scatter Preview Box
-        box_plot = QGroupBox()
-        bl_plot = QVBoxLayout(box_plot)
-        bl_plot.setContentsMargins(8, 2, 8, 8)
-        bl_plot.setSpacing(6)
+        box_plot, bl_plot = create_section_card(margins=(10, 6, 10, 10), spacing=8)
 
         plot_header = QHBoxLayout()
         title_plot = QLabel("Gating Scatter Preview")
-        title_plot.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        title_plot.setStyleSheet("color: #E0E0E0; font-size: 14px; font-weight: bold; margin: 0px; padding: 0px;")
         plot_header.addWidget(title_plot)
         plot_header.addStretch(1)
 
         self.btn_popout = QPushButton("⤢ Pop-up Window")
         self.btn_popout.setToolTip("Open full-size interactive Gating Studio with polygon drawing & 3D visualization")
-        self.btn_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 4px; padding: 4px 10px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-        """)
+        self.btn_popout.setStyleSheet(POPOUT_BUTTON_STYLE)
+        self.btn_popout.setMinimumHeight(28)
         self.btn_popout.clicked.connect(lambda _checked=False: self.open_popup_window(0))
         plot_header.addWidget(self.btn_popout)
         bl_plot.addLayout(plot_header)
 
         # Streamlined preview figure
         self.figure = Figure(figsize=(4.0, 2.5), dpi=80)
-        self.figure.patch.set_facecolor('#1f232b')
+        self.figure.patch.set_facecolor("#14161d")
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.canvas.setFixedHeight(180)
@@ -227,32 +235,24 @@ class ManualGatingWidget(QWidget):
         bl_plot.addWidget(self.canvas)
 
         self.lbl_quad_info = QLabel("Q2: 0 cells (0.0% Parent) | Q1: 0 (0% Parent)")
-        self.lbl_quad_info.setStyleSheet("color: #AAA; font-size: 11px; font-style: italic;")
+        self.lbl_quad_info.setStyleSheet("color: #9AA4B2; font-size: 11px; font-style: italic;")
         bl_plot.addWidget(self.lbl_quad_info)
 
         layout.addWidget(box_plot)
 
         # Gating Quality & Sample Assessment
-        box_quality = QGroupBox()
-        bl_quality = QVBoxLayout(box_quality)
-        bl_quality.setContentsMargins(8, 2, 8, 8)
-        bl_quality.setSpacing(6)
+        box_quality, bl_quality = create_section_card(margins=(10, 6, 10, 10), spacing=8)
 
         qual_header = QHBoxLayout()
         title_qual = QLabel("Gating Quality & Sample Assessment")
-        title_qual.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
+        title_qual.setStyleSheet("color: #E0E0E0; font-size: 14px; font-weight: bold; margin: 0px; padding: 0px;")
         qual_header.addWidget(title_qual)
         qual_header.addStretch(1)
 
         self.btn_impact_popout = QPushButton("⤢ Pop-up Window")
         self.btn_impact_popout.setToolTip("Open dedicated Cohort Gating Assessment Studio")
-        self.btn_impact_popout.setStyleSheet("""
-            QPushButton {
-                background-color: #2D4F6A; color: white; font-weight: bold;
-                border: 1px solid #3D6F9A; border-radius: 4px; padding: 4px 10px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D6F9A; }
-        """)
+        self.btn_impact_popout.setStyleSheet(POPOUT_BUTTON_STYLE)
+        self.btn_impact_popout.setMinimumHeight(28)
         self.btn_impact_popout.clicked.connect(self.open_impact_window)
         qual_header.addWidget(self.btn_impact_popout)
         bl_quality.addLayout(qual_header)
@@ -261,7 +261,7 @@ class ManualGatingWidget(QWidget):
         row_sep = QHBoxLayout()
         row_sep.addWidget(QLabel("Cutoff Separation:"))
         self.lbl_sep_quality = QLabel("Assessing...")
-        self.lbl_sep_quality.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+        self.lbl_sep_quality.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
         row_sep.addWidget(self.lbl_sep_quality)
         row_sep.addStretch(1)
         bl_quality.addLayout(row_sep)
@@ -277,14 +277,11 @@ class ManualGatingWidget(QWidget):
         layout.addWidget(box_quality)
 
         # Categorize & Classify Box
-        box_class = QGroupBox()
-        bl_class = QVBoxLayout(box_class)
-        bl_class.setContentsMargins(8, 2, 8, 8)
-        bl_class.setSpacing(6)
-
-        title_class = QLabel("Categorize & Classify")
-        title_class.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        bl_class.addWidget(title_class)
+        box_class, bl_class = create_section_card(
+            "Categorize & Classify",
+            margins=(10, 6, 10, 10),
+            spacing=8,
+        )
 
         row_target = QHBoxLayout()
         row_target.addWidget(QLabel("Target Gate:"))
@@ -320,24 +317,21 @@ class ManualGatingWidget(QWidget):
         self.btn_apply = QPushButton("Apply Gate to Cells")
         self.btn_apply.setAutoDefault(False)
         self.btn_apply.setDefault(False)
-        self.btn_apply.setStyleSheet("""
-            QPushButton {
-                background-color: #2D6A4F; color: white; font-weight: bold;
-                border-radius: 4px; padding: 7px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #40916C; }
-        """)
+        self.btn_apply.setStyleSheet(BUTTON_CTA)
+        self.btn_apply.setMinimumHeight(28)
         self.btn_apply.clicked.connect(self._apply_gate)
         btn_row_apply.addWidget(self.btn_apply)
 
         self.btn_view_tree = QPushButton("⤢ Hierarchy Tree")
         self.btn_view_tree.setToolTip("Open full hierarchical tree view in Studio Dialog")
+        self.btn_view_tree.setStyleSheet(POPOUT_BUTTON_STYLE)
+        self.btn_view_tree.setMinimumHeight(28)
         self.btn_view_tree.clicked.connect(lambda _checked=False: self.open_popup_window(1))
         btn_row_apply.addWidget(self.btn_view_tree)
         bl_class.addLayout(btn_row_apply)
 
         self.lbl_apply_dock_feedback = QLabel("")
-        self.lbl_apply_dock_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+        self.lbl_apply_dock_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
         bl_class.addWidget(self.lbl_apply_dock_feedback)
 
         layout.addWidget(box_class)
@@ -354,7 +348,7 @@ class ManualGatingWidget(QWidget):
         if hasattr(self, 'combo_sample'):
             if scope.startswith("Selected"):
                 self.combo_sample.setEnabled(True)
-            elif scope.startswith("Actively"):
+            elif scope.startswith("Active"):
                 self.combo_sample.setEnabled(False)
                 act = self._get_active_sample()
                 if act:
@@ -365,16 +359,40 @@ class ManualGatingWidget(QWidget):
                         self.combo_sample.blockSignals(False)
             else:
                 self.combo_sample.setEnabled(False)
+        self.scopeChanged.emit(scope)
         self._on_params_changed()
 
     def _on_sample_selection_changed(self):
         scope = self.combo_scope.currentText()
+        sel = self.combo_sample.currentText().strip()
+        if sel:
+            self._scoped_samples = [sel]
         if not scope.startswith("Selected"):
             self.combo_scope.blockSignals(True)
-            self.combo_scope.setCurrentText("Selected Sample")
+            self.combo_scope.setCurrentText(SCOPE_SELECTED)
             self.combo_scope.blockSignals(False)
             if hasattr(self, 'combo_sample'):
                 self.combo_sample.setEnabled(True)
+            self.scopeChanged.emit(SCOPE_SELECTED)
+        self._on_params_changed()
+
+    def set_scope_samples(self, mode: str, samples: Optional[List[str]] = None, *, emit: bool = False) -> None:
+        """Synchronize scope mode and multi-sample selection from PhenotyperPanelWidget."""
+        if samples is not None:
+            self._scoped_samples = [str(s).strip() for s in samples if str(s).strip()]
+            if self._scoped_samples and hasattr(self, "combo_sample"):
+                idx = self.combo_sample.findText(self._scoped_samples[0])
+                if idx >= 0:
+                    self.combo_sample.blockSignals(True)
+                    self.combo_sample.setCurrentIndex(idx)
+                    self.combo_sample.blockSignals(False)
+        self.combo_scope.blockSignals(True)
+        self.combo_scope.setCurrentText(mode)
+        self.combo_scope.blockSignals(False)
+        if hasattr(self, "combo_sample"):
+            self.combo_sample.setEnabled(self.combo_scope.currentText().startswith("Selected"))
+        if emit:
+            self.scopeChanged.emit(self.combo_scope.currentText())
         self._on_params_changed()
 
     def _refresh_sample_list(self):
@@ -411,17 +429,30 @@ class ManualGatingWidget(QWidget):
         if hasattr(self, 'combo_scope') and hasattr(self, 'combo_sample'):
             scope = self.combo_scope.currentText()
             if scope.startswith("Selected"):
+                if getattr(self, "_scoped_samples", None):
+                    return list(self._scoped_samples)
                 s = self.combo_sample.currentText().strip()
                 if s and s not in ["(All Cohort Samples)", "None"]:
                     return [s]
+            elif scope.startswith("Active"):
+                return self._get_active_samples()
         if self.ctx and hasattr(self.ctx, 'state') and self.ctx.state:
             return list(self.ctx.state.sample_layers_map.keys())
         return []
 
+    def _get_active_samples(self) -> List[str]:
+        if self.ctx and hasattr(self.ctx, "state") and self.ctx.state:
+            smap = getattr(self.ctx.state, "sample_layers_map", None) or {}
+            if smap:
+                return list(smap.keys())
+            cur = getattr(self.ctx.state, "current_sample_name", None)
+            if cur:
+                return [str(cur)]
+        return []
+
     def _get_active_sample(self) -> Optional[str]:
-        if self.ctx and hasattr(self.ctx, 'state') and self.ctx.state:
-            return getattr(self.ctx.state, 'current_sample_name', None)
-        return None
+        active = self._get_active_samples()
+        return active[0] if active else None
 
     def set_data(self, df: Optional[pd.DataFrame] = None, markers: Optional[List[str]] = None):
         if markers is not None:
@@ -469,6 +500,35 @@ class ManualGatingWidget(QWidget):
                 return self.ctx.state.features_df
         return None
 
+    def _scope_row_mask(self, df: pd.DataFrame) -> np.ndarray:
+        if not hasattr(self, "combo_scope"):
+            return np.ones(len(df), dtype=bool)
+        scope = self.combo_scope.currentText()
+        scol = find_sample_column(df)
+        if not scol:
+            return np.ones(len(df), dtype=bool)
+
+        targets: List[str] = []
+        if scope.startswith("Selected"):
+            if getattr(self, "_scoped_samples", None):
+                targets = list(self._scoped_samples)
+            elif hasattr(self, "combo_sample"):
+                sel = self.combo_sample.currentText().strip()
+                if sel:
+                    targets = [sel]
+        elif scope.startswith("Active"):
+            targets = self._get_active_samples()
+        else:
+            return np.ones(len(df), dtype=bool)
+
+        if not targets:
+            return np.zeros(len(df), dtype=bool) if scope.startswith("Selected") else np.ones(len(df), dtype=bool)
+
+        exact = {str(t).strip() for t in targets}
+        norms = {_normalize_sample_name(t) for t in targets if _normalize_sample_name(t)}
+        vals = df[scol].astype(str).str.strip()
+        return (vals.isin(exact) | vals.map(_normalize_sample_name).isin(norms)).to_numpy()
+
     def _get_filtered_parent_data(self) -> Optional[pd.DataFrame]:
         df = self.get_active_dataframe()
         if df is None or df.empty:
@@ -479,20 +539,7 @@ class ManualGatingWidget(QWidget):
         if node and node.cell_mask is not None and len(node.cell_mask) == len(df):
             df = df[node.cell_mask]
 
-        if hasattr(self, 'combo_scope'):
-            scope = self.combo_scope.currentText()
-            scol = find_sample_column(df)
-            if scol:
-                if scope.startswith("Selected") and hasattr(self, 'combo_sample'):
-                    sel = self.combo_sample.currentText().strip()
-                    if sel and sel in df[scol].astype(str).values:
-                        df = df[df[scol].astype(str) == sel]
-                elif scope.startswith("Actively"):
-                    act = self._get_active_sample()
-                    if act and str(act) in df[scol].astype(str).values:
-                        df = df[df[scol].astype(str) == str(act)]
-
-        return df
+        return df[self._scope_row_mask(df)]
 
     def _on_target_pop_changed(self):
         txt = self.combo_target_pop.currentText()
@@ -588,8 +635,8 @@ class ManualGatingWidget(QWidget):
         col_y = resolve_marker_col(df, my)
         if df is None or df.empty or col_x is None:
             ax = self.figure.add_subplot(111)
-            ax.set_facecolor('#1f232b')
-            ax.text(0.5, 0.5, "No data available", color='#777', ha='center', va='center', fontsize=10)
+            ax.set_facecolor("#14161d")
+            ax.text(0.5, 0.5, "No data available", color="#777", ha="center", va="center", fontsize=10)
             self.canvas.draw()
             return
 
@@ -606,16 +653,16 @@ class ManualGatingWidget(QWidget):
             vy = np.zeros_like(vx)
 
         ax = self.figure.add_subplot(111)
-        ax.set_facecolor('#1f232b')
-        ax.scatter(vx, vy, c='#3A6A9A', s=4, alpha=0.45, edgecolors='none', rasterized=True)
-        ax.set_xlabel(mx, color='#CCC', fontsize=9)
-        ax.set_ylabel(my, color='#CCC', fontsize=9)
-        ax.tick_params(colors='#888', labelsize=8)
-        ax.grid(True, color='#262930', linestyle='--', linewidth=0.5)
+        ax.set_facecolor("#14161d")
+        ax.scatter(vx, vy, c="#3A6A9A", s=4, alpha=0.45, edgecolors="none", rasterized=True)
+        ax.set_xlabel(mx, color="#CCC", fontsize=9)
+        ax.set_ylabel(my, color="#CCC", fontsize=9)
+        ax.tick_params(colors="#888", labelsize=8)
+        ax.grid(True, color="#262930", linestyle="--", linewidth=0.5)
 
         tx = self.spin_tx.value()
         ty = self.spin_ty.value()
-        ax.axvline(tx, color='#FF5252', linestyle='--', linewidth=1.5)
+        ax.axvline(tx, color="#E57373", linestyle="--", linewidth=1.5)
         ax.axhline(ty, color='#448AFF', linestyle='--', linewidth=1.5)
 
         m_q2 = (vx >= tx) & (vy >= ty)
@@ -730,25 +777,14 @@ class ManualGatingWidget(QWidget):
         else:
             final_mask = mask
 
-        # Filter by sample scope if Selected or Actively loaded
-        if hasattr(self, 'combo_scope'):
-            scope = self.combo_scope.currentText()
-            scol = find_sample_column(raw_df)
-            if scol:
-                if scope.startswith("Selected") and hasattr(self, 'combo_sample'):
-                    sel = self.combo_sample.currentText().strip()
-                    if sel and sel in raw_df[scol].astype(str).values:
-                        final_mask = final_mask & (raw_df[scol].astype(str) == sel).to_numpy()
-                elif scope.startswith("Actively"):
-                    act = self._get_active_sample()
-                    if act and str(act) in raw_df[scol].astype(str).values:
-                        final_mask = final_mask & (raw_df[scol].astype(str) == str(act)).to_numpy()
+        # Filter by sample scope if Selected or Active
+        final_mask = final_mask & self._scope_row_mask(raw_df)
 
         match_cnt = int(final_mask.sum())
         if match_cnt == 0:
             if hasattr(self, 'lbl_apply_dock_feedback'):
-                self.lbl_apply_dock_feedback.setText("⚠ No cells matched this cutoff.")
-                self.lbl_apply_dock_feedback.setStyleSheet("color: #FF5252; font-weight: bold; font-size: 11px;")
+                self.lbl_apply_dock_feedback.setText("No cells matched this cutoff.")
+                self.lbl_apply_dock_feedback.setStyleSheet("color: #E57373; font-weight: bold; font-size: 11px;")
             return
 
         _child_node = GatingHierarchyNode(
@@ -784,9 +820,16 @@ class ManualGatingWidget(QWidget):
             'mask': final_mask,
         })
 
+        scope_txt = self.combo_scope.currentText() if hasattr(self, "combo_scope") else SCOPE_ALL
+        iris_log(
+            "IRIS-Phenotyper",
+            "Manual Gating",
+            f"Applied gate '{label_name}' ({mx}/{my}) to {match_cnt:,} cells -> '{target_col}' (scope={scope_txt}).",
+        )
+
         if hasattr(self, 'lbl_apply_dock_feedback'):
-            self.lbl_apply_dock_feedback.setText(f"✓ Applied '{label_name}' to {match_cnt:,} cells (Parent: {p_name}).")
-            self.lbl_apply_dock_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+            self.lbl_apply_dock_feedback.setText(f"Applied '{label_name}' to {match_cnt:,} cells (Parent: {p_name}).")
+            self.lbl_apply_dock_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
 
     def on_gate_applied(self, gate_info: dict):
         if self.ctx is None:

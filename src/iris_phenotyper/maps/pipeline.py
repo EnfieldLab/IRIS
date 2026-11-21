@@ -26,6 +26,8 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedShuffleSplit
 
+from iris_common.logging import iris_log
+
 # Guard against macOS dual-libomp crashes when PyPI torch and conda numpy/scipy coexist.
 if sys.platform == "darwin":
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -677,10 +679,12 @@ class MAPSTrainer:
                 counter += 1
 
             if self.config.verbose > 0 and (epoch % 10 == 0 or epoch == self.config.max_epochs - 1):
-                print(
-                    f"[MAPS] Epoch {epoch:03d}: "
+                iris_log(
+                    "IRIS-Phenotyper",
+                    "MAPS",
+                    f"Epoch {epoch:03d}: "
                     f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f} | "
-                    f"valid_loss={va_loss:.4f} valid_acc={va_acc:.4f}"
+                    f"valid_loss={va_loss:.4f} valid_acc={va_acc:.4f}",
                 )
 
             if self.results_dir is not None:

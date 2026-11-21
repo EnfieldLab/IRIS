@@ -284,7 +284,8 @@ class TestUnsupervisedClusteringAndMarkerExpression:
         assert len(assigned) == 1
         assert assigned[0][0] == ["Cluster 2"]
         assert assigned[0][1] == dialog._suggested_phenotype
-        assert "✓ Assigned" in dialog.lbl_dialog_assign_feedback.text()
+        assert "Assigned" in dialog.lbl_dialog_assign_feedback.text()
+        assert "\u2713" not in dialog.lbl_dialog_assign_feedback.text()
 
         # Test click-on-heatmap row selection simulation
         # Simulate click on row 3 (Cluster 3)

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from .canvas_legend import CanvasLegendOverlay
 from .canvas_scalebar import CanvasScaleBarOverlay
-from .consensus_panel import ConsensusPanelWidget
+from .disagreement_panel import DisagreementPanelWidget
 from .feature_panel import FeaturePanelWidget
 from .image_control import ImageControlWidget
 from .legend import ViewerLegendWidget
@@ -31,7 +31,7 @@ __all__ = [
     "MultiSampleComparisonWidget",
     "IrisCellularNeighborhoodsWidget",
     "IrisMarkerExpressionWidget",
-    "ConsensusPanelWidget",
+    "DisagreementPanelWidget",
     "FeaturePanelWidget",
     "SegmentationPanelWidget",
     "IrisSegmentationWidget",

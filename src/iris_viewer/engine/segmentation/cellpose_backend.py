@@ -1,14 +1,50 @@
-""" Cellpose Segmentation Backend """
+"""Cellpose Segmentation Backend."""
+import importlib.util
+import os
+import sys
+import time
 import warnings
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
+
+from iris_common.logging import iris_log, log_warn
 
 from .base import SegmentationBackend
 
 warnings.filterwarnings("ignore", message=".*Sparse invariant checks.*")
 warnings.filterwarnings("ignore", message=".*channels argument is deprecated.*")
 warnings.filterwarnings("ignore", message=".*model_type argument is not used.*")
+
+
+def _has_modules(*names: str) -> bool:
+    for mod_name in names:
+        if mod_name in sys.modules:
+            if sys.modules[mod_name] is None:
+                return False
+            continue
+        try:
+            if importlib.util.find_spec(mod_name) is None:
+                return False
+        except (ImportError, ModuleNotFoundError, ValueError):
+            return False
+    return True
+
+
+def _resolve_torch_device(torch_mod: Any, req_device: str) -> tuple[Any, bool, str]:
+    if req_device == "mps":
+        mps_mod = getattr(getattr(torch_mod, "backends", None), "mps", None)
+        if mps_mod is None or mps_mod.is_available():
+            return torch_mod.device("mps"), True, "mps"
+        return torch_mod.device("cpu"), False, "cpu"
+    if req_device == "cuda":
+        cuda_mod = getattr(torch_mod, "cuda", None)
+        if cuda_mod is None or cuda_mod.is_available():
+            return torch_mod.device("cuda"), True, "cuda"
+        return torch_mod.device("cpu"), False, "cpu"
+    return torch_mod.device("cpu"), False, "cpu"
+
 
 class CellposeBackend(SegmentationBackend):
     name = "Cellpose"
@@ -21,80 +57,260 @@ class CellposeBackend(SegmentationBackend):
         self._cached_cyto_type = None
 
     def is_available(self) -> bool:
-        try:
-            import cellpose  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        return _has_modules("cellpose", "torch")
 
     def get_default_params(self) -> Dict[str, Any]:
-        return {'model_type': 'cyto3', 'flow_threshold': 0.4, 'cellprob_threshold': 0.0}
+        return {
+            "model_type": "cpsam",
+            "diameter": None,
+            "flow_threshold": 0.4,
+            "cellprob_threshold": 0.0,
+            "tile_overlap": 0.1,
+            "gaussian_sigma": 0.0,
+            "norm_pmin": 1.0,
+            "norm_pmax": 99.8,
+            "min_cell_area": 0,
+            "max_cell_area": 0,
+            "expand_radius": 0,
+            "expansion_mode": "distance",
+        }
 
-    def segment(self, image: np.ndarray, nuclear_channel: int, membrane_channel: Optional[int], diameter: Optional[float], device: str, expand_radius: int = 0, **kwargs) -> Dict[str, Optional[np.ndarray]]:
+    def _build_model(
+        self,
+        models_mod: Any,
+        torch_device: Any,
+        use_gpu: bool,
+        model_type: str,
+        is_v4: bool,
+    ) -> Any:
+        pretrained_arg = model_type
+        model_names = getattr(models_mod, "MODEL_NAMES", None)
+        model_dir = getattr(models_mod, "MODEL_DIR", None)
+        if is_v4 and model_names is not None:
+            if model_type in ("cpsam", "cpsam_v2", "cyto3", "cyto2", "cyto"):
+                if (
+                    model_type == "cpsam"
+                    and model_dir is not None
+                    and (Path(model_dir) / "cpsam").exists()
+                ):
+                    pretrained_arg = "cpsam"
+                elif (
+                    "cpsam_v2" in model_names
+                    and model_dir is not None
+                    and (Path(model_dir) / "cpsam_v2").exists()
+                ):
+                    pretrained_arg = "cpsam_v2"
+                elif "cpsam" in model_names:
+                    pretrained_arg = "cpsam"
+            elif model_type not in model_names and not os.path.exists(str(model_type)):
+                if (
+                    "cpsam_v2" in model_names
+                    and model_dir is not None
+                    and (Path(model_dir) / "cpsam_v2").exists()
+                ):
+                    pretrained_arg = "cpsam_v2"
+                elif "cpsam" in model_names:
+                    pretrained_arg = "cpsam"
+
+        if is_v4:
+            return models_mod.CellposeModel(
+                gpu=use_gpu, device=torch_device, pretrained_model=pretrained_arg
+            )
+        return models_mod.CellposeModel(
+            gpu=use_gpu, device=torch_device, model_type=model_type
+        )
+
+    def segment(
+        self,
+        image: np.ndarray,
+        nuclear_channel: int,
+        membrane_channel: Optional[int],
+        diameter: Optional[float] = None,
+        device: str = "cpu",
+        expand_radius: int = 0,
+        **kwargs,
+    ) -> Dict[str, Optional[np.ndarray]]:
         import gc
         import inspect
 
         import torch
         from cellpose import models
 
-        model_type = kwargs.get('model_type', 'cyto3')
-        flow_threshold = kwargs.get('flow_threshold', 0.4)
-        cellprob_threshold = kwargs.get('cellprob_threshold', 0.0)
+        if image.ndim < 2 or image.shape[-2] == 0 or image.shape[-1] == 0:
+            shape = image.shape[-2:] if image.ndim >= 2 else (0, 0)
+            return {"nuclear": np.zeros(shape, dtype=np.uint32), "cytoplasm": None}
+        if image.ndim > 3:
+            raise ValueError(f"Expected 2D or 3D image, got shape {image.shape}.")
 
-        if device == 'mps':
-            torch_device = torch.device('mps')
-            use_gpu = True
-        elif device == 'cuda':
-            torch_device = torch.device('cuda')
-            use_gpu = True
-        else:
-            torch_device = torch.device('cpu')
-            use_gpu = False
+        model_type = kwargs.get("model_type", "cpsam")
+        flow_threshold = float(kwargs.get("flow_threshold", 0.4))
+        cellprob_threshold = float(kwargs.get("cellprob_threshold", 0.0))
+        tile_overlap = float(kwargs.get("tile_overlap", 0.1))
+        gaussian_sigma = float(kwargs.get("gaussian_sigma", 0.0))
+        norm_pmin = kwargs.get("norm_pmin", 1.0)
+        norm_pmax = kwargs.get("norm_pmax", 99.8)
+        min_cell_area = int(kwargs.get("min_cell_area", 0) or 0)
+        max_cell_area = int(kwargs.get("max_cell_area", 0) or 0)
+        expansion_mode = str(kwargs.get("expansion_mode", "distance"))
+
+        if diameter is not None and diameter <= 0:
+            diameter = None
+
+        torch_device, use_gpu, actual_device = _resolve_torch_device(torch, device)
 
         sig = inspect.signature(models.CellposeModel.eval)
-        is_v4 = 'channel_axis' in sig.parameters
-        run_two_pass = (membrane_channel is not None and membrane_channel != nuclear_channel)
+        is_v4 = "channel_axis" in sig.parameters
+        if image.ndim == 3:
+            nuc_idx = max(0, min(int(nuclear_channel), image.shape[0] - 1))
+            has_membrane = (
+                membrane_channel is not None
+                and 0 <= int(membrane_channel) < image.shape[0]
+                and int(membrane_channel) != nuc_idx
+            )
+            mem_idx = int(membrane_channel) if has_membrane else None
+        else:
+            nuc_idx = 0
+            has_membrane = False
+            mem_idx = None
 
-        # Cache Cyto Model
-        if self._cached_model_cyto is None or self._cached_cyto_type != model_type or self._cached_device != device:
-            if is_v4:
-                self._cached_model_cyto = models.CellposeModel(gpu=use_gpu, device=torch_device, pretrained_model=model_type)
-            else:
-                self._cached_model_cyto = models.CellposeModel(gpu=use_gpu, device=torch_device, model_type=model_type)
+        if (
+            self._cached_model_cyto is None
+            or self._cached_cyto_type != model_type
+            or self._cached_device != actual_device
+        ):
+            try:
+                self._cached_model_cyto = self._build_model(
+                    models, torch_device, use_gpu, model_type, is_v4
+                )
+            except Exception as exc:
+                if actual_device == "mps":
+                    log_warn(
+                        "IRIS-Viewer",
+                        "Segmentation",
+                        f"Cellpose MPS init failed ({exc}), falling back to CPU.",
+                    )
+                    torch_device, use_gpu, actual_device = _resolve_torch_device(torch, "cpu")
+                    self._cached_model_cyto = self._build_model(
+                        models, torch_device, use_gpu, model_type, is_v4
+                    )
+                else:
+                    raise
             self._cached_cyto_type = model_type
-            self._cached_device = device
+            self._cached_device = actual_device
 
+        mem_raw = np.asarray(image[mem_idx]) if (has_membrane and mem_idx is not None) else None
+        nuc_raw = np.asarray(image[nuc_idx] if image.ndim == 3 else image)
+        nuc_proc = self._preprocess_channel(
+            nuc_raw, gaussian_sigma=gaussian_sigma, norm_pmin=norm_pmin, norm_pmax=norm_pmax
+        )
+
+        base_eval_kw: Dict[str, Any] = {
+            "diameter": diameter,
+            "flow_threshold": flow_threshold,
+            "cellprob_threshold": cellprob_threshold,
+            "batch_size": 4,
+            "tile_overlap": tile_overlap,
+        }
+
+        def _eval_and_filter(eval_img: np.ndarray, eval_kw: Dict[str, Any]) -> np.ndarray:
+            nonlocal torch_device, use_gpu, actual_device
+            try:
+                res = self._cached_model_cyto.eval(eval_img, **eval_kw)
+            except Exception as exc:
+                if actual_device == "mps":
+                    log_warn(
+                        "IRIS-Viewer",
+                        "Segmentation",
+                        f"Cellpose MPS eval failed ({exc}), retrying on CPU...",
+                    )
+                    torch_device, use_gpu, actual_device = _resolve_torch_device(torch, "cpu")
+                    self._cached_model_cyto = self._build_model(
+                        models, torch_device, use_gpu, model_type, is_v4
+                    )
+                    self._cached_device = actual_device
+                    res = self._cached_model_cyto.eval(eval_img, **eval_kw)
+                else:
+                    raise
+
+            raw_masks = res[0] if isinstance(res, tuple) else res
+            if raw_masks is None:
+                raw_masks = np.zeros(nuc_raw.shape, dtype=np.uint32)
+            raw_masks = np.asarray(raw_masks)
+            if raw_masks.ndim > 2:
+                raw_masks = np.squeeze(raw_masks)
+            filtered = self._filter_mask_by_area(
+                raw_masks, min_area=min_cell_area, max_area=max_cell_area
+            )
+            return filtered.astype(np.uint32)
+
+        t0 = time.perf_counter()
         try:
-            if run_two_pass:
-                mem_img = np.asarray(image[membrane_channel])
-                nuc_img = np.asarray(image[nuclear_channel])
-                input_img = np.stack([mem_img, nuc_img], axis=0 if is_v4 else -1)
+            nuc_eval_kw = dict(base_eval_kw)
+            if not is_v4:
+                nuc_eval_kw["channels"] = [0, 0]
 
-                kwargs_eval = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
-                if is_v4: kwargs_eval['channel_axis'] = 0
-                else: kwargs_eval['channels'] = [1, 2] # 1=membrane, 2=nuclear
+            iris_log(
+                "IRIS-Viewer",
+                "Segmentation",
+                f"Cellpose '{model_type}' nuclear pass "
+                f"(shape={nuc_proc.shape}, device={actual_device})...",
+            )
+            nuc_masks_u32 = _eval_and_filter(nuc_proc, nuc_eval_kw)
+
+            if has_membrane and model_type != "nuclei" and mem_raw is not None:
+                mem_proc = self._preprocess_channel(
+                    mem_raw,
+                    gaussian_sigma=gaussian_sigma,
+                    norm_pmin=norm_pmin,
+                    norm_pmax=norm_pmax,
+                )
+                wc_img = np.stack([mem_proc, nuc_proc], axis=0 if is_v4 else -1)
+                wc_eval_kw = dict(base_eval_kw)
+                if is_v4:
+                    wc_eval_kw["channel_axis"] = 0
+                else:
+                    wc_eval_kw["channels"] = [1, 2]
+
+                iris_log(
+                    "IRIS-Viewer",
+                    "Segmentation",
+                    f"Cellpose '{model_type}' whole-cell pass "
+                    f"(shape={wc_img.shape}, device={actual_device})...",
+                )
+                cyto_masks_u32 = _eval_and_filter(wc_img, wc_eval_kw)
+                result = {"nuclear": nuc_masks_u32, "cytoplasm": cyto_masks_u32}
             else:
-                input_img = np.asarray(image[nuclear_channel] if image.ndim == 3 else image)
-                kwargs_eval = {'diameter': diameter, 'flow_threshold': flow_threshold, 'cellprob_threshold': cellprob_threshold, 'batch_size': 4, 'tile_overlap': 0.1}
-                if not is_v4: kwargs_eval['channels'] = [0, 0]
+                cyto_masks_u32 = (
+                    self._expand_nuclear_to_cytoplasm(
+                        nuc_masks_u32,
+                        expand_radius,
+                        mode=expansion_mode,
+                        membrane_image=mem_raw,
+                    ).astype(np.uint32)
+                    if expand_radius > 0
+                    else None
+                )
+                result = {"nuclear": nuc_masks_u32, "cytoplasm": cyto_masks_u32}
 
-            print(f"[IRIS-Viewer] Cellpose Execution: Running '{model_type}'...")
-            res = self._cached_model_cyto.eval(input_img, **kwargs_eval)
-            masks = res[0]
-
-            result = {}
-            if model_type == 'nuclei':
-                result['nuclear'] = masks.astype(np.uint32)
-                result['cytoplasm'] = None
-            else:
-                # If a cyto model is run, it segments the whole cell. We assign it to both.
-                result['nuclear'] = masks.astype(np.uint32)
-                result['cytoplasm'] = masks.astype(np.uint32)
+            n_nuc = int((np.unique(nuc_masks_u32) > 0).sum())
+            n_cyto = (
+                int((np.unique(result["cytoplasm"]) > 0).sum())
+                if result["cytoplasm"] is not None
+                else 0
+            )
+            iris_log(
+                "IRIS-Viewer",
+                "Segmentation",
+                f"Cellpose '{model_type}' complete in {time.perf_counter() - t0:.2f}s "
+                f"(N={n_nuc} nuclear, {n_cyto} cytoplasm)",
+            )
 
         finally:
             if use_gpu:
-                if device == 'mps': torch.mps.empty_cache()
-                else: torch.cuda.empty_cache()
+                if actual_device == "mps" and hasattr(torch, "mps"):
+                    torch.mps.empty_cache()
+                elif actual_device == "cuda" and hasattr(torch, "cuda"):
+                    torch.cuda.empty_cache()
             gc.collect()
 
         return result

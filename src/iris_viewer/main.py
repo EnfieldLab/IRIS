@@ -1,14 +1,14 @@
 """
 IRIS-Viewer entry point.
-
-All environment variables that control model storage paths are set here,
-BEFORE any module that imports torch / cellpose / instanseg is loaded.
-This is the single canonical location for these settings — controller.py
-no longer sets them.
 """
 import os
 import sys
 from pathlib import Path
+
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("QT_API", "pyqt5")
 
 # Model Storage Paths
 # Use standard user cache directory ~/.cache/iris (or IRIS_DATA_DIR) for downloaded weights,

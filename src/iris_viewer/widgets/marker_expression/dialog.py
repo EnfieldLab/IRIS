@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, List, Optional, Set
+from typing import Callable, List, Optional, Sequence, Set
 
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as patches
@@ -47,6 +47,22 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from iris_common.logging import iris_log
+from iris_common.schema import find_sample_column
+from iris_common.widgets.sample_scope import (
+    SCOPE_ACTIVE,
+    SCOPE_ALL,
+    SCOPE_SELECTED,
+)
+from iris_common.widgets.theme import (
+    BUTTON_CTA,
+    BUTTON_PRIMARY,
+    BUTTON_SECONDARY,
+    BUTTON_STUDIO,
+    DIALOG_DARK_THEME,
+    create_section_card,
+    style_section_header,
+)
 from iris_viewer.widgets.marker_expression.subset_dialog import SampleSubsetDialog
 from iris_viewer.widgets.phenotyping.thresholding import resolve_marker_col
 
@@ -106,27 +122,9 @@ class MarkerExpressionDialog(QDialog):
         self._pan_xlim = None
         self._pan_ylim = None
         self._orig_limits = None
+        self.pub_studio_dialog = None
 
-        self.setStyleSheet("""
-            QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
-            QGroupBox { border: 1px solid #444; margin-top: 6px; font-weight: bold; color: #DDD; }
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 3px; padding: 5px 12px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-            QComboBox, QSpinBox {
-                background-color: #2A2A2A; color: white; border: 1px solid #555;
-                border-radius: 3px; padding: 3px 6px; font-size: 12px;
-            }
-            QLabel { color: #DDD; font-size: 12px; }
-            QCheckBox { color: #DDD; font-size: 12px; }
-            QListWidget {
-                background-color: #14161d; color: white; border: 1px solid #444;
-                border-radius: 3px; font-size: 12px;
-            }
-            QListWidget::item:selected { background-color: #3A6A9A; }
-        """)
+        self.setStyleSheet(DIALOG_DARK_THEME)
 
         self._build_ui()
         self._sync_available_samples()
@@ -134,16 +132,7 @@ class MarkerExpressionDialog(QDialog):
         self.recompute_and_render()
 
     def _get_image_col(self, df: Optional[pd.DataFrame]) -> Optional[str]:
-        if df is None:
-            return None
-        for col in (
-            "Image", "image", "Sample", "sample", "Sample_Name", "sample_name",
-            "SampleID", "sample_id", "Core", "core", "TMA_Core", "tma_core",
-            "Slide", "slide", "filename", "Filename", "File", "file"
-        ):
-            if col in df.columns:
-                return col
-        return None
+        return find_sample_column(df)
 
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -159,7 +148,8 @@ class MarkerExpressionDialog(QDialog):
         self.combo_dataset.currentIndexChanged.connect(self._on_dataset_changed)
         top_bar1.addWidget(self.combo_dataset)
 
-        self.btn_subset = QPushButton("Filter Subsets...")
+        self.btn_subset = QPushButton("Choose Samples...")
+        self.btn_subset.setMinimumHeight(28)
         self.btn_subset.clicked.connect(self._open_subset_dialog)
         top_bar1.addWidget(self.btn_subset)
 
@@ -220,13 +210,7 @@ class MarkerExpressionDialog(QDialog):
         top_bar2.addWidget(self.btn_toggle_drawer)
 
         self.btn_cluster_both = QPushButton("Hierarchical Cluster Both")
-        self.btn_cluster_both.setStyleSheet("""
-            QPushButton {
-                background-color: #5E35B1; color: white; font-weight: bold;
-                border: 1px solid #7E57C2; border-radius: 3px; padding: 5px 14px;
-            }
-            QPushButton:hover { background-color: #6A1B9A; }
-        """)
+        self.btn_cluster_both.setStyleSheet(BUTTON_PRIMARY)
         self.btn_cluster_both.clicked.connect(self.cluster_both)
         top_bar2.addWidget(self.btn_cluster_both)
 
@@ -263,11 +247,22 @@ class MarkerExpressionDialog(QDialog):
         self.btn_save_csv.clicked.connect(self.export_csv)
         top_bar2.addWidget(self.btn_save_csv)
 
+        self.btn_pub_studio = QPushButton("Figure Studio")
+        self.btn_pub_studio.setStyleSheet(BUTTON_STUDIO)
+        self.btn_pub_studio.setMinimumHeight(28)
+        self.btn_pub_studio.clicked.connect(self.open_publication_studio)
+        top_bar2.addWidget(self.btn_pub_studio)
+
         main_layout.addLayout(top_bar2)
 
         # Hover Details Status Bar
-        self.lbl_hover = QLabel("Hover over any cell in the heatmap for values. Scroll mouse wheel to zoom, click and drag to pan.")
-        self.lbl_hover.setStyleSheet("color: #AAA; font-size: 12px; font-style: italic; padding: 2px 4px;")
+        self.lbl_hover = QLabel(
+            "Hover over any cell in the heatmap for values. "
+            "Scroll mouse wheel to zoom, click and drag to pan."
+        )
+        self.lbl_hover.setStyleSheet(
+            "color: #9AA4B2; font-size: 12px; font-style: italic; padding: 2px 4px;"
+        )
         main_layout.addWidget(self.lbl_hover)
 
         # Main Splitter: Canvas & Reorder Organizer
@@ -286,11 +281,13 @@ class MarkerExpressionDialog(QDialog):
 
         if NavigationToolbar is not None:
             self.toolbar = NavigationToolbar(self.canvas, self)
-            self.toolbar.setStyleSheet("""
-                QToolBar { background-color: #1f232b; border: 1px solid #333; spacing: 4px; padding: 2px; }
-                QToolButton { background-color: transparent; border: 1px solid transparent; border-radius: 3px; padding: 3px; }
-                QToolButton:hover { background-color: #3A6A9A; border: 1px solid #558; }
-            """)
+            self.toolbar.setStyleSheet(
+                "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
+                "spacing: 4px; padding: 2px; }"
+                "QToolButton { background-color: transparent; border: 1px solid transparent; "
+                "border-radius: 3px; padding: 3px; }"
+                "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
+            )
             cc_layout.addWidget(self.toolbar)
 
         cc_layout.addWidget(self.canvas, 1)
@@ -302,19 +299,10 @@ class MarkerExpressionDialog(QDialog):
         self.splitter.addWidget(canvas_container)
 
         # Organize Drawer Panel
-        self.organizer_panel = QGroupBox()
-        op_layout = QVBoxLayout(self.organizer_panel)
-        op_layout.setContentsMargins(10, 4, 10, 10)
-        op_layout.setSpacing(6)
-
-        title_organize = QLabel("Organize Rows & Columns")
-        title_organize.setStyleSheet("color: #DDD; font-size: 13px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        op_layout.addWidget(title_organize)
-
-        lbl_hint = QLabel("Check/uncheck to show/hide items. Drag or use buttons to reorder.")
-        lbl_hint.setStyleSheet("color: #9E9E9E; font-size: 11px; font-style: italic;")
-        lbl_hint.setWordWrap(True)
-        op_layout.addWidget(lbl_hint)
+        self.organizer_panel, op_layout = create_section_card(
+            "Organize Rows & Columns",
+            "Check/uncheck to show/hide items. Drag or use buttons to reorder.",
+        )
 
         lists_layout = QHBoxLayout()
         lists_layout.setSpacing(10)
@@ -401,64 +389,60 @@ class MarkerExpressionDialog(QDialog):
         main_layout.addWidget(self.splitter, 1)
 
         # Directed Phenotype Assignment Studio
-        self.assign_bar = QGroupBox("Assign Phenotype from Expression Profile")
-        self.assign_bar.setStyleSheet("""
-            QGroupBox {
-                border: 1px solid #3A6A9A; border-radius: 6px;
-                margin-top: 6px; font-weight: bold; color: #EEE; font-size: 12px;
-                background-color: #171a21;
-            }
-        """)
+        self.assign_bar = QGroupBox()
+        self.assign_bar.setStyleSheet(
+            "QGroupBox { border: 1px solid #3A6A9A; border-radius: 8px; "
+            "background-color: #232832; margin-top: 2px; padding: 6px; }"
+        )
         ab_layout = QVBoxLayout(self.assign_bar)
         ab_layout.setContentsMargins(10, 8, 10, 8)
         ab_layout.setSpacing(6)
+
+        lbl_assign_title = QLabel("Assign Phenotype from Expression Profile")
+        style_section_header(lbl_assign_title, subtitle=False)
+        ab_layout.addWidget(lbl_assign_title)
 
         # Row 1: Target Cluster Selection & Marker Profile Characterization
         row1 = QHBoxLayout()
         row1.setSpacing(6)
 
         lbl_target = QLabel("Target Cluster / Row:")
-        lbl_target.setStyleSheet("font-weight: bold; color: #FFF; font-size: 11px;")
+        lbl_target.setStyleSheet("font-weight: bold; color: #F0F2F5; font-size: 11px;")
         row1.addWidget(lbl_target)
 
         self.btn_prev_row = QPushButton("◀")
         self.btn_prev_row.setToolTip("Previous Cluster / Row")
         self.btn_prev_row.setFixedWidth(28)
-        self.btn_prev_row.setStyleSheet("""
-            QPushButton {
-                background-color: #2D3748; color: #FFF; font-weight: bold;
-                border: 1px solid #4A5568; border-radius: 4px; padding: 3px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4A5568; }
-        """)
+        self.btn_prev_row.setStyleSheet(
+            "QPushButton { background-color: #2A2E39; color: #F0F2F5; font-weight: bold; "
+            "border: 1px solid #4B5364; border-radius: 4px; padding: 3px; font-size: 11px; } "
+            "QPushButton:hover { background-color: #3A6A9A; border-color: #4B82B5; }"
+        )
         self.btn_prev_row.clicked.connect(self._select_prev_row)
         row1.addWidget(self.btn_prev_row)
 
         self.combo_active_row = QComboBox()
         self.combo_active_row.setMinimumWidth(200)
-        self.combo_active_row.setToolTip("Select the active cluster or click directly on any heatmap row")
-        self.combo_active_row.setStyleSheet("""
-            QComboBox {
-                background-color: #1F2937; color: #00E5FF; font-weight: bold;
-                border: 1px solid #3B82F6; border-radius: 4px; padding: 3px 8px; font-size: 11px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1F2937; color: white; selection-background-color: #3B82F6;
-            }
-        """)
+        self.combo_active_row.setToolTip(
+            "Select the active cluster or click directly on any heatmap row"
+        )
+        self.combo_active_row.setStyleSheet(
+            "QComboBox { background-color: #2A2E39; color: #00E5FF; font-weight: bold; "
+            "border: 1px solid #3A6A9A; border-radius: 4px; padding: 3px 8px; font-size: 11px; } "
+            "QComboBox QAbstractItemView { background-color: #2A2E39; color: #F0F2F5; "
+            "selection-background-color: #3A6A9A; selection-color: #FFFFFF; }"
+        )
         self.combo_active_row.currentIndexChanged.connect(self._on_combo_active_row_changed)
         row1.addWidget(self.combo_active_row)
 
         self.btn_next_row = QPushButton("▶")
         self.btn_next_row.setToolTip("Next Cluster / Row")
         self.btn_next_row.setFixedWidth(28)
-        self.btn_next_row.setStyleSheet("""
-            QPushButton {
-                background-color: #2D3748; color: #FFF; font-weight: bold;
-                border: 1px solid #4A5568; border-radius: 4px; padding: 3px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4A5568; }
-        """)
+        self.btn_next_row.setStyleSheet(
+            "QPushButton { background-color: #2A2E39; color: #F0F2F5; font-weight: bold; "
+            "border: 1px solid #4B5364; border-radius: 4px; padding: 3px; font-size: 11px; } "
+            "QPushButton:hover { background-color: #3A6A9A; border-color: #4B82B5; }"
+        )
         self.btn_next_row.clicked.connect(self._select_next_row)
         row1.addWidget(self.btn_next_row)
 
@@ -466,11 +450,15 @@ class MarkerExpressionDialog(QDialog):
         self.lbl_selected_row.setVisible(False)  # Backward-compatibility alias
 
         self.lbl_active_cell_count = QLabel("")
-        self.lbl_active_cell_count.setStyleSheet("color: #FFD54F; font-size: 11px; font-weight: bold; margin-left: 4px;")
+        self.lbl_active_cell_count.setStyleSheet(
+            "color: #FFD54F; font-size: 11px; font-weight: bold; margin-left: 4px;"
+        )
         row1.addWidget(self.lbl_active_cell_count)
 
         self.lbl_enriched_profile = QLabel("")
-        self.lbl_enriched_profile.setStyleSheet("color: #64B5F6; font-size: 11px; font-style: italic; margin-left: 6px;")
+        self.lbl_enriched_profile.setStyleSheet(
+            "color: #64B5F6; font-size: 11px; font-style: italic; margin-left: 6px;"
+        )
         row1.addWidget(self.lbl_enriched_profile, 1)
 
         ab_layout.addLayout(row1)
@@ -480,46 +468,35 @@ class MarkerExpressionDialog(QDialog):
         row2.setSpacing(6)
 
         lbl_new_pheno = QLabel("Phenotype Label:")
-        lbl_new_pheno.setStyleSheet("font-weight: bold; color: #FFF; font-size: 11px;")
+        lbl_new_pheno.setStyleSheet("font-weight: bold; color: #F0F2F5; font-size: 11px;")
         row2.addWidget(lbl_new_pheno)
 
         self.txt_dialog_pheno = QLineEdit()
         self.txt_dialog_pheno.setPlaceholderText("Enter phenotype name (e.g., CD8+ T cells)...")
-        self.txt_dialog_pheno.setStyleSheet("""
-            QLineEdit {
-                background-color: #2A2A2A; color: white; border: 1px solid #555;
-                border-radius: 4px; padding: 4px 8px; font-size: 11px;
-            }
-            QLineEdit:focus { border: 1px solid #00E5FF; }
-        """)
+        self.txt_dialog_pheno.setStyleSheet(
+            "QLineEdit { background-color: #2A2E39; color: #F0F2F5; "
+            "border: 1px solid #4B5364; border-radius: 4px; padding: 4px 8px; font-size: 11px; } "
+            "QLineEdit:focus { border: 1px solid #4B82B5; }"
+        )
         self.txt_dialog_pheno.returnPressed.connect(self._apply_phenotype_from_dialog)
         row2.addWidget(self.txt_dialog_pheno, 1)
 
         self.btn_suggest_label = QPushButton("Use Suggestion")
-        self.btn_suggest_label.setToolTip("Insert the auto-suggested marker signature into the phenotype field")
-        self.btn_suggest_label.setStyleSheet("""
-            QPushButton {
-                background-color: #374151; color: #E0E7FF; font-weight: bold;
-                border: 1px solid #4B5563; border-radius: 4px; padding: 4px 10px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4B5563; color: #FFF; }
-        """)
+        self.btn_suggest_label.setToolTip(
+            "Insert the auto-suggested marker signature into the phenotype field"
+        )
+        self.btn_suggest_label.setStyleSheet(BUTTON_SECONDARY)
         self.btn_suggest_label.clicked.connect(self._use_suggested_label)
         row2.addWidget(self.btn_suggest_label)
 
-        self.btn_dialog_assign = QPushButton("✓ Apply Phenotype to Cluster")
-        self.btn_dialog_assign.setStyleSheet("""
-            QPushButton {
-                background-color: #10B981; color: white; font-weight: bold;
-                border: 1px solid #059669; border-radius: 4px; padding: 5px 14px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #059669; }
-        """)
+        self.btn_dialog_assign = QPushButton("Apply Phenotype to Cluster")
+        self.btn_dialog_assign.setStyleSheet(BUTTON_CTA)
+        self.btn_dialog_assign.setMinimumHeight(28)
         self.btn_dialog_assign.clicked.connect(self._apply_phenotype_from_dialog)
         row2.addWidget(self.btn_dialog_assign)
 
         self.lbl_dialog_assign_feedback = QLabel("")
-        self.lbl_dialog_assign_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px; margin-left: 4px;")
+        self.lbl_dialog_assign_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px; margin-left: 4px;")
         row2.addWidget(self.lbl_dialog_assign_feedback)
 
         ab_layout.addLayout(row2)
@@ -790,20 +767,25 @@ class MarkerExpressionDialog(QDialog):
             if curr:
                 row_name = curr.text().strip()
         if not row_name:
-            self.lbl_dialog_assign_feedback.setText("⚠ Select a cluster or row first.")
-            self.lbl_dialog_assign_feedback.setStyleSheet("color: #FF5252; font-size: 11px;")
+            self.lbl_dialog_assign_feedback.setText("Select a cluster or row first.")
+            self.lbl_dialog_assign_feedback.setStyleSheet("color: #E57373; font-size: 11px;")
             return
 
         label_name = self.txt_dialog_pheno.text().strip() or self.txt_dialog_pheno.placeholderText().strip()
         if not label_name:
-            self.lbl_dialog_assign_feedback.setText("⚠ Enter a phenotype name.")
-            self.lbl_dialog_assign_feedback.setStyleSheet("color: #FF5252; font-size: 11px;")
+            self.lbl_dialog_assign_feedback.setText("Enter a phenotype name.")
+            self.lbl_dialog_assign_feedback.setStyleSheet("color: #E57373; font-size: 11px;")
             return
 
         if self.assignment_callback is not None:
             self.assignment_callback([row_name], label_name)
-            self.lbl_dialog_assign_feedback.setText(f"✓ Assigned {row_name} -> '{label_name}'")
-            self.lbl_dialog_assign_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+            self.lbl_dialog_assign_feedback.setText(f"Assigned {row_name} -> '{label_name}'")
+            self.lbl_dialog_assign_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
+            iris_log(
+                "IRIS-Viewer",
+                "Marker Expression",
+                f"Assigned '{row_name}' to phenotype '{label_name}'.",
+            )
             if hasattr(self, "combo_active_row"):
                 idx = self.combo_active_row.currentIndex()
                 if idx >= 0:
@@ -825,16 +807,23 @@ class MarkerExpressionDialog(QDialog):
                         if label_name not in self.df[target_col].cat.categories:
                             self.df[target_col] = self.df[target_col].cat.add_categories([label_name])
                     self.df.loc[m, target_col] = label_name
-                    self.lbl_dialog_assign_feedback.setText(f"✓ Assigned {int(m.sum()):,} cells -> '{label_name}'")
-                    self.lbl_dialog_assign_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+                    n_assigned = int(m.sum())
+                    self.lbl_dialog_assign_feedback.setText(f"Assigned {n_assigned:,} cells -> '{label_name}'")
+                    self.lbl_dialog_assign_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
+                    iris_log(
+                        "IRIS-Viewer",
+                        "Marker Expression",
+                        f"Assigned {n_assigned:,} cells in '{row_name}' -> '{label_name}' ({target_col}).",
+                    )
                     self.recompute_and_render()
 
     def _sync_available_samples(self) -> None:
         prev = self.combo_dataset.currentText() if self.combo_dataset.count() > 0 else self.current_dataset
         self.combo_dataset.blockSignals(True)
         self.combo_dataset.clear()
-        self.combo_dataset.addItem("Selected Samples")
-        self.combo_dataset.addItem("All Samples")
+        self.combo_dataset.addItem(SCOPE_ACTIVE)
+        self.combo_dataset.addItem(SCOPE_SELECTED)
+        self.combo_dataset.addItem(SCOPE_ALL)
         self.combo_dataset.addItem("None")
 
         img_col = self._get_image_col(self.df)
@@ -847,7 +836,7 @@ class MarkerExpressionDialog(QDialog):
         if idx >= 0:
             self.combo_dataset.setCurrentIndex(idx)
         else:
-            self.combo_dataset.setCurrentIndex(0)
+            self.combo_dataset.setCurrentIndex(1)  # Selected Samples default fallback
         self.current_dataset = self.combo_dataset.currentText()
         self.combo_dataset.blockSignals(False)
 
@@ -858,38 +847,38 @@ class MarkerExpressionDialog(QDialog):
             return
 
         all_samples = sorted([str(s) for s in self.df[img_col].dropna().unique()])
-        dialog = SampleSubsetDialog(all_samples, self.selected_subset, parent=self)
+        current_sel = set(self.selected_subset) or set(self.selected_samples)
+        dialog = SampleSubsetDialog(all_samples, current_sel, parent=self)
         if dialog.exec_():
-            self.selected_subset = dialog.selected_samples
-            n_sel = len(self.selected_subset)
-            custom_txt = f"Subset ({n_sel} samples)"
-            idx = self.combo_dataset.findText(custom_txt)
-            if idx < 0:
-                self.combo_dataset.addItem(custom_txt)
-                idx = self.combo_dataset.count() - 1
-            self.combo_dataset.setCurrentIndex(idx)
-            self.current_dataset = custom_txt
+            self.selected_subset = set(dialog.selected_samples)
+            self._subset_explicitly_set = True
+            self.combo_dataset.blockSignals(True)
+            self.combo_dataset.setCurrentText(SCOPE_SELECTED)
+            self.combo_dataset.blockSignals(False)
+            self.current_dataset = SCOPE_SELECTED
+            self.btn_subset.setText(f"Samples ({len(self.selected_subset)}/{len(all_samples)})")
+            self.row_linkage = None
+            self.col_linkage = None
             self.recompute_and_render()
 
     def set_current_dataset(self, dataset_name: str, subset_samples: Optional[List[str]] = None) -> None:
         """Sets the active dataset or cohort sample filter and triggers recomputation."""
-        if subset_samples:
+        if subset_samples is not None:
             self.selected_subset = set(subset_samples)
-            n_sel = len(self.selected_subset)
-            custom_txt = f"Subset ({n_sel} samples)"
-            idx = self.combo_dataset.findText(custom_txt)
-            if idx < 0:
-                self.combo_dataset.addItem(custom_txt)
-                idx = self.combo_dataset.count() - 1
+            self._subset_explicitly_set = True
             self.combo_dataset.blockSignals(True)
-            self.combo_dataset.setCurrentIndex(idx)
+            self.combo_dataset.setCurrentText(SCOPE_SELECTED)
             self.combo_dataset.blockSignals(False)
-            self.current_dataset = custom_txt
+            self.current_dataset = SCOPE_SELECTED
         else:
             idx = self.combo_dataset.findText(dataset_name)
             if idx >= 0:
                 self.combo_dataset.blockSignals(True)
                 self.combo_dataset.setCurrentIndex(idx)
+                self.combo_dataset.blockSignals(False)
+            elif str(dataset_name).startswith("Subset ("):
+                self.combo_dataset.blockSignals(True)
+                self.combo_dataset.setCurrentText(SCOPE_SELECTED)
                 self.combo_dataset.blockSignals(False)
             self.current_dataset = self.combo_dataset.currentText()
         self.row_linkage = None
@@ -927,38 +916,41 @@ class MarkerExpressionDialog(QDialog):
         def _clean_str(val):
             return re.sub(r'\.tiff?$', '', re.sub(r'_image$', '', str(val).lower().strip()))
 
+        def _filter_by_names(names: Sequence[str]) -> pd.DataFrame:
+            if not img_col:
+                return df_work
+            clean_targets = [str(s).strip() for s in names if str(s).strip()]
+            if not clean_targets:
+                return df_work.iloc[0:0]
+            match_mask = df_work[img_col].astype(str).str.strip().isin(clean_targets)
+            if not match_mask.any():
+                norm_targets = {_clean_str(s) for s in clean_targets}
+                norm_cols = df_work[img_col].apply(_clean_str)
+                match_mask = norm_cols.isin(norm_targets)
+            return df_work[match_mask]
+
         if ds == "None":
             self._render_empty_canvas("Dataset selection set to 'None'.")
             return
-        elif ds == "Selected Samples":
-            if img_col and self.selected_samples:
-                clean_selected = [str(s).strip() for s in self.selected_samples]
-                match_mask = df_work[img_col].astype(str).str.strip().isin(clean_selected)
-                if not match_mask.any():
-                    norm_targets = set(_clean_str(s) for s in clean_selected)
-                    norm_cols = df_work[img_col].apply(_clean_str)
-                    match_mask = norm_cols.isin(norm_targets)
-                if match_mask.any():
-                    df_work = df_work[match_mask]
+        elif ds == SCOPE_ACTIVE:
+            if img_col:
+                targets = list(self.selected_samples)
+                if not targets:
+                    uniques = [str(s).strip() for s in df_work[img_col].dropna().unique() if str(s).strip()]
+                    targets = uniques[:1]
+                df_work = _filter_by_names(targets)
+        elif ds == SCOPE_SELECTED:
+            if getattr(self, "_subset_explicitly_set", False):
+                df_work = _filter_by_names(sorted(self.selected_subset))
+            elif self.selected_subset:
+                df_work = _filter_by_names(sorted(self.selected_subset))
+            elif self.selected_samples:
+                df_work = _filter_by_names(self.selected_samples)
         elif ds.startswith("Sample: "):
             sname = ds.replace("Sample: ", "").strip()
-            if img_col:
-                match_mask = (df_work[img_col].astype(str).str.strip() == sname)
-                if not match_mask.any():
-                    target_c = _clean_str(sname)
-                    norm_cols = df_work[img_col].apply(_clean_str)
-                    match_mask = (norm_cols == target_c)
-                df_work = df_work[match_mask]
+            df_work = _filter_by_names([sname])
         elif ds.startswith("Subset (") and self.selected_subset:
-            if img_col:
-                clean_subset = [str(s).strip() for s in self.selected_subset]
-                match_mask = df_work[img_col].astype(str).str.strip().isin(clean_subset)
-                if not match_mask.any():
-                    norm_targets = set(_clean_str(s) for s in clean_subset)
-                    norm_cols = df_work[img_col].apply(_clean_str)
-                    match_mask = norm_cols.isin(norm_targets)
-                if match_mask.any():
-                    df_work = df_work[match_mask]
+            df_work = _filter_by_names(sorted(self.selected_subset))
 
         if df_work.empty:
             self._render_empty_canvas(f"No cells found for selection: {ds}")
@@ -1638,7 +1630,7 @@ class MarkerExpressionDialog(QDialog):
             else:
                 self.lbl_hover.setText(
                     f"<b>Cell Type:</b> {ct} &nbsp;|&nbsp; <b>Marker:</b> {m} &nbsp;|&nbsp; "
-                    f"<b>Mean Intensity:</b> <span style='color:#76FF03;'>{raw_v:.2f}</span>"
+                    f"<b>Mean Intensity:</b> <span style='color:#66BB6A;'>{raw_v:.2f}</span>"
                 )
 
     def copy_to_clipboard(self) -> None:
@@ -1646,7 +1638,7 @@ class MarkerExpressionDialog(QDialog):
             pixmap = self.canvas.grab()
             QApplication.clipboard().setPixmap(pixmap)
             self.lbl_hover.setText("Copied heatmap figure to clipboard!")
-            self.lbl_hover.setStyleSheet("color: #76FF03; font-size: 12px; font-weight: bold; padding: 2px 4px;")
+            self.lbl_hover.setStyleSheet("color: #66BB6A; font-size: 12px; font-weight: bold; padding: 2px 4px;")
         except Exception as exc:
             QMessageBox.warning(self, "Copy Failed", f"Could not copy to clipboard: {exc}")
 
@@ -1664,6 +1656,7 @@ class MarkerExpressionDialog(QDialog):
                 bbox_inches='tight',
                 facecolor=self.figure.get_facecolor(),
             )
+            iris_log("IRIS-Viewer", "Marker Expression", f"Exported heatmap figure to {Path(filepath).name}.")
             QMessageBox.information(self, "Export Complete", f"Figure saved to {Path(filepath).name}.")
 
     def export_csv(self) -> None:
@@ -1679,9 +1672,276 @@ class MarkerExpressionDialog(QDialog):
             out_df = self._get_export_matrix()
             if out_df is not None:
                 out_df.to_csv(filepath)
+                iris_log("IRIS-Viewer", "Marker Expression", f"Exported matrix ({out_df.shape[0]}x{out_df.shape[1]}) to {Path(filepath).name}.")
                 QMessageBox.information(
                     self, "Export Complete", f"Matrix saved to {Path(filepath).name}."
                 )
+
+    def open_publication_studio(self):
+        """Open Figure Studio populated with the current expression matrix."""
+        export_df = self._get_export_matrix()
+        if export_df is None or export_df.empty:
+            QMessageBox.information(
+                self,
+                "No Matrix Data",
+                "No expression matrix is available to send to Figure Studio.",
+            )
+            return None
+
+        from iris_common.widgets.publication_studio import (
+            THEME_PRESETS,
+            PlotStyleConfig,
+            PublicationPlotStudioDialog,
+        )
+
+        mat_df = export_df.copy()
+        categories = [str(r) for r in mat_df.index]
+        is_zscore = "Z-Score" in self.current_mode
+        show_values = self.chk_values.isChecked()
+        show_dendro = (
+            self.chk_dendrograms.isChecked()
+            and self.row_linkage is not None
+            and self.col_linkage is not None
+            and mat_df.shape[0] >= 2
+            and mat_df.shape[1] >= 2
+            and self.row_linkage.shape[0] == mat_df.shape[0] - 1
+            and self.col_linkage.shape[0] == mat_df.shape[1] - 1
+        )
+        row_link = self.row_linkage.copy() if show_dendro and self.row_linkage is not None else None
+        col_link = self.col_linkage.copy() if show_dendro and self.col_linkage is not None else None
+        base_cmap = self.current_cmap
+        celltype_col = self.celltype_col
+        dataset_name = self.current_dataset
+
+        palette_init = (
+            base_cmap if base_cmap in ("coolwarm", "RdBu_r")
+            else ("viridis" if base_cmap == "viridis" else "coolwarm")
+        )
+        cfg = PlotStyleConfig(
+            theme="IRIS Dark",
+            palette_name=palette_init,
+            tick_rotation=int(self.spin_angle.value()),
+            grid_mode="None",
+        )
+
+        def _plot_heatmap(fig: Figure, style_cfg: PlotStyleConfig) -> None:
+            import math
+
+            preset = THEME_PRESETS.get(style_cfg.theme, THEME_PRESETS["IRIS Dark"])
+            bg = preset["figure_facecolor"]
+            fg = preset["text_color"]
+            fig.patch.set_facecolor(bg)
+
+            cmap_map = {
+                "viridis": "viridis",
+                "Viridis": "viridis",
+                "RdBu_r": "RdBu_r",
+                "coolwarm": "coolwarm",
+            }
+            cmap_name = cmap_map.get(style_cfg.palette_name, base_cmap)
+            cmap = plt.get_cmap(cmap_name)
+
+            safe_rows = [style_cfg.custom_labels.get(str(r), str(r)) for r in mat_df.index]
+            safe_cols = [style_cfg.custom_labels.get(str(c), str(c)) for c in mat_df.columns]
+            plot_vals = np.nan_to_num(mat_df.to_numpy(dtype=float), nan=0.0)
+            n_rows, n_cols = plot_vals.shape
+
+            if is_zscore:
+                finite_abs = np.abs(plot_vals)[np.isfinite(plot_vals)]
+                max_abs = max(1.0, float(np.max(finite_abs))) if finite_abs.size > 0 else 1.0
+                vmin, vmax = -min(3.0, max_abs), min(3.0, max_abs)
+                cbar_label = "Z-Score (Per Marker)"
+            else:
+                finite_vals = plot_vals[np.isfinite(plot_vals)]
+                vmin = float(np.min(finite_vals)) if finite_vals.size > 0 else 0.0
+                vmax = float(np.max(finite_vals)) if finite_vals.size > 0 else 1.0
+                if vmin == vmax:
+                    vmax += 1.0
+                cbar_label = "Mean Intensity"
+
+            fig_w, fig_h = fig.get_size_inches()
+            fs = float(style_cfg.tick_size)
+            max_row_len = max((len(r) for r in safe_rows), default=8)
+            max_col_len = max((len(c) for c in safe_cols), default=8)
+            char_w_pts = fs * 0.58
+            left_margin = float(np.clip((max_row_len + 3.0) * (char_w_pts / 72.0) / fig_w, 0.16, 0.44))
+            rad = math.radians(max(15, int(style_cfg.tick_rotation)))
+            bottom_margin = float(
+                np.clip((max_col_len * math.sin(rad) + 2.5) * (char_w_pts / 72.0) / fig_h, 0.14, 0.36)
+            )
+
+            if show_dendro and row_link is not None and col_link is not None:
+                from scipy.cluster import hierarchy
+
+                gs = gridspec.GridSpec(
+                    2,
+                    3,
+                    figure=fig,
+                    left=left_margin,
+                    right=0.92,
+                    bottom=bottom_margin,
+                    top=0.90,
+                    width_ratios=[0.80, 0.15, 0.05],
+                    height_ratios=[0.14, 0.86],
+                    wspace=0.02,
+                    hspace=0.02,
+                )
+                ax_col_d = fig.add_subplot(gs[0, 0])
+                ax_blank1 = fig.add_subplot(gs[0, 1])
+                ax_blank2 = fig.add_subplot(gs[0, 2])
+                ax = fig.add_subplot(gs[1, 0])
+                ax_row_d = fig.add_subplot(gs[1, 1])
+                ax_cbar = fig.add_subplot(gs[1, 2])
+
+                for b_ax in (ax_blank1, ax_blank2):
+                    b_ax.axis("off")
+                    b_ax.set_facecolor(bg)
+
+                dendro_color = "#64B5F6" if preset.get("is_dark", True) else "#2B5B84"
+                hierarchy.dendrogram(
+                    col_link,
+                    orientation="top",
+                    ax=ax_col_d,
+                    no_labels=True,
+                    color_threshold=0,
+                    above_threshold_color=dendro_color,
+                )
+                ax_col_d.set_facecolor(bg)
+                ax_col_d.set_xlim(0, 10 * n_cols)
+                ax_col_d.axis("off")
+
+                hierarchy.dendrogram(
+                    row_link,
+                    orientation="right",
+                    ax=ax_row_d,
+                    no_labels=True,
+                    color_threshold=0,
+                    above_threshold_color=dendro_color,
+                )
+                ax_row_d.set_facecolor(bg)
+                ax_row_d.set_ylim(10 * n_rows, 0)
+                ax_row_d.axis("off")
+            else:
+                gs = gridspec.GridSpec(
+                    1,
+                    2,
+                    figure=fig,
+                    left=left_margin,
+                    right=0.92,
+                    bottom=bottom_margin,
+                    top=0.90,
+                    width_ratios=[0.95, 0.05],
+                    wspace=0.03,
+                )
+                ax = fig.add_subplot(gs[0, 0])
+                ax_cbar = fig.add_subplot(gs[0, 1])
+
+            ax.set_facecolor(bg)
+            im = ax.imshow(
+                plot_vals,
+                aspect="auto",
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="nearest",
+            )
+            ax.set_xticks(np.arange(n_cols))
+            ax.set_yticks(np.arange(n_rows))
+            ax.set_xticklabels(
+                safe_cols,
+                rotation=int(style_cfg.tick_rotation),
+                ha="right",
+                fontsize=fs,
+                fontfamily=style_cfg.font_family,
+                color=fg,
+            )
+            ax.set_yticklabels(
+                safe_rows,
+                fontsize=fs,
+                fontfamily=style_cfg.font_family,
+                color=fg,
+            )
+
+            if show_values and n_rows <= 35 and n_cols <= 40:
+                val_fs = max(6.5, fs - 2.0)
+                for r in range(n_rows):
+                    for c in range(n_cols):
+                        val = plot_vals[r, c]
+                        txt = f"{val:.2f}" if is_zscore else f"{val:.1f}"
+                        rgba = cmap((val - vmin) / max(1e-8, vmax - vmin))
+                        lum = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+                        tc = "black" if lum > 0.55 else "white"
+                        ax.text(
+                            c,
+                            r,
+                            txt,
+                            ha="center",
+                            va="center",
+                            fontsize=val_fs,
+                            color=tc,
+                            fontweight="bold",
+                            fontfamily=style_cfg.font_family,
+                        )
+
+            cbar = fig.colorbar(im, cax=ax_cbar)
+            cbar.set_label(
+                cbar_label,
+                color=fg,
+                fontsize=float(style_cfg.label_size),
+                fontfamily=style_cfg.font_family,
+            )
+            cbar.ax.yaxis.set_tick_params(color=fg, labelcolor=fg, labelsize=fs)
+
+            title_txt = style_cfg.title or f"Marker Expression ({dataset_name})"
+            ax.set_title(
+                title_txt,
+                color=fg,
+                fontsize=float(style_cfg.title_size),
+                fontweight="bold" if style_cfg.bold_title else "normal",
+                fontfamily=style_cfg.font_family,
+            )
+            ax.set_xlabel(
+                style_cfg.xlabel or "Markers",
+                color=fg,
+                fontsize=float(style_cfg.label_size),
+                fontweight="bold" if style_cfg.bold_labels else "normal",
+                fontfamily=style_cfg.font_family,
+            )
+            ax.set_ylabel(
+                style_cfg.ylabel or celltype_col,
+                color=fg,
+                fontsize=float(style_cfg.label_size),
+                fontweight="bold" if style_cfg.bold_labels else "normal",
+                fontfamily=style_cfg.font_family,
+            )
+
+        if self.pub_studio_dialog is not None:
+            self.pub_studio_dialog.close()
+
+        self.pub_studio_dialog = PublicationPlotStudioDialog(
+            plot_fn=_plot_heatmap,
+            summary_df=mat_df,
+            categories=categories,
+            config=cfg,
+            title="Marker Expression Heatmap — Figure Studio",
+            metadata={"Dataset": dataset_name, "Mode": self.current_mode, "GroupBy": celltype_col},
+            parent=self,
+        )
+        iris_log("IRIS-Viewer", "Marker Expression", f"Opened Figure Studio ({mat_df.shape[0]}x{mat_df.shape[1]}).")
+        self.pub_studio_dialog.show()
+        self.pub_studio_dialog.raise_()
+        self.pub_studio_dialog.activateWindow()
+        return self.pub_studio_dialog
+
+    open_figure_studio = open_publication_studio
+
+    def closeEvent(self, event) -> None:
+        if getattr(self, "pub_studio_dialog", None) is not None:
+            try:
+                self.pub_studio_dialog.close()
+            except Exception:
+                pass
+        super().closeEvent(event)
 
     def update_data(
         self,

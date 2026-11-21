@@ -18,6 +18,7 @@ import pandas as pd
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
+from iris_common.logging import iris_log, log_warn
 from iris_viewer.core.layers import get_layer_base_name
 from iris_viewer.widgets.styles import DEFAULT_MARKER_COLORS
 
@@ -196,8 +197,9 @@ class ColorService:
                     c = color_map[layer_base.lower()]
                     self._apply_colormap_to_layer(layer, c)
 
+            unique_markers = len({k.lower() for k in color_map.keys()})
+            iris_log("IRIS-Viewer", "Color", f"Applied {unique_markers} marker color(s) from {Path(filepath).name}.")
             if show_dialog:
-                unique_markers = len({k.lower() for k in color_map.keys()})
                 QMessageBox.information(
                     ctx.control_widget, "Success",
                     f"Updated {unique_markers} marker color(s).",
@@ -282,8 +284,9 @@ class ColorService:
                     c = self.celltype_colors[layer_base.lower()]
                     self._apply_colormap_to_layer(layer, c)
 
+            unique_cts = len({k.lower() for k in color_map.keys()})
+            iris_log("IRIS-Viewer", "Color", f"Applied {unique_cts} cell type color(s) from {Path(filepath).name}.")
             if show_dialog:
-                unique_cts = len({k.lower() for k in color_map.keys()})
                 QMessageBox.information(
                     ctx.control_widget, "Success",
                     f"Updated {unique_cts} cell type color(s).",
@@ -324,7 +327,7 @@ class ColorService:
                 self.ctx.state.persistent_settings.setdefault(layer_base.lower(), {})["colormap"] = layer.colormap
                 self.ctx.state.persistent_settings.setdefault(layer_base.upper(), {})["colormap"] = layer.colormap
         except Exception as exc:
-            print(f"[IRIS-Viewer] Could not set colormap for {layer.name}: {exc}")
+            log_warn("IRIS-Viewer", "Color", f"Could not set colormap for {layer.name}: {exc}")
 
     def _apply_colormap_to_layers(self, cell_type: str, hex_color: str) -> None:
         """Push a new two-stop colormap to every canvas layer matching *cell_type*."""

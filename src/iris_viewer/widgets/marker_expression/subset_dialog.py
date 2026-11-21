@@ -20,6 +20,13 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
 )
 
+from iris_viewer.widgets.styles import (
+    BUTTON_CTA,
+    BUTTON_SECONDARY,
+    DIALOG_DARK_THEME,
+    style_section_header,
+)
+
 
 class SampleSubsetDialog(QDialog):
     """Modal dialog allowing users to select a custom subset of samples."""
@@ -30,25 +37,23 @@ class SampleSubsetDialog(QDialog):
         self.resize(380, 440)
         self.selected_samples: Set[str] = set(current_selected)
 
-        self.setStyleSheet("""
-            QDialog { background-color: #1f232b; color: #E0E0E0; font-size: 12px; }
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 3px; padding: 5px 10px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-            QListWidget {
-                background-color: #14161d; color: white; border: 1px solid #444;
-                border-radius: 3px; padding: 4px;
-            }
-        """)
+        self.setStyleSheet(DIALOG_DARK_THEME)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Choose samples to include in marker expression profile:"))
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        lbl_prompt = QLabel("Choose samples to include in marker expression profile:")
+        style_section_header(lbl_prompt, subtitle=True)
+        layout.addWidget(lbl_prompt)
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
         btn_all = QPushButton("Select All")
+        btn_all.setMinimumHeight(28)
         btn_none = QPushButton("Select None")
+        btn_none.setStyleSheet(BUTTON_SECONDARY)
+        btn_none.setMinimumHeight(28)
         btn_all.clicked.connect(self._select_all)
         btn_none.clicked.connect(self._select_none)
         btn_row.addWidget(btn_all)
@@ -64,9 +69,14 @@ class SampleSubsetDialog(QDialog):
         layout.addWidget(self.list_widget)
 
         action_row = QHBoxLayout()
+        action_row.setSpacing(8)
         action_row.addStretch()
-        btn_ok = QPushButton("Apply")
         btn_cancel = QPushButton("Cancel")
+        btn_cancel.setStyleSheet(BUTTON_SECONDARY)
+        btn_cancel.setMinimumHeight(28)
+        btn_ok = QPushButton("Apply")
+        btn_ok.setStyleSheet(BUTTON_CTA)
+        btn_ok.setMinimumHeight(28)
         btn_ok.clicked.connect(self._on_apply)
         btn_cancel.clicked.connect(self.reject)
         action_row.addWidget(btn_cancel)

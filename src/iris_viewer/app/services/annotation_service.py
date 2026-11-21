@@ -13,6 +13,7 @@ from pathlib import Path
 
 from qtpy.QtWidgets import QMessageBox
 
+from iris_common.logging import iris_log
 from iris_viewer.io.data_adapter import IrisDataAdapter
 
 
@@ -100,6 +101,18 @@ class AnnotationService:
                     markers=ctx.state.markers or adapter.markers,
                 )
 
+
+        n_samples = (
+            int(adapter.normalised["Image"].nunique())
+            if "Image" in adapter.normalised.columns
+            else 1
+        )
+        iris_log(
+            "IRIS-Viewer",
+            "Annotation",
+            f"Loaded {len(adapter.normalised):,} cells across {n_samples} sample(s) "
+            f"from {Path(file_path).name}.",
+        )
 
         QMessageBox.information(
             ctx.control_widget, "Annotation Loaded",

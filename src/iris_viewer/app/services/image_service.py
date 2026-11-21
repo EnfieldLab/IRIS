@@ -15,6 +15,7 @@ from napari.qt import thread_worker
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
+from iris_common.logging import iris_log, log_error, log_warn
 from iris_viewer.app.services.color_service import ColorService
 from iris_viewer.io.loaders import (
     discover_image_files,
@@ -104,6 +105,14 @@ class ImageService:
         ctx.control_widget.update_sample_list(sample_names)
         if hasattr(ctx, 'comparison_widget'):
             ctx.comparison_widget.update_sample_list(sample_names)
+        if hasattr(ctx, "segmentation_panel") and hasattr(ctx.segmentation_panel, "sync_sample_scope"):
+            ctx.segmentation_panel.sync_sample_scope(sample_names, active_samples=sample_names[:1])
+
+        iris_log(
+            "IRIS-Viewer",
+            "ImageLoader",
+            f"Discovered {len(sample_names)} sample(s) in {dir_path}.",
+        )
 
         if sample_names:
             ctx.control_widget.combo_sample.setCurrentIndex(0)
@@ -131,7 +140,7 @@ class ImageService:
 
         worker = _load()
         worker.returned.connect(lambda res: self._on_image_loaded(res, sample_name))
-        if hasattr(ctx, "track_worker"):
+        if callable(getattr(ctx, "track_worker", None)):
             ctx.track_worker(
                 worker,
                 on_error=lambda exc: self._on_image_load_error(exc, sample_name),
@@ -147,7 +156,7 @@ class ImageService:
     def _on_image_load_error(self, exc: Exception, sample_name: str) -> None:
         """Handle image loading failure gracefully with user feedback."""
         ctx = self.ctx
-        print(f"[Image Error] Failed to load sample '{sample_name}': {exc}")
+        log_error("IRIS-Viewer", "ImageLoader", f"Failed to load sample '{sample_name}': {exc}")
         if hasattr(ctx, "control_widget"):
             QMessageBox.critical(
                 ctx.control_widget,
@@ -274,9 +283,20 @@ class ImageService:
                             new_a, _ = recompute_area_from_vertices(t_lyr.data[0], m_shape, s_val)
                             ctx.state.areas_map[sample_name] = new_a
             except Exception as exc:
-                print(f"[IRIS-Viewer] Failed to load boundary for {sample_name}: {exc}")
+                log_warn("IRIS-Viewer", "Boundary", f"Failed to load boundary for {sample_name}: {exc}")
+
+        if hasattr(ctx, "segmentation_panel") and hasattr(ctx.segmentation_panel, "sync_sample_scope"):
+            all_samples = sorted(ctx.state.file_map.keys()) if ctx.state.file_map else [sample_name]
+            if sample_name not in all_samples:
+                all_samples.append(sample_name)
+            ctx.segmentation_panel.sync_sample_scope(all_samples, active_samples=[sample_name])
 
         h, w = raw_image.shape[-2], raw_image.shape[-1]
+        iris_log(
+            "IRIS-Viewer",
+            "ImageLoader",
+            f"Loaded sample '{sample_name}' ({n_channels} ch, {w}x{h}).",
+        )
         ctx.control_widget.update_dashboard(
             image_dims=f"{w} × {h}",
             num_channels=str(n_channels),
@@ -317,19 +337,16 @@ class ImageService:
         if mask_data is None:
             return
 
-        def _add_labels(data: np.ndarray, name: str):
+        def _add_labels(data: np.ndarray, name: str, opacity: float = 0.8):
+            layer = ctx.viewer.add_labels(
+                data, name=name, opacity=opacity, visible=True,
+                scale=(scale_val, scale_val),
+                metadata={"sample_name": sample_name, "segmentation_name": name, "layer_type": "segmentation"},
+            )
             try:
-                layer = ctx.viewer.add_labels(
-                    data, name=name, opacity=1.0, visible=True,
-                    contour=1, scale=(scale_val, scale_val),
-                    metadata={"sample_name": sample_name, "segmentation_name": name, "layer_type": "segmentation"},
-                )
-            except TypeError:
-                layer = ctx.viewer.add_labels(
-                    data, name=name, opacity=1.0, visible=True,
-                    scale=(scale_val, scale_val),
-                    metadata={"sample_name": sample_name, "segmentation_name": name, "layer_type": "segmentation"},
-                )
+                layer.contour = 0
+            except Exception:
+                pass
             if sample_name not in ctx.state.sample_layers_map:
                 ctx.state.sample_layers_map[sample_name] = []
             ctx.state.sample_layers_map[sample_name].append(layer)
@@ -342,11 +359,14 @@ class ImageService:
             for ch in range(mask_data.shape[0]):
                 if ch == 0:
                     lname = "Nuclear Segmentation"
+                    opac = 0.8
                 elif ch == 1:
                     lname = "Cytoplasm Segmentation"
+                    opac = 0.5
                 else:
                     lname = f"Segmentation Ch{ch}"
-                lyr = _add_labels(mask_data[ch], lname)
+                    opac = 0.5
+                lyr = _add_labels(mask_data[ch], lname, opacity=opac)
                 if ch > 0:
                     lyr.visible = False
             ctx.state.segmentation_results["Loaded"] = {
@@ -356,7 +376,7 @@ class ImageService:
             ctx.state.current_mask = mask_data[0]
             ctx.state.masks_map[sample_name] = mask_data[0]
         else:
-            _add_labels(mask_data, "Nuclear Segmentation")
+            _add_labels(mask_data, "Nuclear Segmentation", opacity=0.8)
             ctx.state.segmentation_results["Loaded"] = {
                 'nuclear': mask_data, 'cytoplasm': None,
             }
@@ -387,7 +407,6 @@ class ImageService:
         ctx = self.ctx
         try:
             ctx.viewer.scale_bar.visible = False
-            ctx.viewer.scale_bar.unit = "µm" if scale_val != 1.0 else "px"
         except AttributeError:
             pass
 

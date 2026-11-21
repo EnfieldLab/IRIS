@@ -43,7 +43,6 @@ from qtpy.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -61,8 +60,27 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from iris_common.logging import iris_log
+from iris_common.widgets.sample_scope import (
+    SCOPE_ACTIVE,
+    SCOPE_ALL,
+    SCOPE_SELECTED,
+    _normalize_sample_name,
+)
+from iris_common.widgets.theme import (
+    BUTTON_CTA,
+    BUTTON_DANGER,
+    BUTTON_SECONDARY,
+    BUTTON_STUDIO,
+    DIALOG_DARK_THEME,
+    create_section_card,
+    style_section_header,
+)
 from iris_viewer.widgets.phenotyping.hierarchy import GatingHierarchyNode
-from iris_viewer.widgets.phenotyping.sample_impact_dialog import SampleImpactDialog
+from iris_viewer.widgets.phenotyping.sample_impact_dialog import (
+    SampleImpactDialog,
+    _ScopeComboBox,
+)
 from iris_viewer.widgets.phenotyping.thresholding import (
     compute_optimal_threshold,
     find_sample_column,
@@ -90,30 +108,7 @@ class GatingStudioDialog(QDialog):
         self.resize(1260, 840)
         self.setMinimumSize(980, 680)
         self.setWindowFlags(self.windowFlags() | Qt.Window)
-
-        self.setStyleSheet("""
-            QDialog { background-color: #1a1d24; color: #E0E0E0; font-size: 12px; }
-            QGroupBox { border: 1px solid #444; border-radius: 8px; margin-top: 6px; padding-top: 6px; font-weight: bold; color: #DDD; }
-            QPushButton {
-                background-color: #2D5F8B; color: white; font-weight: bold;
-                border: 1px solid #4B82B5; border-radius: 4px; padding: 5px 10px; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #3D75A8; }
-            QPushButton:disabled { background-color: #2A3A4A; color: #777; }
-            QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
-                background-color: #2A2A2A; color: white; border: 1px solid #555;
-                border-radius: 4px; padding: 3px 6px; font-size: 12px;
-            }
-            QLabel { color: #DDD; font-size: 12px; }
-            QTableWidget, QTreeWidget {
-                background-color: #2A2A2A; color: white; gridline-color: #444;
-                border: 1px solid #555; border-radius: 6px;
-            }
-            QHeaderView::section {
-                background-color: #333; color: white; padding: 4px;
-                border: 1px solid #444; font-weight: bold;
-            }
-        """)
+        self.setStyleSheet(DIALOG_DARK_THEME)
 
         self.poly_selector: Optional[PolygonSelector] = None
         self.rect_selector: Optional[RectangleSelector] = None
@@ -137,13 +132,14 @@ class GatingStudioDialog(QDialog):
 
         top_bar = QHBoxLayout()
         self.lbl_status = QLabel("Ready. Adjust cutoff lines or draw a shape gate over positive cell populations.")
-        self.lbl_status.setStyleSheet("color: #76FF03; font-size: 12px; font-style: italic; padding: 2px 4px;")
+        self.lbl_status.setStyleSheet("color: #66BB6A; font-size: 12px; font-style: italic; padding: 2px 4px;")
         top_bar.addWidget(self.lbl_status)
         top_bar.addStretch(1)
 
         self.btn_open_impact = QPushButton("Cross-Sample Assessment...")
         self.btn_open_impact.setToolTip("Open multi-sample cohort distribution impact window")
-        self.btn_open_impact.setStyleSheet("background-color: #3A6A9A; color: white; font-weight: bold; padding: 4px 10px;")
+        self.btn_open_impact.setStyleSheet(BUTTON_STUDIO)
+        self.btn_open_impact.setMinimumHeight(28)
         self.btn_open_impact.clicked.connect(self._open_impact_window)
         top_bar.addWidget(self.btn_open_impact)
         left_layout.addLayout(top_bar)
@@ -155,11 +151,13 @@ class GatingStudioDialog(QDialog):
 
         if NavigationToolbar is not None:
             self.toolbar = NavigationToolbar(self.canvas, self)
-            self.toolbar.setStyleSheet("""
-                QToolBar { background-color: #1f232b; border: 1px solid #333; spacing: 4px; padding: 2px; }
-                QToolButton { background-color: transparent; border: 1px solid transparent; border-radius: 3px; padding: 3px; }
-                QToolButton:hover { background-color: #3A6A9A; border: 1px solid #558; }
-            """)
+            self.toolbar.setStyleSheet(
+                "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
+                "spacing: 4px; padding: 2px; }"
+                "QToolButton { background-color: transparent; border: 1px solid transparent; "
+                "border-radius: 3px; padding: 3px; }"
+                "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
+            )
             left_layout.addWidget(self.toolbar)
 
         left_layout.addWidget(self.canvas, 1)
@@ -224,14 +222,7 @@ class GatingStudioDialog(QDialog):
 
     # Projection & Scope Group
     def _build_projection_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Gating Projection & Scope")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Gating Projection & Scope")
 
         row_parent = QHBoxLayout()
         row_parent.addWidget(QLabel("Parent Gate:"))
@@ -243,8 +234,8 @@ class GatingStudioDialog(QDialog):
 
         row_scope = QHBoxLayout()
         row_scope.addWidget(QLabel("Sample Scope:"))
-        self.combo_scope = QComboBox()
-        self.combo_scope.addItems(["All Samples (Cohort)", "Selected Sample", "Actively Loaded Sample"])
+        self.combo_scope = _ScopeComboBox()
+        self.combo_scope.addItems([SCOPE_ALL, SCOPE_SELECTED, SCOPE_ACTIVE])
         self.combo_scope.currentIndexChanged.connect(self._on_scope_changed)
         row_scope.addWidget(self.combo_scope)
         layout.addLayout(row_scope)
@@ -281,6 +272,8 @@ class GatingStudioDialog(QDialog):
 
         # Dedicated container for Marker Z (strictly hidden in 2D mode)
         self.container_z = QWidget()
+        self.container_z.setObjectName("irisCardRow")
+        self.container_z.setStyleSheet("QWidget#irisCardRow { background-color: transparent; }")
         row_z = QHBoxLayout(self.container_z)
         row_z.setContentsMargins(0, 0, 0, 0)
         row_z.addWidget(QLabel("Marker Z:"))
@@ -303,14 +296,7 @@ class GatingStudioDialog(QDialog):
 
     # Threshold Lines Group
     def _build_cutoffs_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Thresholds & Gating Cutoffs")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Thresholds & Gating Cutoffs")
 
         # Threshold X with Auto Buttons
         row_tx = QHBoxLayout()
@@ -356,6 +342,8 @@ class GatingStudioDialog(QDialog):
 
         # Threshold Z (3D container)
         self.container_tz = QWidget()
+        self.container_tz.setObjectName("irisCardRow")
+        self.container_tz.setStyleSheet("QWidget#irisCardRow { background-color: transparent; }")
         row_tz = QHBoxLayout(self.container_tz)
         row_tz.setContentsMargins(0, 0, 0, 0)
         row_tz.addWidget(QLabel("Z Cutoff:"))
@@ -374,6 +362,7 @@ class GatingStudioDialog(QDialog):
         layout.addWidget(self.lbl_quad_stats)
 
         self.table_quads = QTableWidget(4, 2)
+        self.table_quads.setAlternatingRowColors(True)
         self.table_quads.setHorizontalHeaderLabels(["Population", "Cells (% Parent)"])
         self.table_quads.verticalHeader().setVisible(False)
         self.table_quads.verticalHeader().setDefaultSectionSize(26)
@@ -393,27 +382,20 @@ class GatingStudioDialog(QDialog):
         btn_row.addWidget(self.btn_draw_poly)
 
         self.btn_clear_poly = QPushButton("Clear Shape")
-        self.btn_clear_poly.setStyleSheet("background-color: #555;")
+        self.btn_clear_poly.setStyleSheet(BUTTON_SECONDARY)
         self.btn_clear_poly.clicked.connect(self._clear_polygon)
         btn_row.addWidget(self.btn_clear_poly)
         layout.addLayout(btn_row)
 
         self.lbl_poly_status = QLabel("Shape Gate: None defined")
-        self.lbl_poly_status.setStyleSheet("color: #888; font-size: 11px; font-style: italic;")
+        style_section_header(self.lbl_poly_status, subtitle=True)
         layout.addWidget(self.lbl_poly_status)
 
         self.scroll_layout.addWidget(box)
 
     # Phenotype Assignment Group
     def _build_assignment_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Phenotype Classification & Gating")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Phenotype Classification & Gating")
 
         row_pop = QHBoxLayout()
         row_pop.addWidget(QLabel("Target Gate:"))
@@ -451,27 +433,25 @@ class GatingStudioDialog(QDialog):
         self.btn_apply = QPushButton("Apply Gate to Cells")
         self.btn_apply.setAutoDefault(False)
         self.btn_apply.setDefault(False)
-        self.btn_apply.setStyleSheet("""
-            QPushButton {
-                background-color: #2D6A4F; color: white; font-weight: bold;
-                border-radius: 4px; padding: 7px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #40916C; }
-        """)
+        self.btn_apply.setStyleSheet(BUTTON_CTA)
+        self.btn_apply.setMinimumHeight(28)
         self.btn_apply.clicked.connect(self._apply_gate)
         layout.addWidget(self.btn_apply)
 
         self.lbl_apply_feedback = QLabel("")
-        self.lbl_apply_feedback.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+        self.lbl_apply_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
         layout.addWidget(self.lbl_apply_feedback)
 
         self.scroll_layout.addWidget(box)
 
     # Sequential Gating Hierarchy Tab
     def _build_hierarchy_tree_tab(self, layout: QVBoxLayout):
-        desc = QLabel("Sequential gating hierarchy (FlowJo-style sub-gating tree). Double click a population to gate within it.")
+        desc = QLabel(
+            "Sequential gating hierarchy (FlowJo-style sub-gating tree). "
+            "Double click a population to gate within it."
+        )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #AAA; font-size: 11px;")
+        style_section_header(desc, subtitle=True)
         layout.addWidget(desc)
 
         self.tree_hierarchy = QTreeWidget()
@@ -482,20 +462,24 @@ class GatingStudioDialog(QDialog):
 
         btn_row = QHBoxLayout()
         self.btn_gate_on_selected = QPushButton("Gate on Selected")
-        self.btn_gate_on_selected.setToolTip("Set selected population as the active parent for subsequent sub-gating")
+        self.btn_gate_on_selected.setToolTip(
+            "Set selected population as the active parent for subsequent sub-gating"
+        )
         self.btn_gate_on_selected.clicked.connect(self._gate_on_tree_selection)
         btn_row.addWidget(self.btn_gate_on_selected)
 
         self.btn_apply_hierarchy = QPushButton("Apply Tree to Canvas")
-        self.btn_apply_hierarchy.setStyleSheet("background-color: #2D6A4F; color: white; font-weight: bold;")
-        self.btn_apply_hierarchy.setToolTip("Flatten tree and write classified leaf populations to dataset and Napari canvas")
+        self.btn_apply_hierarchy.setStyleSheet(BUTTON_CTA)
+        self.btn_apply_hierarchy.setToolTip(
+            "Flatten tree and write classified leaf populations to dataset and Napari canvas"
+        )
         self.btn_apply_hierarchy.clicked.connect(self._apply_entire_hierarchy)
         btn_row.addWidget(self.btn_apply_hierarchy)
         layout.addLayout(btn_row)
 
         btn_row2 = QHBoxLayout()
         self.btn_delete_gate = QPushButton("Delete Gate")
-        self.btn_delete_gate.setStyleSheet("background-color: #5A2A2A; color: white;")
+        self.btn_delete_gate.setStyleSheet(BUTTON_DANGER)
         self.btn_delete_gate.clicked.connect(self._delete_selected_tree_gate)
         btn_row2.addWidget(self.btn_delete_gate)
 
@@ -507,6 +491,7 @@ class GatingStudioDialog(QDialog):
     # History Tab
     def _build_history_tab(self, layout: QVBoxLayout):
         self.table_history = QTableWidget(0, 4)
+        self.table_history.setAlternatingRowColors(True)
         self.table_history.setHorizontalHeaderLabels(["Gate / Label", "Cells", "% Total", "Markers"])
         self.table_history.verticalHeader().setVisible(False)
         self.table_history.horizontalHeader().setStretchLastSection(True)
@@ -514,7 +499,7 @@ class GatingStudioDialog(QDialog):
 
         btn_row = QHBoxLayout()
         self.btn_clear_gates = QPushButton("Reset Gate History")
-        self.btn_clear_gates.setStyleSheet("background-color: #5A2A2A; color: white;")
+        self.btn_clear_gates.setStyleSheet(BUTTON_DANGER)
         self.btn_clear_gates.clicked.connect(self._clear_applied_gates)
         btn_row.addWidget(self.btn_clear_gates)
 
@@ -603,7 +588,7 @@ class GatingStudioDialog(QDialog):
         if hasattr(self, 'combo_sample'):
             if scope.startswith("Selected"):
                 self.combo_sample.setEnabled(True)
-            elif scope.startswith("Actively"):
+            elif scope.startswith("Active"):
                 self.combo_sample.setEnabled(False)
                 act = self.host_widget._get_active_sample() if self.host_widget else None
                 if act:
@@ -619,7 +604,7 @@ class GatingStudioDialog(QDialog):
     def _on_sample_changed(self):
         if hasattr(self, 'combo_scope') and not self.combo_scope.currentText().startswith("Selected"):
             self.combo_scope.blockSignals(True)
-            self.combo_scope.setCurrentText("Selected Sample")
+            self.combo_scope.setCurrentText(SCOPE_SELECTED)
             self.combo_scope.blockSignals(False)
             if hasattr(self, 'combo_sample'):
                 self.combo_sample.setEnabled(True)
@@ -748,6 +733,36 @@ class GatingStudioDialog(QDialog):
             return self.host_widget.get_active_dataframe()
         return None
 
+    def _scope_row_mask(self, df: pd.DataFrame) -> np.ndarray:
+        scope = self.combo_scope.currentText()
+        sample_col = find_sample_column(df)
+        if not sample_col:
+            return np.ones(len(df), dtype=bool)
+        targets: list[str] = []
+        if scope.startswith("Selected"):
+            if self.host_widget and getattr(self.host_widget, "_scoped_samples", None):
+                targets = list(self.host_widget._scoped_samples)
+            elif hasattr(self, "combo_sample"):
+                sel = self.combo_sample.currentText().strip()
+                if sel:
+                    targets = [sel]
+        elif scope.startswith("Active"):
+            if self.host_widget and hasattr(self.host_widget, "_get_active_samples"):
+                targets = self.host_widget._get_active_samples()
+            else:
+                act = self._get_active_sample()
+                if act:
+                    targets = [str(act)]
+        else:
+            return np.ones(len(df), dtype=bool)
+
+        if not targets:
+            return np.zeros(len(df), dtype=bool) if scope.startswith("Selected") else np.ones(len(df), dtype=bool)
+        exact = {str(t).strip() for t in targets}
+        norms = {_normalize_sample_name(t) for t in targets if _normalize_sample_name(t)}
+        vals = df[sample_col].astype(str).str.strip()
+        return (vals.isin(exact) | vals.map(_normalize_sample_name).isin(norms)).to_numpy()
+
     def _get_filtered_parent_data(self) -> Optional[pd.DataFrame]:
         df = self._get_raw_data()
         if df is None or df.empty:
@@ -762,22 +777,7 @@ class GatingStudioDialog(QDialog):
                     df = df[node.cell_mask].copy()
 
         # Filter by sample scope
-        scope = self.combo_scope.currentText()
-        sample_col = find_sample_column(df)
-        if sample_col:
-            if scope.startswith("Selected"):
-                sel = self.combo_sample.currentText().strip() if hasattr(self, 'combo_sample') else ""
-                if sel and sel in df[sample_col].values:
-                    df = df[df[sample_col] == sel]
-                elif self.host_widget and hasattr(self.host_widget, '_get_selected_samples'):
-                    sel_list = self.host_widget._get_selected_samples()
-                    if sel_list:
-                        df = df[df[sample_col].isin(sel_list)]
-            elif scope.startswith("Actively") and self.host_widget and hasattr(self.host_widget, '_get_active_sample'):
-                act = self.host_widget._get_active_sample()
-                if act and act in df[sample_col].values:
-                    df = df[df[sample_col] == act]
-
+        df = df[self._scope_row_mask(df)]
         return df
 
     def _transform_vector(self, arr: np.ndarray) -> np.ndarray:
@@ -873,7 +873,7 @@ class GatingStudioDialog(QDialog):
 
             if self.polygon_vertices is not None and len(self.polygon_vertices) > 2:
                 patch = plt.Polygon(self.polygon_vertices, closed=True, fill=True,
-                                    facecolor='#76FF03', alpha=0.25, edgecolor='#76FF03', linewidth=2.0)
+                                    facecolor='#66BB6A', alpha=0.25, edgecolor='#66BB6A', linewidth=2.0)
                 ax.add_patch(patch)
 
             self.ax = ax
@@ -952,7 +952,7 @@ class GatingStudioDialog(QDialog):
                 p_cnt = in_poly.sum()
                 p_pct = (p_cnt / total) * 100.0 if total > 0 else 0.0
                 self.lbl_poly_status.setText(f"Shape Gate: {p_cnt:,} cells ({p_pct:.1f}% of {total:,})")
-                self.lbl_poly_status.setStyleSheet("color: #76FF03; font-size: 11px; font-weight: bold;")
+                self.lbl_poly_status.setStyleSheet("color: #66BB6A; font-size: 11px; font-weight: bold;")
 
         self.canvas.draw_idle()
         self._update_impact_window_live()
@@ -1011,7 +1011,7 @@ class GatingStudioDialog(QDialog):
             return
 
         self.btn_draw_poly.setText("Drawing Mode Active...")
-        self.btn_draw_poly.setStyleSheet("background-color: #388E3C; color: white; font-weight: bold;")
+        self.btn_draw_poly.setStyleSheet(BUTTON_CTA)
         self.lbl_status.setText("Click to add polygon vertices. Double click or press Enter to close.")
 
         def on_select(vertices):
@@ -1024,7 +1024,7 @@ class GatingStudioDialog(QDialog):
         self.poly_selector = PolygonSelector(
             self.ax,
             on_select,
-            props=dict(color='#76FF03', linestyle='-', linewidth=2, alpha=0.9),
+            props=dict(color='#66BB6A', linestyle='-', linewidth=2, alpha=0.9),
             draw_bounding_box=False
         )
 
@@ -1100,25 +1100,14 @@ class GatingStudioDialog(QDialog):
         else:
             final_mask = gate_mask
 
-        # Filter by sample scope if Selected or Actively loaded
-        if hasattr(self, 'combo_scope'):
-            scope = self.combo_scope.currentText()
-            scol = find_sample_column(raw_df)
-            if scol:
-                if scope.startswith("Selected") and hasattr(self, 'combo_sample'):
-                    sel = self.combo_sample.currentText().strip()
-                    if sel and sel in raw_df[scol].astype(str).values:
-                        final_mask = final_mask & (raw_df[scol].astype(str) == sel).to_numpy()
-                elif scope.startswith("Actively"):
-                    act = self._get_active_sample()
-                    if act and str(act) in raw_df[scol].astype(str).values:
-                        final_mask = final_mask & (raw_df[scol].astype(str) == str(act)).to_numpy()
+        # Filter by sample scope if Selected or Active
+        final_mask = final_mask & self._scope_row_mask(raw_df)
 
         match_count = int(final_mask.sum())
         if match_count == 0:
             if hasattr(self, 'lbl_apply_feedback'):
-                self.lbl_apply_feedback.setText("⚠ No cells matched this gating cutoff.")
-                self.lbl_apply_feedback.setStyleSheet("color: #FF5252; font-weight: bold; font-size: 11px;")
+                self.lbl_apply_feedback.setText("No cells matched this gating cutoff.")
+                self.lbl_apply_feedback.setStyleSheet("color: #E57373; font-weight: bold; font-size: 11px;")
             return
 
         target_col = self.combo_col.currentText().strip() or "CellType"
@@ -1164,11 +1153,17 @@ class GatingStudioDialog(QDialog):
             'mask': final_mask,
         }
         self.gateApplied.emit(gate_info)
+        iris_log(
+            "IRIS-Phenotyper",
+            "Manual Gating",
+            f"Applied studio gate '{label_name}' ({mx}/{my}) to {match_count:,} cells -> '{target_col}'.",
+        )
 
         if hasattr(self, 'lbl_apply_feedback'):
-            self.lbl_apply_feedback.setText(f"✓ Gate applied: {match_count:,} cells ({pct:.1f}% of cohort) -> '{label_name}'")
+            self.lbl_apply_feedback.setText(f"Gate applied: {match_count:,} cells ({pct:.1f}% of cohort) -> '{label_name}'")
+            self.lbl_apply_feedback.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
         self.lbl_status.setText(f"Gate '{label_name}' applied. Continue gating child subsets or adjust cutoffs.")
-        self.lbl_status.setStyleSheet("color: #76FF03; font-weight: bold; font-size: 11px;")
+        self.lbl_status.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 11px;")
         self._render_plot()
 
     def _get_active_sample(self) -> Optional[str]:

@@ -16,7 +16,6 @@ from qtpy.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -30,7 +29,11 @@ from qtpy.QtWidgets import (
 from iris_viewer.widgets.canvas_legend import CanvasLegendOverlay
 from iris_viewer.widgets.canvas_scalebar import CanvasScaleBarOverlay
 from iris_viewer.widgets.multi_sample import MultiSampleComparisonWidget
-from iris_viewer.widgets.styles import SHARED_DARK_THEME
+from iris_viewer.widgets.styles import (
+    BUTTON_CTA,
+    SHARED_DARK_THEME,
+    create_section_card,
+)
 
 
 class ImageControlWidget(QWidget):
@@ -97,14 +100,7 @@ class ImageControlWidget(QWidget):
 
     # Image & Sample Input
     def _build_input_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Image Input")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Image Input")
 
         # Directory selection button
         self.btn_load_dir = QPushButton("Select Image Directory")
@@ -169,14 +165,7 @@ class ImageControlWidget(QWidget):
 
     # Annotations & Phenotyping
     def _build_annotation_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Annotations & Phenotyping")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Annotations & Phenotyping")
 
         # Load annotation file
         self.btn_load_anno = QPushButton("Load Annotation File")
@@ -232,14 +221,7 @@ class ImageControlWidget(QWidget):
 
     # Canvas Display & Overlays
     def _build_display_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Canvas Display & Overlays")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("Canvas Display & Overlays")
 
         # Physical Scale
         row_scale = QHBoxLayout()
@@ -425,14 +407,7 @@ class ImageControlWidget(QWidget):
 
     # Export & Output
     def _build_output_group(self):
-        self.output_group = QGroupBox()
-        layout = QVBoxLayout(self.output_group)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(8)
-
-        title = QLabel("Export")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        self.output_group, layout = create_section_card("Export")
 
         # In-built Napari Copy & Save buttons
         self.btn_copy_canvas = QPushButton("Copy Canvas to Clipboard (Alt+C)")
@@ -492,8 +467,11 @@ class ImageControlWidget(QWidget):
         self.btn_export_features.clicked.connect(self._on_export_features_clicked)
         grid.addWidget(self.btn_export_features, 0, 1)
 
-        self.btn_export_confidence = QPushButton("Export Confidence")
+        self.btn_export_confidence = QPushButton("Export Disagreement")
         self.btn_export_confidence.setMinimumHeight(28)
+        self.btn_export_confidence.setToolTip(
+            "Export multi-model segmentation disagreement heatmap"
+        )
         self.btn_export_confidence.clicked.connect(self._on_export_confidence_clicked)
         grid.addWidget(self.btn_export_confidence, 1, 0)
 
@@ -509,14 +487,7 @@ class ImageControlWidget(QWidget):
         # Batch Processing
         self.btn_batch = QPushButton("Batch Process All Samples")
         self.btn_batch.setMinimumHeight(32)
-        self.btn_batch.setStyleSheet("""
-            QPushButton {
-                background-color: #2D6A4F; color: white; font-weight: bold;
-                border-radius: 4px; padding: 6px; font-size: 12px;
-            }
-            QPushButton:hover { background-color: #40916C; }
-            QPushButton:disabled { background-color: #2A3A4A; color: #777; }
-        """)
+        self.btn_batch.setStyleSheet(BUTTON_CTA)
         self.btn_batch.clicked.connect(lambda: self.batchProcessTriggered.emit())
         layout.addWidget(self.btn_batch)
 
@@ -775,14 +746,7 @@ class ImageControlWidget(QWidget):
 
     # System & Compute
     def _build_compute_group(self):
-        box = QGroupBox()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 3, 10, 10)
-        layout.setSpacing(4)
-
-        title = QLabel("System & Compute")
-        title.setStyleSheet("color: #DDD; font-size: 14px; font-weight: bold; margin-top: 0px; padding-top: 0px;")
-        layout.addWidget(title)
+        box, layout = create_section_card("System & Compute", spacing=6)
 
         try:
             import torch

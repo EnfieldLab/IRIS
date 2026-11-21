@@ -1,5 +1,5 @@
 """
-Tests for core/state.py — session persistence and override undo stack.
+Tests for core/state.py — session persistence, active method selection, and reset behaviour.
 No Qt or napari required.
 """
 import tempfile
@@ -10,94 +10,97 @@ import pytest
 
 from iris_viewer.core.state import ViewerAppState
 
-# Helpers
 
 def _make_populated_state() -> ViewerAppState:
     st = ViewerAppState()
     st.image_dir = Path("/some/dir")
     st.markers = ["DAPI", "CD45", "CK"]
     st.current_sample_name = "sample_01"
-    st.per_cell_confidence = {1: 0.9, 2: 0.4, 3: 0.75}
-    st.cell_method_map = {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
-    st.manual_overrides = {2: "Cellpose"}
-    st.consensus_mask = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int32)
-    st.confidence_map = np.array([[0.0, 0.9, 0.4], [0.9, 0.4, 0.75]], dtype=np.float32)
+    nuc_cp = np.array([[0, 1, 2], [1, 2, 0]], dtype=np.uint32)
+    cyto_cp = np.array([[1, 1, 2], [1, 2, 2]], dtype=np.uint32)
+    nuc_sd = np.array([[0, 1, 0], [1, 0, 3]], dtype=np.uint32)
+    st.segmentation_results = {
+        "Cellpose": {"nuclear": nuc_cp, "cytoplasm": cyto_cp},
+        "StarDist": {"nuclear": nuc_sd, "cytoplasm": None},
+    }
+    st.set_active_segmentation_method("Cellpose")
+    st.raw_image = np.ones((3, 2, 3), dtype=np.float32)
+    st.disagreement_heatmap = np.array([[0.0, 0.5, 0.8], [0.1, 0.4, 0.9]], dtype=np.float32)
+    st.disagreement_report = {"flagged_regions": 2}
+    st.preview_roi_bbox = (0, 0, 2, 3)
     st.persistent_settings = {"foo": "bar"}
+    st.channel_colors = {"DAPI": "#0000FF"}
+    st.celltype_colors = {"Tumor": "#FF0000"}
     return st
 
-
-# Session Serialisation
 
 class TestSessionPersistence:
 
     def test_viewer_app_state_to_session_dict_fields(self):
         st = _make_populated_state()
-        d = st.to_session_dict(consensus_threshold=0.75)
+        d = st.to_session_dict(disagreement_threshold=0.75)
 
-        assert d["version"] == 1
+        assert d["version"] == 2
         assert d["image_dir"] == "/some/dir"
         assert d["markers"] == ["DAPI", "CD45", "CK"]
         assert d["current_sample_name"] == "sample_01"
-        assert d["consensus_threshold"] == 0.75
+        assert d["active_segmentation_method"] == "Cellpose"
+        assert d["disagreement_threshold"] == pytest.approx(0.75)
         assert d["persistent_settings"] == {"foo": "bar"}
+        assert d["channel_colors"] == {"DAPI": "#0000FF"}
+        assert d["celltype_colors"] == {"Tumor": "#FF0000"}
 
-    def test_viewer_app_state_per_cell_confidence_roundtrip(self):
+    def test_viewer_app_state_active_method_roundtrip(self):
         st = _make_populated_state()
         d = st.to_session_dict()
         restored = ViewerAppState.from_session_dict(d)
 
-        assert restored.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
-
-    def test_viewer_app_state_cell_method_map_roundtrip(self):
-        st = _make_populated_state()
-        d = st.to_session_dict()
-        restored = ViewerAppState.from_session_dict(d)
-
-        assert restored.cell_method_map == {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
-
-    def test_viewer_app_state_manual_overrides_roundtrip(self):
-        st = _make_populated_state()
-        d = st.to_session_dict()
-        restored = ViewerAppState.from_session_dict(d)
-
-        assert restored.manual_overrides == {2: "Cellpose"}
+        assert restored.active_segmentation_method == "Cellpose"
+        assert restored.current_sample_name == "sample_01"
 
     def test_viewer_app_state_numpy_arrays_not_serialised(self):
-        """Arrays must NOT end up in the session JSON."""
+        """Large numpy arrays and report objects must NOT end up in session JSON."""
         st = _make_populated_state()
         d = st.to_session_dict()
 
-        assert "consensus_mask" not in d
-        assert "raw_image" not in d
-        assert "confidence_map" not in d
+        for excluded in (
+            "raw_image",
+            "current_mask",
+            "cytoplasm_mask",
+            "segmentation_results",
+            "disagreement_heatmap",
+            "disagreement_report",
+            "preview_roi_bbox",
+        ):
+            assert excluded not in d
 
     def test_viewer_app_state_save_and_load_roundtrip(self):
         st = _make_populated_state()
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session.json"
-            st.save_session(path, consensus_threshold=0.6)
+            st.save_session(path, disagreement_threshold=0.6)
 
             assert path.is_file()
 
             restored, raw = ViewerAppState.load_session(path)
             assert restored.markers == ["DAPI", "CD45", "CK"]
-            assert restored.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
-            assert raw["consensus_threshold"] == pytest.approx(0.6)
+            assert restored.active_segmentation_method == "Cellpose"
+            assert raw["disagreement_threshold"] == pytest.approx(0.6)
 
     def test_viewer_app_state_load_with_missing_image_dir_does_not_raise(self):
         """Non-existent image_dir should not raise — it is a Path, not validated here."""
         data = {
-            "version": 1,
+            "version": 2,
             "image_dir": "/nonexistent/path",
             "markers": [],
             "current_sample_name": None,
-            "per_cell_confidence": {},
-            "manual_overrides": {},
+            "active_segmentation_method": None,
             "persistent_settings": {},
         }
         restored = ViewerAppState.from_session_dict(data)
         assert restored.image_dir == Path("/nonexistent/path")
+        assert restored.active_segmentation_method is None
 
     def test_viewer_app_state_empty_state_session_roundtrip(self):
         st = ViewerAppState()
@@ -105,55 +108,71 @@ class TestSessionPersistence:
 
         assert d["image_dir"] is None
         assert d["markers"] == []
+        assert d["active_segmentation_method"] is None
+        assert d["disagreement_threshold"] == pytest.approx(0.65)
 
         restored = ViewerAppState.from_session_dict(d)
         assert restored.markers == []
-        assert restored.per_cell_confidence == {}
+        assert restored.active_segmentation_method is None
 
 
-# Override Undo Stack
+class TestActiveMethodSelection:
 
-class TestOverrideHistory:
-
-    def test_viewer_app_state_snapshot_and_undo(self):
-        st = _make_populated_state()
-        orig_mask = st.consensus_mask.copy()
-
-        st.snapshot_override_state()
-
-        # Mutate state as an override would
-        st.consensus_mask = np.zeros_like(orig_mask)
-        st.per_cell_confidence = {}
-        st.manual_overrides = {}
-        st.cell_method_map = {}
-
-        success = st.undo_override()
-        assert success is True
-        np.testing.assert_array_equal(st.consensus_mask, orig_mask)
-        assert st.per_cell_confidence == {1: 0.9, 2: 0.4, 3: 0.75}
-        assert st.cell_method_map == {1: {"Cellpose": 10}, 2: {"StarDist": 12, "Cellpose": 14}}
-
-    def test_viewer_app_state_undo_when_empty_returns_false(self):
+    def test_legacy_consensus_attributes_removed(self):
         st = ViewerAppState()
-        assert st.undo_override() is False
+        for legacy_attr in (
+            "consensus_mask",
+            "confidence_map",
+            "per_cell_confidence",
+            "cell_method_map",
+            "manual_overrides",
+            "override_history",
+            "snapshot_override_state",
+            "undo_override",
+        ):
+            assert not hasattr(st, legacy_attr)
 
-    def test_viewer_app_state_maxlen_keeps_only_50_snapshots(self):
+    def test_set_and_get_active_segmentation_method(self):
         st = _make_populated_state()
-        for _ in range(60):
-            st.snapshot_override_state()
+        nuc, cyto = st.get_active_masks()
+        np.testing.assert_array_equal(nuc, st.segmentation_results["Cellpose"]["nuclear"])
+        np.testing.assert_array_equal(cyto, st.segmentation_results["Cellpose"]["cytoplasm"])
+        assert st.current_mask is nuc
+        assert st.cytoplasm_mask is cyto
 
-        assert len(st.override_history) == 50
+        nuc_sd, cyto_sd = st.set_active_segmentation_method("StarDist")
+        assert st.active_segmentation_method == "StarDist"
+        np.testing.assert_array_equal(nuc_sd, st.segmentation_results["StarDist"]["nuclear"])
+        assert cyto_sd is None
+        assert st.current_mask is nuc_sd
+        assert st.cytoplasm_mask is None
 
-    def test_viewer_app_state_reset_clears_history(self):
+    def test_set_active_method_missing_or_none_clears_masks(self):
         st = _make_populated_state()
-        st.snapshot_override_state()
-        st.reset_sample_state()
+        nuc, cyto = st.set_active_segmentation_method("NonExistent")
+        assert (nuc, cyto) == (None, None)
+        assert st.active_segmentation_method is None
+        assert st.current_mask is None
+        assert st.cytoplasm_mask is None
 
-        assert len(st.override_history) == 0
-        assert st.undo_override() is False
+        st.set_active_segmentation_method("Cellpose")
+        nuc2, cyto2 = st.set_active_segmentation_method(None)
+        assert (nuc2, cyto2) == (None, None)
+        assert st.active_segmentation_method is None
+        assert st.current_mask is None
+        assert st.cytoplasm_mask is None
 
+    def test_get_active_masks_falls_back_to_loaded_masks_when_no_active_method(self):
+        st = ViewerAppState()
+        loaded_nuc = np.array([[0, 1], [1, 0]], dtype=np.uint32)
+        loaded_cyto = np.array([[1, 1], [1, 0]], dtype=np.uint32)
+        st.current_mask = loaded_nuc
+        st.cytoplasm_mask = loaded_cyto
 
-# Reset Behaviour
+        nuc, cyto = st.get_active_masks()
+        assert nuc is loaded_nuc
+        assert cyto is loaded_cyto
+
 
 class TestStateReset:
 
@@ -163,12 +182,19 @@ class TestStateReset:
 
         assert st.raw_image is None
         assert st.segmentation_results == {}
-        assert st.consensus_mask is None
-        assert st.per_cell_confidence == {}
+        assert st.segmentation_status == {}
+        assert st.active_segmentation_method is None
+        assert st.disagreement_report is None
+        assert st.disagreement_heatmap is None
+        assert st.preview_roi_bbox is None
+        assert st.current_mask is None
+        assert st.cytoplasm_mask is None
         assert st.features_df is None
-        # image_dir and markers are preserved
+        # Global configuration preserved
         assert st.image_dir == Path("/some/dir")
         assert st.markers == ["DAPI", "CD45", "CK"]
+        assert st.channel_colors == {"DAPI": "#0000FF"}
+        assert st.celltype_colors == {"Tumor": "#FF0000"}
 
     def test_viewer_app_state_reset_all_clears_everything(self):
         st = _make_populated_state()
@@ -177,6 +203,10 @@ class TestStateReset:
         assert st.image_dir is None
         assert st.markers == []
         assert st.current_sample_name is None
+        assert st.active_segmentation_method is None
+        assert st.disagreement_report is None
+        assert st.disagreement_heatmap is None
+        assert st.preview_roi_bbox is None
 
     def test_viewer_app_state_channel_contrast_limits_cleared_on_reset(self):
         st = ViewerAppState()

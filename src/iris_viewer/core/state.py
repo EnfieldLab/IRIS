@@ -13,9 +13,8 @@ large numpy arrays (images, masks) must be reloaded from disk.
 from __future__ import annotations
 
 import json
-from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -41,23 +40,18 @@ class ViewerAppState:
         self.segmentation_results: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
         self.segmentation_status: Dict[str, str] = {}     # step_key -> status
 
-        # Consensus & Confidence
-        self.consensus_mask: Optional[np.ndarray] = None      # (H, W) label array
-        self.confidence_map: Optional[np.ndarray] = None      # (H, W) float [0, 1]
-        self.per_cell_confidence: Dict[int, float] = {}       # cell_id -> confidence
-        self.cell_method_map: Dict[int, Dict[str, int]] = {}  # cell_id -> {method: orig_id}
-        self.manual_overrides: Dict[int, str] = {}            # cell_id -> preferred method
-
-        # Override History (undo stack)
-        # Each snapshot: (consensus_mask, confidence_map, per_cell_confidence, manual_overrides)
-        self.override_history: Deque[Tuple] = deque(maxlen=50)
+        # Active Method & Multi-Model Disagreement Analysis
+        self.active_segmentation_method: Optional[str] = None
+        self.disagreement_report: Any = None
+        self.disagreement_heatmap: Optional[np.ndarray] = None
+        self.preview_roi_bbox: Optional[Tuple[int, int, int, int]] = None
 
         # Feature Extraction
         self.features_df: Optional[pd.DataFrame] = None
 
         # Active Mask References
         self.current_mask: Optional[np.ndarray] = None     # active nuclear mask
-        self.cytoplasm_mask: Optional[np.ndarray] = None   # last loaded cytoplasm mask
+        self.cytoplasm_mask: Optional[np.ndarray] = None   # active/last loaded cytoplasm mask
 
         # Multi-Sample Canvas
         # sample_name -> raw multi-channel image array (C, H, W)
@@ -85,39 +79,41 @@ class ViewerAppState:
         # Persistent UI Settings
         self.persistent_settings: Dict[str, Any] = {}
 
-    # Override History
+    # Active Mask Selection
 
-    def snapshot_override_state(self) -> None:
-        """Push a copy of override-related arrays onto the undo stack."""
-        if self.consensus_mask is not None:
-            self.override_history.append((
-                self.consensus_mask.copy(),
-                self.confidence_map.copy() if self.confidence_map is not None else None,
-                dict(self.per_cell_confidence),
-                dict(self.manual_overrides),
-                {int(k): dict(v) for k, v in self.cell_method_map.items()},
-            ))
+    def get_active_masks(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Return ``(nuclear_mask, cytoplasm_mask)`` for the active segmentation method.
 
-    def undo_override(self) -> bool:
-        """Pop and restore the most recent override snapshot.
-
-        Returns ``True`` on success, ``False`` if the history is empty.
+        Falls back to ``(self.current_mask, self.cytoplasm_mask)`` when no active
+        method is selected or not yet populated in ``segmentation_results``.
         """
-        if not self.override_history:
-            return False
-        entry = self.override_history.pop()
-        if len(entry) == 5:
-            (self.consensus_mask,
-             self.confidence_map,
-             self.per_cell_confidence,
-             self.manual_overrides,
-             self.cell_method_map) = entry
-        else:
-            (self.consensus_mask,
-             self.confidence_map,
-             self.per_cell_confidence,
-             self.manual_overrides) = entry
-        return True
+        method = self.active_segmentation_method
+        if method and method in self.segmentation_results:
+            entry = self.segmentation_results[method]
+            return entry.get("nuclear"), entry.get("cytoplasm")
+        return self.current_mask, self.cytoplasm_mask
+
+    def set_active_segmentation_method(
+        self, method_name: Optional[str]
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Select *method_name* from ``segmentation_results`` and sync mask pointers.
+
+        Returns ``(nuclear_mask, cytoplasm_mask)`` for the selected method, or
+        ``(None, None)`` if *method_name* is ``None`` or absent.
+        """
+        if not method_name or method_name not in self.segmentation_results:
+            self.active_segmentation_method = None
+            self.current_mask = None
+            self.cytoplasm_mask = None
+            return None, None
+
+        entry = self.segmentation_results[method_name]
+        nuc = entry.get("nuclear")
+        cyto = entry.get("cytoplasm")
+        self.active_segmentation_method = method_name
+        self.current_mask = nuc
+        self.cytoplasm_mask = cyto
+        return nuc, cyto
 
     # Lifecycle
 
@@ -127,12 +123,10 @@ class ViewerAppState:
         self.channel_contrast_limits.clear()
         self.segmentation_results.clear()
         self.segmentation_status.clear()
-        self.consensus_mask = None
-        self.confidence_map = None
-        self.per_cell_confidence.clear()
-        self.cell_method_map.clear()
-        self.manual_overrides.clear()
-        self.override_history.clear()
+        self.active_segmentation_method = None
+        self.disagreement_report = None
+        self.disagreement_heatmap = None
+        self.preview_roi_bbox = None
         self.features_df = None
         self.current_mask = None
         self.cytoplasm_mask = None
@@ -149,22 +143,19 @@ class ViewerAppState:
 
     # Session Persistence
 
-    def to_session_dict(self, consensus_threshold: float = 0.66) -> dict:
+    def to_session_dict(self, disagreement_threshold: float = 0.65) -> dict:
         """Serialise recoverable session fields to a JSON-compatible dict.
 
-        Large numpy arrays (masks, images) are excluded — they are
+        Large numpy arrays (masks, images, heatmaps) are excluded — they are
         re-generated or reloaded from disk when the session is restored.
         """
         return {
-            "version": 1,
+            "version": 2,
             "image_dir": str(self.image_dir) if self.image_dir else None,
-            "markers": self.markers,
+            "markers": list(self.markers),
             "current_sample_name": self.current_sample_name,
-            "consensus_threshold": consensus_threshold,
-            # Integer keys become strings in JSON — restored as int on load.
-            "per_cell_confidence": {str(k): v for k, v in self.per_cell_confidence.items()},
-            "cell_method_map": {str(k): v for k, v in self.cell_method_map.items()},
-            "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
+            "active_segmentation_method": self.active_segmentation_method,
+            "disagreement_threshold": float(disagreement_threshold),
             "persistent_settings": self.persistent_settings,
             "channel_colors": self.channel_colors,
             "celltype_colors": self.celltype_colors,
@@ -176,29 +167,21 @@ class ViewerAppState:
         state = cls()
         if data.get("image_dir"):
             state.image_dir = Path(data["image_dir"])
-        state.markers = data.get("markers", [])
+        state.markers = list(data.get("markers", []))
         state.current_sample_name = data.get("current_sample_name")
-        state.per_cell_confidence = {
-            int(k): float(v) for k, v in data.get("per_cell_confidence", {}).items()
-        }
-        state.cell_method_map = {
-            int(k): {str(mk): int(mv) for mk, mv in v.items()}
-            for k, v in data.get("cell_method_map", {}).items()
-        }
-        state.manual_overrides = {
-            int(k): str(v) for k, v in data.get("manual_overrides", {}).items()
-        }
-        state.persistent_settings = data.get("persistent_settings", {})
-        state.channel_colors = data.get("channel_colors", {})
-        state.celltype_colors = data.get("celltype_colors", {})
+        active_method = data.get("active_segmentation_method")
+        state.active_segmentation_method = str(active_method) if active_method else None
+        state.persistent_settings = dict(data.get("persistent_settings", {}))
+        state.channel_colors = dict(data.get("channel_colors", {}))
+        state.celltype_colors = dict(data.get("celltype_colors", {}))
         return state
 
-    def save_session(self, path: Path, consensus_threshold: float = 0.66) -> None:
+    def save_session(self, path: Path, disagreement_threshold: float = 0.65) -> None:
         """Write session JSON to *path*."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump(self.to_session_dict(consensus_threshold), fh, indent=2)
+            json.dump(self.to_session_dict(disagreement_threshold), fh, indent=2)
 
     @classmethod
     def load_session(cls, path: Path) -> tuple:
@@ -209,7 +192,7 @@ class ViewerAppState:
         state : ViewerAppState
             Restored state object (arrays are not restored — reload from disk).
         raw_data : dict
-            Raw JSON dict so callers can read extra fields (e.g. ``consensus_threshold``).
+            Raw JSON dict so callers can read extra fields (e.g. ``disagreement_threshold``).
         """
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)

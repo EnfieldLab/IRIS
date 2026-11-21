@@ -58,6 +58,7 @@ from skimage.util.shape import view_as_windows
 from sklearn.cluster import AgglomerativeClustering, MiniBatchKMeans
 from sklearn.metrics import silhouette_score
 
+from iris_common.logging import iris_log
 from iris_common.schema import COL_CELL_ID, COL_SAMPLE, COL_X, COL_Y
 from iris_common.types import CellTypePanel
 
@@ -1334,6 +1335,12 @@ def run_nimbus_on_arrays(
     cell_table = pd.concat(fov_tables, ignore_index=True)
     positivity_df = cell_table[ch_names].copy()
     positivity_df.index = pd.Index(cell_table[COL_CELL_ID].astype(int), name=COL_CELL_ID)
+    iris_log(
+        "IRIS-Phenotyper",
+        "Nimbus",
+        f"Inferred marker positivity for {len(cell_table):,} cells across "
+        f"{len(fov_imgs)} FOV(s) and {len(ch_names)} channels (device={torch_device}).",
+    )
 
     return NimbusPipelineOutput(
         positivity_df=positivity_df,

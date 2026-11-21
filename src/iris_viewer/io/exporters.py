@@ -12,13 +12,13 @@ import pandas as pd
 import tifffile
 
 
-def export_consensus_mask(
+def export_segmentation_mask(
     filepath: Path,
     nuclear_mask: np.ndarray,
     cytoplasm_mask: Optional[np.ndarray] = None,
 ) -> None:
     """
-    Export the consensus mask in multiple formats (TIFF, OME-TIFF, PNG, NumPy NPY/NPZ).
+    Export segmentation label masks in multiple formats (TIFF, OME-TIFF, PNG, NumPy NPY/NPZ).
 
     Channel 0: nuclear label mask (required)
     Channel 1: cytoplasm label mask (optional)
@@ -39,26 +39,26 @@ def export_consensus_mask(
     suffix = filepath.suffix.lower()
     lower_name = filepath.name.lower()
 
-    if suffix == '.npy':
+    if suffix == ".npy":
         np.save(str(filepath), output)
-    elif suffix == '.npz':
+    elif suffix == ".npz":
         np.savez_compressed(str(filepath), mask=output)
-    elif suffix == '.png':
+    elif suffix == ".png":
         try:
             from PIL import Image
+
             img_arr = output[0] if output.ndim == 3 else output
             if img_arr.max() > 255:
-                # 16-bit PNG for high cell counts
                 img = Image.fromarray(img_arr.astype(np.uint16))
             else:
                 img = Image.fromarray(img_arr.astype(np.uint8))
             img.save(str(filepath))
         except Exception:
             tifffile.imwrite(str(filepath), output)
-    elif '.ome.tif' in lower_name:
-        tifffile.imwrite(str(filepath), output, ome=True, compression='zlib')
+    elif ".ome.tif" in lower_name:
+        tifffile.imwrite(str(filepath), output, ome=True, compression="zlib")
     else:
-        tifffile.imwrite(str(filepath), output, compression='zlib')
+        tifffile.imwrite(str(filepath), output, compression="zlib")
 
 
 def export_features_csv(
@@ -73,69 +73,91 @@ def export_features_csv(
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     out = df.copy()
-    if 'Image' not in out.columns and sample_name:
-        out.insert(0, 'Image', sample_name)
+    if "Image" not in out.columns and sample_name:
+        out.insert(0, "Image", sample_name)
 
     suffix = filepath.suffix.lower()
-    if suffix == '.xlsx':
+    if suffix == ".xlsx":
         try:
             out.to_excel(str(filepath), index=False)
         except Exception as e:
-            # Fallback to CSV if openpyxl is not installed
-            fallback = filepath.with_suffix('.csv')
+            fallback = filepath.with_suffix(".csv")
             out.to_csv(str(fallback), index=False)
-            raise RuntimeError(f"Could not write Excel file ({e}). Saved as CSV: {fallback}") from e
-    elif suffix == '.parquet':
+            raise RuntimeError(
+                f"Could not write Excel file ({e}). Saved as CSV: {fallback}"
+            ) from e
+    elif suffix == ".parquet":
         try:
             out.to_parquet(str(filepath), index=False)
         except Exception as e:
-            fallback = filepath.with_suffix('.csv')
+            fallback = filepath.with_suffix(".csv")
             out.to_csv(str(fallback), index=False)
-            raise RuntimeError(f"Could not write Parquet file ({e}). Saved as CSV: {fallback}") from e
-    elif suffix in ('.tsv', '.txt'):
-        out.to_csv(str(filepath), sep='\t', index=False)
-    elif suffix == '.json':
-        out.to_json(str(filepath), orient='records', indent=2)
+            raise RuntimeError(
+                f"Could not write Parquet file ({e}). Saved as CSV: {fallback}"
+            ) from e
+    elif suffix in (".tsv", ".txt"):
+        out.to_csv(str(filepath), sep="\t", index=False)
+    elif suffix == ".json":
+        out.to_json(str(filepath), orient="records", indent=2)
     else:
         out.to_csv(str(filepath), index=False)
 
 
-def export_confidence_map(filepath: Path, confidence_map: np.ndarray) -> None:
-    """
-    Export a per-pixel confidence map in multiple formats (float32 TIFF, PNG heatmap, NumPy NPY/NPZ).
-    """
+def _export_scalar_map(filepath: Path, scalar_map: np.ndarray, npz_key: str) -> None:
+    """Export a 2D float32 map to TIFF, PNG, NPY, or NPZ."""
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     suffix = filepath.suffix.lower()
+    lower_name = filepath.name.lower()
+    arr = np.asarray(scalar_map, dtype=np.float32)
 
-    if suffix == '.npy':
-        np.save(str(filepath), confidence_map.astype(np.float32))
-    elif suffix == '.npz':
-        np.savez_compressed(str(filepath), confidence=confidence_map.astype(np.float32))
-    elif suffix == '.png':
-        norm = np.clip(confidence_map * 255.0, 0, 255).astype(np.uint8)
+    if suffix == ".npy":
+        np.save(str(filepath), arr)
+    elif suffix == ".npz":
+        np.savez_compressed(str(filepath), **{npz_key: arr})
+    elif suffix == ".png":
+        norm = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
         try:
             from PIL import Image
+
             Image.fromarray(norm).save(str(filepath))
         except Exception:
             tifffile.imwrite(str(filepath), norm)
+    elif ".ome.tif" in lower_name:
+        tifffile.imwrite(str(filepath), arr, ome=True, compression="zlib")
     else:
-        tifffile.imwrite(str(filepath), confidence_map.astype(np.float32), compression='zlib')
+        tifffile.imwrite(str(filepath), arr, compression="zlib")
+
+
+def export_confidence_map(filepath: Path, confidence_map: np.ndarray) -> None:
+    """
+    Export a per-pixel confidence map in multiple formats (float32 TIFF, PNG, NPY/NPZ).
+    """
+    _export_scalar_map(filepath, confidence_map, npz_key="confidence")
+
+
+def export_disagreement_map(filepath: Path, disagreement_map: np.ndarray) -> None:
+    """
+    Export a per-pixel model disagreement heatmap in multiple formats (float32 TIFF, PNG, NPY/NPZ).
+    """
+    _export_scalar_map(filepath, disagreement_map, npz_key="disagreement")
 
 
 def export_batch_summary(filepath: Path, batch_results: dict) -> None:
     """Export a batch-processing summary CSV (one row per sample)."""
     rows = []
     for sample_name, res in batch_results.items():
-        rows.append({
-            'Sample':                  sample_name,
-            'Total_Cells':             res.get('total_cells', 0),
-            'High_Confidence_Cells':   res.get('high_conf', 0),
-            'Medium_Confidence_Cells': res.get('med_conf', 0),
-            'Low_Confidence_Cells':    res.get('low_conf', 0),
-            'Mean_Confidence':         res.get('mean_confidence', 0.0),
-            'Methods_Used':            ', '.join(res.get('methods', [])),
-        })
+        rows.append(
+            {
+                "Sample": sample_name,
+                "Total_Cells": res.get("total_cells", 0),
+                "High_Confidence_Cells": res.get("high_conf", 0),
+                "Medium_Confidence_Cells": res.get("med_conf", 0),
+                "Low_Confidence_Cells": res.get("low_conf", 0),
+                "Mean_Confidence": res.get("mean_confidence", 0.0),
+                "Methods_Used": ", ".join(res.get("methods", [])),
+            }
+        )
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(str(filepath), index=False)
@@ -172,25 +194,30 @@ def export_neighborhood_composition_matrix(
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
 
-    row_names = [niche_metadata.get(i, {}).get("name", f"Niche {i}") for i in range(centers.shape[0])]
+    row_names = [
+        niche_metadata.get(i, {}).get("name", f"Niche {i}") for i in range(centers.shape[0])
+    ]
     df_export = pd.DataFrame(centers, index=row_names, columns=type_labels)
     df_export.index.name = "Neighborhood_Label"
     df_export.to_csv(str(filepath))
 
-    # Save secondary per-cell mapping table if cell_data is provided
     if cell_data is not None and not cell_data.empty:
         cell_filepath = filepath.with_name(filepath.stem + "_cell_assignments" + filepath.suffix)
-        base_cols = ['Image', 'ObjectNumber', 'Pos_X', 'Pos_Y']
-        pheno_col = next((col for col in ['cell_type', 'Verified_CellType', 'CellType'] if col in cell_data.columns), None)
+        base_cols = ["Image", "ObjectNumber", "Pos_X", "Pos_Y"]
+        pheno_col = next(
+            (col for col in ["cell_type", "Verified_CellType", "CellType"] if col in cell_data.columns),
+            None,
+        )
         if pheno_col and pheno_col not in base_cols:
             base_cols.append(pheno_col)
 
         export_cols = [c for c in base_cols if c in cell_data.columns]
-        if 'Cellular_Neighborhood' in cell_data.columns:
-            export_cols.append('Cellular_Neighborhood')
+        if "Cellular_Neighborhood" in cell_data.columns:
+            export_cols.append("Cellular_Neighborhood")
 
         export_df = cell_data[export_cols].copy()
-        if 'Cellular_Neighborhood' in export_df.columns:
+        if "Cellular_Neighborhood" in export_df.columns:
+
             def _map_name(x):
                 if x in niche_metadata:
                     return niche_metadata[x].get("name", f"Niche {x}")
@@ -208,6 +235,6 @@ def export_neighborhood_composition_matrix(
                 except (ValueError, TypeError):
                     pass
                 return str(x)
-            export_df['Neighborhood_Name'] = export_df['Cellular_Neighborhood'].map(_map_name)
-        export_df.to_csv(str(cell_filepath), index=False)
 
+            export_df["Neighborhood_Name"] = export_df["Cellular_Neighborhood"].map(_map_name)
+        export_df.to_csv(str(cell_filepath), index=False)

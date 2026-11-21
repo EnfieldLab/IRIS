@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 import scipy.ndimage as ndimage
 
+from iris_common.logging import iris_log
+
 # Guard against macOS dual-libomp initialization crashes when PyPI torch and conda libs coexist.
 if sys.platform == "darwin":
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -1187,8 +1189,10 @@ class CellSighterTrainer:
                 }
                 member_epochs.append(epoch_rec)
                 if self.config.verbose > 0:
-                    print(
-                        f"  [ens {member_idx + 1}/{self.config.ensemble_size}] "
+                    iris_log(
+                        "IRIS-Phenotyper",
+                        "CellSighter",
+                        f"[ens {member_idx + 1}/{self.config.ensemble_size}] "
                         f"epoch {epoch + 1}/{self.config.epochs}: "
                         f"loss={train_loss:.4f} train_acc={train_acc:.4f} "
                         f"val_acc={val_acc:.4f} val_bal={val_bal:.4f} "

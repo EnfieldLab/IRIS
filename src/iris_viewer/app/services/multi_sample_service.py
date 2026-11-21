@@ -33,6 +33,7 @@ from napari.qt import thread_worker
 from napari.utils.colormaps import Colormap
 from qtpy.QtWidgets import QMessageBox
 
+from iris_common.logging import iris_log, log_error, log_warn
 from iris_viewer.app.services.annotation_service import AnnotationService
 from iris_viewer.app.services.color_service import ColorService
 from iris_viewer.core.layers import get_layer_base_name
@@ -161,12 +162,12 @@ class MultiSampleService:
             if sub_df.empty and len(ctx.state.sample_layers_map) == 1:
                 sub_df = ctx.state.master_df.copy()
 
-            print(f"[IRIS-Viewer] sample_name={sample_name}, mask is {'None' if mask is None else 'Present'}, sub_df.shape={sub_df.shape}")
-
             if sub_df.empty:
-                print(f"[IRIS-Viewer] sub_df is empty! master_df cols: {ctx.state.master_df.columns.tolist() if ctx.state.master_df is not None else 'None'}")
-                if ctx.state.master_df is not None and "Image" in ctx.state.master_df.columns:
-                    print(f"[IRIS-Viewer] Unique images in master_df: {ctx.state.master_df['Image'].unique()}")
+                log_warn(
+                    "IRIS-Viewer",
+                    "TMA",
+                    f"No matching annotation rows for '{sample_name}' (mask present).",
+                )
                 continue
 
             # If a bounding box exists, get its translation to align overlays perfectly
@@ -223,7 +224,11 @@ class MultiSampleService:
             mapper = IrisPhenotypeMapper(mask, sub_df, target_col=ref_col)
             layer_data_ref = mapper.get_masks_by_type()
 
-            print(f"[IRIS-Viewer] mapper returned layer_data_ref with keys: {list(layer_data_ref.keys())}")
+            iris_log(
+                "IRIS-Viewer",
+                "TMA",
+                f"Mapped {len(layer_data_ref)} phenotype layer(s) for '{sample_name}'.",
+            )
 
             for type_name in sorted(layer_data_ref.keys()):
                 # Skip if a layer with this phenotype name already exists in this sample's group
@@ -314,10 +319,34 @@ class MultiSampleService:
         add them to the napari canvas.  Runs pixel I/O in a thread worker.
         """
         ctx = self.ctx
+        if not sample_names:
+            if hasattr(ctx, "comparison_widget"):
+                ctx.comparison_widget.set_loading_done()
+            return
+
+        # Transition cleanly from Single-Sample browse mode into Multi-Sample TMA mode
+        if ctx.state.raw_image is not None and not ctx.state.multi_sample_images:
+            ctx.viewer.layers.clear()
+            ctx.legend_widget.clear()
+            if hasattr(ctx, "added_legend_entries"):
+                ctx.added_legend_entries.clear()
+            self._added_master_legends.clear()
+            ctx.state.sample_layers_map.clear()
+            ctx.state.masks_map.clear()
+            ctx.state.segmentation_results.clear()
+            ctx.state.active_segmentation_method = None
+            ctx.state.disagreement_report = None
+            ctx.state.disagreement_heatmap = None
+            ctx.state.preview_roi_bbox = None
+            ctx.state.raw_image = None
+            ctx.state.current_mask = None
+            ctx.state.cytoplasm_mask = None
 
         # Skip samples that are already loaded on canvas
         sample_names = [sn for sn in sample_names if sn not in ctx.state.sample_layers_map]
         if not sample_names:
+            if hasattr(ctx, "comparison_widget"):
+                ctx.comparison_widget.set_loading_done()
             return
 
         scale_val = ctx.control_widget.spin_scale.value()
@@ -379,7 +408,7 @@ class MultiSampleService:
                 ctx.comparison_widget.set_loading_done()
 
         def _on_error(exc: Exception):
-            print(f"[MultiSample Error] Failed to load multi-sample canvas: {exc}")
+            log_error("IRIS-Viewer", "TMA", f"Failed to load multi-sample canvas: {exc}")
             if hasattr(ctx, "comparison_widget"):
                 ctx.comparison_widget.set_loading_done()
             if hasattr(ctx, "control_widget"):
@@ -391,7 +420,7 @@ class MultiSampleService:
 
         worker = _load_all()
         worker.returned.connect(_on_loaded)
-        if hasattr(ctx, "track_worker"):
+        if callable(getattr(ctx, "track_worker", None)):
             ctx.track_worker(
                 worker,
                 on_error=_on_error,
@@ -425,7 +454,7 @@ class MultiSampleService:
                 sample_h, sample_w = chan_data.shape
                 cname = self.get_marker_color(m)
                 cmap = self._get_layer_colormap(cname, m)
-                is_vis = m in ("DAPI", "CK", "aSMA", "CD45")
+                is_vis = m.upper() in ("DAPI", "HOECHST", "CK", "PANCK", "ASMA", "SMA", "CD45")
                 layer = ctx.viewer.add_image(
                     chan_data, name=m, colormap=cmap, blending="additive",
                     visible=is_vis, contrast_limits=clims, scale=(scale_val, scale_val),
@@ -458,24 +487,26 @@ class MultiSampleService:
                 for i, m_chan in enumerate(mask_channels):
                     if i == 0:
                         lname = "Nuclear Segmentation"
+                        seg_opacity = 0.8
                     elif i == 1:
                         lname = "Cytoplasm Segmentation"
+                        seg_opacity = 0.5
                     else:
                         lname = f"Segmentation Ch{i}"
+                        seg_opacity = 0.5
+                    seg_lyr = ctx.viewer.add_labels(
+                        m_chan, name=lname, opacity=seg_opacity,
+                        visible=(i == 0), scale=(scale_val, scale_val),
+                        metadata={"sample_name": sample_name, "segmentation_name": lname, "layer_type": "segmentation"},
+                    )
                     try:
-                        seg_lyr = ctx.viewer.add_labels(
-                            m_chan, name=lname, opacity=1.0,
-                            visible=(i == 0), contour=1, scale=(scale_val, scale_val),
-                            metadata={"sample_name": sample_name, "segmentation_name": lname, "layer_type": "segmentation"},
-                        )
-                    except TypeError:
-                        seg_lyr = ctx.viewer.add_labels(
-                            m_chan, name=lname, opacity=1.0,
-                            visible=(i == 0), scale=(scale_val, scale_val),
-                            metadata={"sample_name": sample_name, "segmentation_name": lname, "layer_type": "segmentation"},
-                        )
+                        seg_lyr.contour = 0
+                    except Exception:
+                        pass
                     sample_layers.append(seg_lyr)
                     self._register_layer(seg_lyr, lname)
+                    seg_lyr.opacity = seg_opacity
+                    ctx.state.persistent_settings.setdefault(lname, {})["opacity"] = seg_opacity
                     has_seg_legend = False
                     if hasattr(ctx, "legend_widget") and hasattr(ctx.legend_widget, "seg_rows"):
                         has_seg_legend = any(r.name == lname for r in ctx.legend_widget.seg_rows)
@@ -616,6 +647,17 @@ class MultiSampleService:
 
         # Align and finalise
         self._finalize_canvas(target_sample_names)
+        if hasattr(ctx, "segmentation_panel") and hasattr(ctx.segmentation_panel, "sync_sample_scope"):
+            all_s = sorted(
+                set(ctx.state.file_map.keys()) | set(ctx.state.sample_layers_map.keys())
+            )
+            active_s = list(ctx.state.sample_layers_map.keys())
+            ctx.segmentation_panel.sync_sample_scope(all_s, active_samples=active_s)
+        iris_log(
+            "IRIS-Viewer",
+            "TMA",
+            f"Loaded {len(loaded_results)} sample(s) onto canvas.",
+        )
 
     # Canvas Alignment
 
@@ -719,6 +761,9 @@ class MultiSampleService:
         ctx.state.reset_sample_state()
         ctx.state.areas_map.clear()
         ctx.state.current_mapped_df = None
+        if hasattr(ctx, "segmentation_panel") and hasattr(ctx.segmentation_panel, "sync_sample_scope"):
+            all_s = sorted(ctx.state.file_map.keys()) if ctx.state.file_map else []
+            ctx.segmentation_panel.sync_sample_scope(all_s, active_samples=[])
 
     # Finalise canvas
 
@@ -814,7 +859,7 @@ class MultiSampleService:
                         new_a, _ = recompute_area_from_vertices(t_lyr.data[0], m_shape, s_val)
                         ctx.state.areas_map[sample_name] = new_a
         except Exception as exc:
-            print(f"[IRIS-Viewer] Failed to load boundary for {sample_name}: {exc}")
+            log_warn("IRIS-Viewer", "Boundary", f"Failed to load boundary for {sample_name}: {exc}")
 
     # Layer registration & sync
 

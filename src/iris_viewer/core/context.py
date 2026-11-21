@@ -25,9 +25,10 @@ class AppContext(SimpleNamespace):
     pipeline_service: Any = None
     control_widget: Any = None
     segmentation_panel: Any = None
-    consensus_panel: Any = None
+    disagreement_panel: Any = None
     feature_panel: Any = None
     phenotyper_panel: Any = None
+    analyzer_panel: Any = None
     legend_widget: Any = None
     comparison_widget: Any = None
     neighborhood_widget: Any = None
