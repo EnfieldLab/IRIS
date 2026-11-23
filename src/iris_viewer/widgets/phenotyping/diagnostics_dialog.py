@@ -38,7 +38,7 @@ from iris_common.widgets.publication_studio import (
     PlotStyleConfig,
     PublicationPlotStudioDialog,
 )
-from iris_common.widgets.theme import BUTTON_STUDIO, DIALOG_DARK_THEME
+from iris_common.widgets.theme import BUTTON_STUDIO, DIALOG_DARK_THEME, configure_tab_widget
 from iris_viewer.widgets.phenotyping.thresholding import resolve_marker_col
 
 try:
@@ -138,6 +138,7 @@ class PhenotyperDiagnosticDialog(QDialog):
 
         # Main Tabs
         self.tabs = QTabWidget()
+        configure_tab_widget(self.tabs)
         self.tabs.addTab(self._build_confidence_tab(), "Confidence & Novelty")
         self.tabs.addTab(self._build_nimbus_tab(), "Nimbus Positivity Heatmap")
         self.tabs.addTab(self._build_concordance_tab(), "Method Concordance Matrix")
@@ -156,8 +157,8 @@ class PhenotyperDiagnosticDialog(QDialog):
             toolbar = NavigationToolbar(canvas, self)
             toolbar.setStyleSheet(
                 "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
-                "spacing: 4px; padding: 2px; }"
-                "QToolButton { background-color: transparent; border: none; padding: 3px; }"
+                "spacing: 4px; padding: 2px; } "
+                "QToolButton { background-color: transparent; border: none; padding: 3px; } "
                 "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
             )
             parent_layout.addWidget(toolbar)

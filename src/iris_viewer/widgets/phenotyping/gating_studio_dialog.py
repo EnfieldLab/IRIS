@@ -73,6 +73,7 @@ from iris_common.widgets.theme import (
     BUTTON_SECONDARY,
     BUTTON_STUDIO,
     DIALOG_DARK_THEME,
+    configure_tab_widget,
     create_section_card,
     style_section_header,
 )
@@ -153,9 +154,9 @@ class GatingStudioDialog(QDialog):
             self.toolbar = NavigationToolbar(self.canvas, self)
             self.toolbar.setStyleSheet(
                 "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
-                "spacing: 4px; padding: 2px; }"
+                "spacing: 4px; padding: 2px; } "
                 "QToolButton { background-color: transparent; border: 1px solid transparent; "
-                "border-radius: 3px; padding: 3px; }"
+                "border-radius: 3px; padding: 3px; } "
                 "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
             )
             left_layout.addWidget(self.toolbar)
@@ -175,8 +176,9 @@ class GatingStudioDialog(QDialog):
         right_layout.setSpacing(6)
 
         self.tabs = QTabWidget()
+        configure_tab_widget(self.tabs)
         self.tabs.setMinimumWidth(380)
-        self.tabs.setMaximumWidth(480)
+        self.tabs.setMaximumWidth(520)
 
         # Tab 1: Gating Controls
         tab_gating = QWidget()

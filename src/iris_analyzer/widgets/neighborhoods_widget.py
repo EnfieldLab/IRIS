@@ -85,6 +85,7 @@ from iris_common.widgets.theme import (
     SECTION_SUBTITLE_STYLE,
     SHARED_DARK_THEME,
     configure_independent_window,
+    configure_tab_widget,
     create_section_card,
     style_section_header,
 )
@@ -447,6 +448,7 @@ class CellularNeighborhoodStudioDialog(QDialog):
         left_layout.addLayout(ctrl_bar)
 
         self.tabs = QTabWidget()
+        configure_tab_widget(self.tabs)
         tab_titles = (
             "Log2 Enrichment / Topic Weights Heatmap",
             "Stacked Cell-Type Composition",
@@ -471,9 +473,9 @@ class CellularNeighborhoodStudioDialog(QDialog):
                 toolbar = NavigationToolbar(canvas, tab_w)
                 toolbar.setStyleSheet(
                     "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
-                    "spacing: 4px; padding: 2px; }"
+                    "spacing: 4px; padding: 2px; } "
                     "QToolButton { background-color: transparent; border: 1px solid transparent; "
-                    "border-radius: 3px; padding: 3px; }"
+                    "border-radius: 3px; padding: 3px; } "
                     "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
                 )
                 tab_l.addWidget(toolbar)

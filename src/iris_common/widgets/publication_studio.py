@@ -73,6 +73,7 @@ from iris_common.widgets.theme import (
     BUTTON_CTA,
     BUTTON_STUDIO,
     DIALOG_DARK_THEME,
+    configure_tab_widget,
     create_section_card,
     style_section_header,
 )
@@ -1895,6 +1896,7 @@ class PublicationPlotStudioDialog(QDialog):
 
         # Left/Center Pane: Figure Preview + Optional Statistics Table
         self.tabs = QTabWidget()
+        configure_tab_widget(self.tabs)
 
         preview_tab = QWidget()
         preview_layout = QVBoxLayout(preview_tab)
@@ -1914,9 +1916,9 @@ class PublicationPlotStudioDialog(QDialog):
             self.toolbar = NavigationToolbar(self.canvas, preview_tab)
             self.toolbar.setStyleSheet(
                 "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
-                "spacing: 4px; padding: 2px; }"
+                "spacing: 4px; padding: 2px; } "
                 "QToolButton { background-color: transparent; border: 1px solid transparent; "
-                "border-radius: 3px; padding: 3px; }"
+                "border-radius: 3px; padding: 3px; } "
                 "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
             )
             preview_layout.addWidget(self.toolbar)

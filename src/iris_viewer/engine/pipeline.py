@@ -18,6 +18,7 @@ import numpy as np
 
 from iris_common.logging import iris_log, log_error
 from iris_viewer.engine.segmentation import get_available_backends
+from iris_viewer.engine.segmentation.base import reconcile_nuclear_and_cytoplasm_masks
 
 _DILATION_RULES = (
     "Cytoplasm (Dilate Remaining)",
@@ -35,6 +36,10 @@ class SegmentationStep:
 @dataclass
 class SegmentationSequence:
     steps: List[SegmentationStep]
+    auto_complete_cytoplasm: Optional[bool] = None
+    fallback_dilation_radius: int = 5
+    fallback_dilation_mode: str = "distance"
+    fallback_membrane_channels: Optional[List[int]] = None
 
 
 def _count_labels(mask: Optional[np.ndarray]) -> int:
@@ -145,6 +150,7 @@ def _prepare_sequential_cytoplasm_inputs(
     mem_cs = params.get("membrane_channels", [])
     nuc_plane = _extract_channel_2d(image, nuc_c)
     mem_img = _extract_max_membrane_2d(image, mem_cs)
+    has_valid_mem = mem_img is not None
     if mem_img is None:
         mem_img = np.zeros_like(nuc_plane)
     synth_img = np.stack([nuc_plane, mem_img], axis=0)
@@ -153,6 +159,8 @@ def _prepare_sequential_cytoplasm_inputs(
     kw.pop("membrane_channels", None)
     kw["nuclear_channel"] = 0
     kw["membrane_channel"] = 1
+    if has_valid_mem:
+        kw["skip_nuclear"] = True
     return synth_img, kw
 
 
@@ -183,12 +191,15 @@ def _dilate_remaining_cytoplasm(
 ) -> Tuple[Optional[np.ndarray], np.ndarray]:
     """Dilate nuclear labels lacking cytoplasm coverage up to *radius* pixels."""
     if global_cyto is None:
-        global_cyto = np.zeros_like(global_nuc)
+        out_dtype = (
+            global_nuc.dtype if np.issubdtype(global_nuc.dtype, np.integer) else np.uint32
+        )
+        global_cyto = np.zeros(global_nuc.shape, dtype=out_dtype)
 
-    covered_labels = np.unique(global_nuc[global_cyto > 0])
-    covered_labels = covered_labels[covered_labels > 0]
-    if covered_labels.size > 0:
-        unseg_mask = np.isin(global_nuc, covered_labels, invert=True) & (global_nuc > 0)
+    matched_ids = np.unique(global_cyto[global_cyto > 0])
+    matched_ids = matched_ids[matched_ids > 0]
+    if matched_ids.size > 0:
+        unseg_mask = (global_nuc > 0) & np.isin(global_nuc, matched_ids, invert=True)
     else:
         unseg_mask = global_nuc > 0
 
@@ -197,6 +208,7 @@ def _dilate_remaining_cytoplasm(
 
     unsegmented_nuc_mask = np.where(unseg_mask, global_nuc, 0)
     mode_norm = (mode or "distance").strip().lower()
+    radius_px = max(0, int(radius))
 
     if (
         mode_norm == "watershed"
@@ -206,7 +218,7 @@ def _dilate_remaining_cytoplasm(
         from scipy.ndimage import gaussian_filter
         from skimage.segmentation import expand_labels, watershed
 
-        support = expand_labels(unsegmented_nuc_mask, distance=int(radius)) > 0
+        support = expand_labels(unsegmented_nuc_mask, distance=radius_px) > 0
         mem = np.asarray(membrane_image, dtype=np.float32)
         smoothed = gaussian_filter(mem, sigma=1.0)
         elevation = float(smoothed.max()) - smoothed
@@ -214,7 +226,7 @@ def _dilate_remaining_cytoplasm(
             elevation,
             markers=unsegmented_nuc_mask,
             mask=support,
-        ).astype(global_nuc.dtype, copy=False)
+        ).astype(global_cyto.dtype, copy=False)
     else:
         from scipy.ndimage import distance_transform_edt
 
@@ -223,13 +235,15 @@ def _dilate_remaining_cytoplasm(
             return_indices=True,
         )
         new_cyto = unsegmented_nuc_mask.copy()
-        expand_mask = (dists > 0) & (dists <= radius)
+        expand_mask = (dists > 0) & (dists <= radius_px)
         new_cyto[expand_mask] = unsegmented_nuc_mask[
             nearest_y[expand_mask], nearest_x[expand_mask]
         ]
 
-    valid_expansion = (global_cyto == 0) & (new_cyto > 0)
+    other_nuc = (global_nuc > 0) & (~unseg_mask)
+    valid_expansion = (global_cyto == 0) & (new_cyto > 0) & (~other_nuc)
     global_cyto[valid_expansion] = new_cyto[valid_expansion]
+    global_cyto[unseg_mask] = global_nuc[unseg_mask]
     return new_cyto, global_cyto
 
 
@@ -238,35 +252,38 @@ def _assign_sequential_cytoplasm(
     global_cyto: Optional[np.ndarray],
     new_cyto: Optional[np.ndarray],
 ) -> Tuple[Optional[np.ndarray], np.ndarray]:
-    """Map cytoplasm labels onto unsegmented nuclear labels via fast bounding-box slices."""
+    """Map cytoplasm labels onto unclaimed nuclear labels via reconciled overlap."""
     if global_cyto is None:
-        global_cyto = np.zeros_like(global_nuc)
+        out_dtype = (
+            global_nuc.dtype if np.issubdtype(global_nuc.dtype, np.integer) else np.uint32
+        )
+        global_cyto = np.zeros(global_nuc.shape, dtype=out_dtype)
     if new_cyto is None:
         return None, global_cyto
 
-    from scipy.ndimage import find_objects
+    claimed_ids = np.unique(global_cyto[global_cyto > 0])
+    claimed_ids = claimed_ids[claimed_ids > 0]
 
-    final_cyto_for_this_step = np.zeros_like(new_cyto)
-    covered = np.unique(global_nuc[global_cyto > 0])
-    claimed_nuc = {int(v) for v in covered if v > 0}
+    _, reconciled = reconcile_nuclear_and_cytoplasm_masks(global_nuc, new_cyto)
+    if reconciled is None or int(reconciled.max()) == 0:
+        return np.zeros_like(global_cyto), global_cyto
 
-    for lbl, slc in enumerate(find_objects(new_cyto), start=1):
-        if slc is None:
-            continue
-        sub_cyto = new_cyto[slc]
-        sub_nuc = global_nuc[slc]
-        px = sub_cyto == lbl
-        overlaps = sub_nuc[px]
-        overlaps = overlaps[overlaps > 0]
-        if len(overlaps) == 0:
-            continue
-        nuc_lbl = int(np.bincount(overlaps).argmax())
-        if nuc_lbl > 0 and nuc_lbl not in claimed_nuc:
-            final_cyto_for_this_step[slc][px] = nuc_lbl
-            global_cyto[slc][px] = nuc_lbl
-            claimed_nuc.update(int(v) for v in np.unique(overlaps) if v > 0)
+    step_cyto = reconciled.copy()
+    if claimed_ids.size > 0:
+        max_id = max(int(step_cyto.max()), int(claimed_ids.max()))
+        keep_lut = np.ones(max_id + 1, dtype=bool)
+        keep_lut[0] = False
+        keep_lut[claimed_ids] = False
+        step_cyto = np.where(keep_lut[step_cyto], step_cyto, np.uint32(0))
 
-    return final_cyto_for_this_step, global_cyto
+    # Protect already-assigned cytoplasm and any neighbor nuclei from overwrite.
+    step_cyto[global_cyto > 0] = 0
+    other_nuc = (global_nuc > 0) & (global_nuc != step_cyto)
+    step_cyto[other_nuc] = 0
+
+    write_mask = step_cyto > 0
+    global_cyto[write_mask] = step_cyto[write_mask]
+    return step_cyto.astype(global_cyto.dtype, copy=False), global_cyto
 
 
 def iter_execute_sequence(
@@ -325,18 +342,40 @@ def iter_execute_sequence(
                 seg_img, kw = _prepare_independent_inputs(image, step.params)
                 res = _call_segment(backend, seg_img, kw)
 
-                global_nuc = _merge_label_masks(global_nuc, res.get("nuclear"))
-                global_cyto = _merge_label_masks(global_cyto, res.get("cytoplasm"))
+                res_step = dict(res)
+                is_cells_only = (
+                    bool(step.params.get("skip_nuclear", False))
+                    or str(step.params.get("target", "")).strip() == "cells"
+                    or str(step.params.get("model_name", "")).strip() == "fluorescence_cells"
+                )
+                if (
+                    not is_cells_only
+                    and res_step.get("nuclear") is not None
+                    and res_step.get("cytoplasm") is not None
+                ):
+                    rnuc, rcyto = reconcile_nuclear_and_cytoplasm_masks(
+                        res_step["nuclear"], res_step["cytoplasm"]
+                    )
+                    res_step["nuclear"] = rnuc
+                    res_step["cytoplasm"] = rcyto
+
+                global_nuc = _merge_label_masks(global_nuc, res_step.get("nuclear"))
+                global_cyto = _merge_label_masks(global_cyto, res_step.get("cytoplasm"))
+                if not is_cells_only and global_nuc is not None and global_cyto is not None:
+                    global_nuc, global_cyto = reconcile_nuclear_and_cytoplasm_masks(
+                        global_nuc, global_cyto
+                    )
+
                 elapsed = time.perf_counter() - t0
                 iris_log(
                     "IRIS-Viewer",
                     "Segmentation",
                     f"{tag}[{group_name}] Step {step_idx + 1}/{n_steps} "
                     f"'{step.method_name}' done in {elapsed:.2f}s "
-                    f"(nuc={_count_labels(res.get('nuclear'))}, "
-                    f"cyto={_count_labels(res.get('cytoplasm'))})",
+                    f"(nuc={_count_labels(res_step.get('nuclear'))}, "
+                    f"cyto={_count_labels(res_step.get('cytoplasm'))})",
                 )
-                yield ("step", group_name, step_idx, step.method_name, res)
+                yield ("step", group_name, step_idx, step.method_name, res_step)
 
             elif step.rule == "Nuclear (Base)":
                 backend = backends.get(step.method_name)
@@ -480,6 +519,57 @@ def iter_execute_sequence(
             )
             yield ("error", group_name, step_idx, step_label, str(exc))
 
+    last_params = sequence.steps[-1].params if sequence.steps else {}
+    auto_complete = (
+        bool(sequence.auto_complete_cytoplasm)
+        if sequence.auto_complete_cytoplasm is not None
+        else bool(last_params.get("auto_complete_cytoplasm", False))
+    )
+    fb_radius = int(
+        sequence.fallback_dilation_radius
+        if sequence.fallback_dilation_radius != 5
+        else last_params.get("fallback_dilation_radius", sequence.fallback_dilation_radius)
+    )
+    fb_mode = str(
+        sequence.fallback_dilation_mode
+        if sequence.fallback_dilation_mode != "distance"
+        else last_params.get("fallback_dilation_mode", sequence.fallback_dilation_mode)
+    )
+    if (
+        auto_complete
+        and global_nuc is not None
+        and int(global_nuc.max()) > 0
+        and (global_cyto is None or _count_labels(global_cyto) < _count_labels(global_nuc))
+    ):
+        mem_img = None
+        if fb_mode.strip().lower() == "watershed":
+            fb_mem_cs = (
+                sequence.fallback_membrane_channels
+                if sequence.fallback_membrane_channels is not None
+                else last_params.get("fallback_membrane_channels")
+            )
+            if fb_mem_cs:
+                mem_img = _extract_max_membrane_2d(image, fb_mem_cs)
+            else:
+                for st in reversed(sequence.steps):
+                    mem_cs = st.params.get("membrane_channels")
+                    if mem_cs:
+                        mem_img = _extract_max_membrane_2d(image, mem_cs)
+                        break
+        iris_log(
+            "IRIS-Viewer",
+            "Segmentation",
+            f"{tag}[{group_name}] Auto-completing unmatched cytoplasm "
+            f"(radius={fb_radius}px, mode={fb_mode})...",
+        )
+        _, global_cyto = _dilate_remaining_cytoplasm(
+            global_nuc,
+            global_cyto,
+            fb_radius,
+            mode=fb_mode,
+            membrane_image=mem_img,
+        )
+
     iris_log(
         "IRIS-Viewer",
         "Segmentation",
@@ -619,14 +709,23 @@ class PipelineService:
 
         @thread_worker
         def _run_roi() -> Dict[str, Optional[np.ndarray]]:
-            return crop_roi_and_segment_sync(
+            step_errors: List[str] = []
+            res = crop_roi_and_segment_sync(
                 sequence=sequence,
                 image=image,
                 roi_bbox=clamped_bbox,
                 backends=self.backends,
                 device=device,
                 gpu_lock=self._gpu_lock,
+                errors_out=step_errors,
             )
+            if (
+                step_errors
+                and res.get("nuclear") is None
+                and res.get("cytoplasm") is None
+            ):
+                raise RuntimeError("; ".join(step_errors))
+            return res
 
         worker = _run_roi()
 
@@ -657,6 +756,7 @@ def crop_roi_and_segment_sync(
     backends: Dict,
     device: str,
     gpu_lock: Optional[threading.Lock] = None,
+    errors_out: Optional[List[str]] = None,
 ) -> Dict[str, Optional[np.ndarray]]:
     """Clamp ``roi_bbox`` (y0, x0, y1, x1), crop ``image``, and segment synchronously."""
     if image.ndim < 2:
@@ -681,6 +781,8 @@ def crop_roi_and_segment_sync(
         backends=backends,
         device=device,
         gpu_lock=gpu_lock,
+        log_prefix="[Pipeline]",
+        errors_out=errors_out,
     )
     iris_log(
         "IRIS-Viewer",
@@ -702,11 +804,13 @@ def execute_group_sync(
     backends: Dict,
     device: str,
     gpu_lock: Optional[threading.Lock] = None,
+    log_prefix: str = "[Batch]",
+    errors_out: Optional[List[str]] = None,
 ) -> Dict[str, Optional[np.ndarray]]:
-    """Execute a segmentation sequence synchronously for batch processing.
+    """Execute a segmentation sequence synchronously for batch or ROI processing.
 
-    Used by BatchService to sequentially process segmentation steps without nesting
-    napari thread workers.
+    Used by BatchService and ROI Preview to sequentially process segmentation steps
+    without nesting napari thread workers.
 
     Args:
         group_name: Identifier for log reporting.
@@ -715,6 +819,8 @@ def execute_group_sync(
         backends: Dictionary mapping method name to available backend instance.
         device: Target compute device ('cpu', 'cuda', 'mps').
         gpu_lock: Optional threading.Lock to synchronize GPU access across workers.
+        log_prefix: Prefix tag forwarded to step logs.
+        errors_out: Optional list populated with formatted step error strings.
 
     Returns:
         Dict with keys 'nuclear' and 'cytoplasm', each containing an ndarray or None.
@@ -727,8 +833,10 @@ def execute_group_sync(
         backends=backends,
         device=device,
         gpu_lock=gpu_lock,
-        log_prefix="[Batch]",
+        log_prefix=log_prefix,
     ):
-        if event[0] == "group_done":
+        if event[0] == "error" and errors_out is not None:
+            errors_out.append(f"{event[3]} (step {event[2] + 1}): {event[4]}")
+        elif event[0] == "group_done":
             final_res = event[2]
     return final_res

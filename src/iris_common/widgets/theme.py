@@ -175,6 +175,9 @@ _DARK_THEME_BODY = """
         color: #FFFFFF;
         border-top: 2px solid #3A6A9A;
     }
+    QTabBar::scroller {
+        width: 24px;
+    }
     QTableWidget, QTreeWidget {
         background-color: #1b1f27;
         alternate-background-color: #222732;
@@ -536,6 +539,21 @@ def configure_independent_window(dialog: Any) -> Any:
     return dialog
 
 
+def configure_tab_widget(tab_widget: Any) -> Any:
+    """Prevent QTabBar word truncation/elision and sync bold font metrics."""
+    from qtpy.QtCore import Qt
+
+    bar = tab_widget.tabBar()
+    if bar is not None:
+        bar.setElideMode(Qt.ElideNone)
+        bar.setExpanding(False)
+        bar.setUsesScrollButtons(True)
+        font = bar.font()
+        font.setBold(True)
+        bar.setFont(font)
+    return tab_widget
+
+
 def style_section_header(label: Any, *, subtitle: bool = False) -> Any:
     """Apply canonical IRIS section-card header or muted subtitle styling to a QLabel."""
     label.setStyleSheet(SECTION_SUBTITLE_STYLE if subtitle else SECTION_TITLE_STYLE)
@@ -610,6 +628,7 @@ __all__ = [
     "DEFAULT_MARKER_COLORS",
     "DEFAULT_CELLTYPE_PALETTE",
     "configure_independent_window",
+    "configure_tab_widget",
     "style_section_header",
     "create_section_card",
 ]

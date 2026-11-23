@@ -160,7 +160,7 @@ def extract_cell_features(
         active_compartments = set()
 
     has_cyto = cytoplasm_mask is not None and np.max(cytoplasm_mask) > 0
-    whole_mask = cytoplasm_mask if has_cyto else mask
+    whole_mask = np.where(cytoplasm_mask > 0, cytoplasm_mask, mask) if has_cyto else mask
     base_mask = (
         whole_mask
         if (multi_compartment and has_cyto and "whole_cell" in active_compartments)

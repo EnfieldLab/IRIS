@@ -1,5 +1,5 @@
 """
-IRIS-Viewer entry point.
+IRIS entry point.
 """
 import os
 import sys
@@ -38,11 +38,11 @@ from iris_viewer.app.controller import ViewerController
 
 
 def main() -> None:
-    """Launch IRIS-Viewer."""
+    """Launch IRIS."""
     controller = ViewerController()
 
     # Optional: auto-load a session file passed on the command line
-    # e.g. iris-viewer /path/to/session.json
+    # e.g. iris /path/to/session.json
     if len(sys.argv) > 1:
         session_path = Path(sys.argv[1])
         if session_path.is_file() and session_path.suffix.lower() == ".json":

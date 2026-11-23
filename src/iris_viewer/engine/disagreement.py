@@ -8,7 +8,7 @@ quantifies pixel and instance agreement, classifies spatial discrepancies
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -859,9 +859,9 @@ def render_method_comparison_rgba(
     selected_methods: Optional[Sequence[str]] = None,
     method_colors: Optional[Dict[str, str]] = None,
     thickness: int = 2,
-    fill_alpha: float = 0.18,
+    fill_alpha: float = 0.0,
 ) -> Tuple[np.ndarray, Dict[str, str]]:
-    """Render per-method color-coded boundaries and light interior fills into RGBA."""
+    """Render per-method color-coded hollow contours (and optional interior fill) into RGBA."""
     if selected_methods is not None:
         filtered_results = {
             m: segmentation_results[m]
@@ -934,3 +934,121 @@ def render_method_comparison_rgba(
         rgba[bounds, 3] = 1.0
 
     return np.clip(rgba, 0.0, 1.0).astype(np.float32), resolved_colors
+
+
+FALLBACK_PATCH_CHANNEL_COLORS: Tuple[str, ...] = (
+    "#4DA6FF",
+    "#00E676",
+    "#FF4081",
+    "#FFD740",
+    "#00E5FF",
+    "#FF6E40",
+    "#E0E0E0",
+)
+
+_NAMED_RGB_FALLBACKS: Dict[str, Tuple[float, float, float]] = {
+    "gray": (0.85, 0.87, 0.90),
+    "grey": (0.85, 0.87, 0.90),
+    "white": (0.94, 0.95, 0.97),
+    "blue": (0.30, 0.65, 1.0),
+    "cyan": (0.0, 0.90, 1.0),
+    "green": (0.0, 0.90, 0.46),
+    "red": (1.0, 0.25, 0.30),
+    "magenta": (1.0, 0.25, 0.65),
+    "yellow": (1.0, 0.84, 0.25),
+    "orange": (1.0, 0.55, 0.15),
+    "purple": (0.75, 0.35, 0.95),
+}
+
+
+def _color_spec_to_rgb(color_spec: Optional[str], default_hex: str) -> Tuple[float, float, float]:
+    """Resolve a hex string or color name to normalized ``(r, g, b)`` floats."""
+    if isinstance(color_spec, str):
+        cleaned = color_spec.strip()
+        if _is_valid_hex_color(cleaned):
+            return _hex_to_rgb_float(cleaned)
+        lowered = cleaned.lower()
+        if lowered in _NAMED_RGB_FALLBACKS:
+            return _NAMED_RGB_FALLBACKS[lowered]
+        if cleaned:
+            try:
+                import matplotlib.colors as mcolors
+
+                if mcolors.is_color_like(cleaned):
+                    rgb = mcolors.to_rgb(cleaned)
+                    return (float(rgb[0]), float(rgb[1]), float(rgb[2]))
+            except Exception:
+                pass
+    return _hex_to_rgb_float(default_hex)
+
+
+def compose_multichannel_patch_rgb(
+    image: Any,
+    patch_bbox: Tuple[int, int, int, int],
+    channel_indices: Optional[Sequence[int]] = None,
+    channel_colors: Optional[Dict[int, str]] = None,
+    contrast_limits: Optional[Dict[int, Tuple[float, float]]] = None,
+    local_autocontrast: bool = True,
+) -> Optional[np.ndarray]:
+    """Slice a lazy or dense multi-channel image crop and blend selected markers to RGB."""
+    if image is None:
+        return None
+
+    pr0, pc0, pr1, pc1 = (int(v) for v in patch_bbox)
+    if pr1 <= pr0 or pc1 <= pc0:
+        return None
+    patch_h = pr1 - pr0
+    patch_w = pc1 - pc0
+
+    ndim = getattr(image, "ndim", None)
+    shape = getattr(image, "shape", None)
+    if ndim is None or shape is None or ndim < 2:
+        return None
+
+    def _normalize_plane(arr_in: np.ndarray, ch_idx: int) -> np.ndarray:
+        arr = np.asarray(arr_in, dtype=np.float32)
+        if arr.size == 0:
+            return np.zeros((patch_h, patch_w), dtype=np.float32)
+        if not local_autocontrast and contrast_limits and ch_idx in contrast_limits:
+            lo_raw, hi_raw = contrast_limits[ch_idx]
+            lo, hi = float(lo_raw), float(hi_raw)
+        else:
+            lo = float(np.percentile(arr, 1.0))
+            hi = float(np.percentile(arr, 99.5))
+            if hi <= lo:
+                hi = float(np.max(arr))
+        if hi > lo:
+            return np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+        return np.zeros_like(arr, dtype=np.float32)
+
+    if ndim == 2:
+        if channel_indices is not None and len(channel_indices) == 0:
+            return np.zeros((patch_h, patch_w, 3), dtype=np.float32)
+        crop = image[pr0:pr1, pc0:pc1]
+        if hasattr(crop, "compute"):
+            crop = crop.compute()
+        norm = _normalize_plane(np.asarray(crop), 0)
+        color_spec = channel_colors.get(0) if channel_colors else "#D8DCE6"
+        r, g, b = _color_spec_to_rgb(color_spec, "#D8DCE6")
+        rgb = norm[..., None] * np.array([r, g, b], dtype=np.float32)
+        return np.clip(rgb, 0.0, 1.0).astype(np.float32)
+
+    n_channels = int(shape[0])
+    if channel_indices is None:
+        chosen_indices = [0] if n_channels > 0 else []
+    else:
+        chosen_indices = [int(i) for i in channel_indices if 0 <= int(i) < n_channels]
+
+    rgb = np.zeros((patch_h, patch_w, 3), dtype=np.float32)
+    for ch_idx in chosen_indices:
+        # Slice lazily on Dask arrays before calling .compute() so only this patch loads
+        sub = image[ch_idx, pr0:pr1, pc0:pc1]
+        if hasattr(sub, "compute"):
+            sub = sub.compute()
+        norm = _normalize_plane(np.asarray(sub), ch_idx)
+        default_hex = FALLBACK_PATCH_CHANNEL_COLORS[ch_idx % len(FALLBACK_PATCH_CHANNEL_COLORS)]
+        color_spec = channel_colors.get(ch_idx) if channel_colors else default_hex
+        r, g, b = _color_spec_to_rgb(color_spec, default_hex)
+        rgb += norm[..., None] * np.array([r, g, b], dtype=np.float32)
+
+    return np.clip(rgb, 0.0, 1.0).astype(np.float32)

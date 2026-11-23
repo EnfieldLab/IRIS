@@ -609,7 +609,7 @@ def test_round2_disagreement_metrics_method_colors_and_hotspot_inspector(qapp, m
         ]
         assert any("PipeB (QC)" in t for t in canvas_texts)
 
-        # SegmentationStudioDialog: Method Color Key pills + 7-col table + Hotspot Patch Inspector
+        # SegmentationStudioDialog: Method Color Key pills + 8-col table + Hotspot Patch Inspector
         studio = SegmentationStudioDialog(
             ctx=ctrl._ctx,
             disagreement_panel=dp,
@@ -621,7 +621,16 @@ def test_round2_disagreement_metrics_method_colors_and_hotspot_inspector(qapp, m
                 studio.table_issues.horizontalHeaderItem(c).text()
                 for c in range(studio.table_issues.columnCount())
             ]
-            assert headers == ["#", "Region ID", "Category", "Best IoU", "Dice", "Overlap %", "Models"]
+            assert headers == [
+                "#",
+                "Region ID",
+                "Category",
+                "Best IoU",
+                "Dice",
+                "Overlap %",
+                "Models",
+                "Picked",
+            ]
             assert studio.table_issues.rowCount() == len(report.items)
 
             tab_titles = [

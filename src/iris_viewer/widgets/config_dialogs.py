@@ -1,5 +1,5 @@
 """
-IRIS-Viewer Panel Configuration Dialog
+IRIS Panel Configuration Dialog
 Direct adaptation of IRIS/widgets/config_dialogs.py for mapping
 multiplex image channel indices to biological marker labels.
 """
@@ -19,6 +19,8 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
 )
 
+from iris_common.widgets.theme import BUTTON_CTA, BUTTON_PRIMARY, DIALOG_DARK_THEME
+
 
 class ViewerPanelConfigDialog(QDialog):
     """
@@ -30,19 +32,11 @@ class ViewerPanelConfigDialog(QDialog):
         self.num_channels = num_channels
         self.marker_panel = []
 
-        self.setWindowTitle("IRIS-Viewer — Marker Panel Configuration")
+        self.setWindowTitle("IRIS — Marker Panel Configuration")
         self.resize(480, 550)
         self.setModal(True)
 
-        self.setStyleSheet("""
-            QDialog { background-color: #1f232b; color: #E0E0E0; }
-            QLabel { color: #DDD; font-size: 12px; font-weight: bold; }
-            QPushButton { background-color: #3A6A9A; color: white; font-weight: bold; font-size: 12px; border: none; padding: 6px; }
-            QPushButton:hover { background-color: #4A7FBA; }
-            QTableWidget { background-color: #2A2A2A; color: white; gridline-color: #444; border: 1px solid #555; }
-            QHeaderView::section { background-color: #333; color: white; padding: 4px; border: 1px solid #444; }
-            QLineEdit { background-color: #14161d; color: white; border: 1px solid #555; padding: 3px; }
-        """)
+        self.setStyleSheet(DIALOG_DARK_THEME)
         self._init_ui()
 
     def _init_ui(self):
@@ -56,6 +50,7 @@ class ViewerPanelConfigDialog(QDialog):
 
         io_row = QHBoxLayout()
         self.btn_load_sheet = QPushButton("Import Mapping Sheet (.csv / .xlsx)")
+        self.btn_load_sheet.setStyleSheet(BUTTON_PRIMARY)
         self.btn_load_sheet.clicked.connect(self._import_panel_sheet)
         io_row.addWidget(self.btn_load_sheet)
         layout.addLayout(io_row)
@@ -81,6 +76,7 @@ class ViewerPanelConfigDialog(QDialog):
 
         btn_row = QHBoxLayout()
         self.btn_confirm = QPushButton("Confirm Channel to Marker Mapping")
+        self.btn_confirm.setStyleSheet(BUTTON_CTA)
         self.btn_confirm.clicked.connect(self._validate_and_accept)
         btn_row.addStretch()
         btn_row.addWidget(self.btn_confirm)

@@ -40,6 +40,7 @@ class ViewerLegendRow(QWidget):
 
     colorChanged = Signal(str, str)
     visibilityChanged = Signal(str, bool)
+    layerClicked = Signal(str)
     layerDoubleClicked = Signal(str)
 
     def __init__(
@@ -53,6 +54,10 @@ class ViewerLegendRow(QWidget):
         self.name = name
         self.hex_color = "#FFFFFF"
         self._is_qc_method_row = False
+        self._bound_layer = None
+        self._vis_callback = None
+        self._layer_type = "image"
+        self._shapes_click_wired = False
 
         self.layout = QHBoxLayout()
         self.layout.setContentsMargins(2, 2, 2, 2)
@@ -78,14 +83,20 @@ class ViewerLegendRow(QWidget):
         self.label.setStyleSheet(
             "color: #E0E0E0; font-size: 12px; font-weight: bold; background-color: transparent;"
         )
+        self.label.mousePressEvent = self._on_label_click
         self.label.mouseDoubleClickEvent = self._on_double_click
         self.layout.addWidget(self.label)
         self.layout.addStretch()
 
+    def _on_label_click(self, event):
+        if event.button() == Qt.LeftButton:
+            self.layerClicked.emit(self.name)
+        QLabel.mousePressEvent(self.label, event)
+
     def _on_double_click(self, event):
         if event.button() == Qt.LeftButton:
             self.layerDoubleClicked.emit(self.name)
-        super().mouseDoubleClickEvent(event)
+        QLabel.mouseDoubleClickEvent(self.label, event)
 
     def update_swatch_display(self, color_val):
         """Update the color swatch widget dynamically."""
@@ -218,6 +229,46 @@ class ViewerLegendWidget(QWidget):
             for row in self.disagreement_method_rows:
                 row.checkbox.setChecked(state)
 
+    def _unbind_layer_visibility(self, row: ViewerLegendRow) -> None:
+        old_layer = getattr(row, "_bound_layer", None)
+        old_cb = getattr(row, "_vis_callback", None)
+        if old_layer is not None and old_cb is not None:
+            events = getattr(old_layer, "events", None)
+            vis_ev = getattr(events, "visible", None)
+            if vis_ev is not None and hasattr(vis_ev, "disconnect"):
+                try:
+                    vis_ev.disconnect(old_cb)
+                except Exception:
+                    pass
+        row._bound_layer = None
+        row._vis_callback = None
+
+    def _bind_layer_visibility(self, row: ViewerLegendRow, layer) -> None:
+        if getattr(row, "_bound_layer", None) is layer and getattr(row, "_vis_callback", None):
+            return
+        self._unbind_layer_visibility(row)
+        row._bound_layer = layer
+        if layer is not None and hasattr(layer, "events") and hasattr(layer.events, "visible"):
+            def on_layer_vis_change(_event=None, target_lyr=layer, target_row=row) -> None:
+                if getattr(target_row, "_bound_layer", None) is not target_lyr:
+                    return
+                if hasattr(target_lyr, "visible"):
+                    vis = bool(target_lyr.visible)
+                    if target_row.checkbox.isChecked() != vis:
+                        target_row.checkbox.blockSignals(True)
+                        target_row.checkbox.setChecked(vis)
+                        target_row.checkbox.blockSignals(False)
+
+            layer.events.visible.connect(on_layer_vis_change)
+            row._vis_callback = on_layer_vis_change
+
+    def _wire_shapes_click(self, row: ViewerLegendRow) -> None:
+        if not getattr(row, "_shapes_click_wired", False):
+            row.layerClicked.connect(self.layerSelected.emit)
+            row._shapes_click_wired = True
+            row.label.setCursor(Qt.PointingHandCursor)
+            row.label.setToolTip("Click to select and edit ROI on canvas")
+
     def _add_layer_row(
         self,
         layer,
@@ -233,13 +284,27 @@ class ViewerLegendWidget(QWidget):
 
         for existing in target_list:
             if existing.name == name:
+                existing._layer_type = layer_type
                 if initial_color:
                     existing.update_swatch_display(initial_color)
+                if layer is not None and hasattr(layer, "visible"):
+                    vis = bool(layer.visible)
+                    existing.checkbox.blockSignals(True)
+                    existing.checkbox.setChecked(vis)
+                    existing.checkbox.blockSignals(False)
+                self._bind_layer_visibility(existing, layer)
+                if layer_type == "shapes":
+                    self._wire_shapes_click(existing)
                 return
 
-        initial_vis = layer.visible if (layer is not None and hasattr(layer, "visible")) else True
+        initial_vis = (
+            bool(layer.visible) if (layer is not None and hasattr(layer, "visible")) else True
+        )
         row = ViewerLegendRow(name, initial_color, initial_visible=initial_vis)
+        row._layer_type = layer_type
         row.layerDoubleClicked.connect(self.layerSelected.emit)
+        if layer_type == "shapes":
+            self._wire_shapes_click(row)
 
         def on_ui_vis_change(n: str, is_vis: bool) -> None:
             if not self.viewer:
@@ -252,20 +317,24 @@ class ViewerLegendWidget(QWidget):
         def on_ui_col_change(n: str, hex_c: str) -> None:
             if not self.viewer:
                 return
+            cur_type = getattr(row, "_layer_type", layer_type)
             for target_layer in self.viewer.layers:
                 l_base = get_layer_base_name(target_layer)
                 if l_base == n:
-                    if layer_type == "image":
+                    if cur_type == "image":
                         colors = np.array([[0, 0, 0, 0], list(mcolors.to_rgb(hex_c)) + [1]])
                         target_layer.colormap = Colormap(
                             colors, name=f"custom_{target_layer.name}"
                         )
-                    elif layer_type == "labels":
+                    elif cur_type == "labels":
                         target_layer.refresh()
+                    elif cur_type == "shapes":
+                        target_layer.edge_color = hex_c
+                        target_layer.face_color = list(mcolors.to_rgb(hex_c)) + [0.08]
 
             ctx = getattr(self, "ctx", None)
             if ctx:
-                if layer_type == "image":
+                if cur_type == "image":
                     if hasattr(ctx, "state"):
                         if hasattr(ctx.state, "channel_colors"):
                             ctx.state.channel_colors[n] = hex_c
@@ -289,7 +358,7 @@ class ViewerLegendWidget(QWidget):
                         ctx.multi_sample_svc.DEFAULT_COLORS[n] = hex_c
                         ctx.multi_sample_svc.DEFAULT_COLORS[n.lower()] = hex_c
                         ctx.multi_sample_svc.DEFAULT_COLORS[n.upper()] = hex_c
-                else:
+                elif cur_type != "shapes":
                     if hasattr(ctx, "state") and hasattr(ctx.state, "celltype_colors"):
                         ctx.state.celltype_colors[n] = hex_c
                         ctx.state.celltype_colors[n.lower()] = hex_c
@@ -298,20 +367,9 @@ class ViewerLegendWidget(QWidget):
                     if hasattr(ctx, "multi_sample_svc"):
                         ctx.multi_sample_svc.CELLTYPE_COLORS[n.lower()] = hex_c
 
-        def on_layer_vis_change(event) -> None:
-            if (
-                layer is not None
-                and hasattr(layer, "visible")
-                and row.checkbox.isChecked() != layer.visible
-            ):
-                row.checkbox.blockSignals(True)
-                row.checkbox.setChecked(layer.visible)
-                row.checkbox.blockSignals(False)
-
         row.visibilityChanged.connect(on_ui_vis_change)
         row.colorChanged.connect(on_ui_col_change)
-        if layer is not None and hasattr(layer, "events") and hasattr(layer.events, "visible"):
-            layer.events.visible.connect(on_layer_vis_change)
+        self._bind_layer_visibility(row, layer)
         target_layout.addWidget(row)
         target_list.append(row)
 
@@ -322,8 +380,14 @@ class ViewerLegendWidget(QWidget):
             layer, name, initial_color, self.channel_group, self.channel_layout, self.channel_rows
         )
 
-    def add_segmentation_row(self, layer, name: str, initial_color: str) -> None:
-        """Add a single-cell segmentation mask entry to the segmentation section."""
+    def add_segmentation_row(
+        self,
+        layer,
+        name: str,
+        initial_color: str,
+        layer_type: str = "labels",
+    ) -> None:
+        """Add a single-cell segmentation mask or ROI entry to the segmentation section."""
         self._add_layer_row(
             layer,
             name,
@@ -331,7 +395,7 @@ class ViewerLegendWidget(QWidget):
             self.seg_group,
             self.seg_layout,
             self.seg_rows,
-            layer_type="labels",
+            layer_type=layer_type,
         )
 
     def add_disagreement_row(
@@ -465,12 +529,14 @@ class ViewerLegendWidget(QWidget):
         ]:
             for row in list(row_list):
                 if row.name == layer_name:
+                    self._unbind_layer_visibility(row)
                     row_list.remove(row)
                     layout.removeWidget(row)
                     row.deleteLater()
             if group is self.disagreement_group:
                 for row in list(self.disagreement_method_rows):
                     if row.name == layer_name:
+                        self._unbind_layer_visibility(row)
                         self.disagreement_method_rows.remove(row)
                         layout.removeWidget(row)
                         row.deleteLater()
@@ -498,8 +564,12 @@ class ViewerLegendWidget(QWidget):
             (self.ref_ct_group, self.ref_ct_layout, self.ref_ct_rows),
             (self.cn_group, self.cn_layout, self.cn_rows),
         ]:
+            for row in row_list:
+                self._unbind_layer_visibility(row)
             row_list.clear()
             if group is self.disagreement_group:
+                for row in self.disagreement_method_rows:
+                    self._unbind_layer_visibility(row)
                 self.disagreement_method_rows.clear()
             while layout.count():
                 child = layout.takeAt(0)

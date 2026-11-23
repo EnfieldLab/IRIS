@@ -156,13 +156,13 @@ class SampleScopeBar(QWidget):
         self.btn_sample_picker = QPushButton("Choose Samples", self)
         self.btn_sample_picker.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_sample_picker.setStyleSheet(
-            "QPushButton {"
-            " background-color: #2A2E39; color: #F0F2F5;"
-            " border: 1px solid #4B5364; border-radius: 4px;"
-            " padding: 3px 8px; min-height: 22px;"
-            " font-weight: normal; text-align: left;"
-            "}"
-            "QPushButton:hover { border: 1px solid #4B82B5; background-color: #323744; }"
+            "QPushButton { "
+            "background-color: #2A2E39; color: #F0F2F5; "
+            "border: 1px solid #4B5364; border-radius: 4px; "
+            "padding: 3px 8px; min-height: 22px; "
+            "font-weight: normal; text-align: left; "
+            "} "
+            "QPushButton:hover { border: 1px solid #4B82B5; background-color: #323744; } "
             "QPushButton:disabled { color: #777777; background-color: #232832; }"
         )
         self.sample_menu = QMenu(self.btn_sample_picker)

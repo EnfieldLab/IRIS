@@ -8,7 +8,7 @@ model flickering, active mask selection, and Figure Studio export.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -18,12 +18,22 @@ from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
+    QAction,
+    QApplication,
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
+    QMenu,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -31,21 +41,36 @@ from qtpy.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 from skimage.measure import find_contours
 
 from iris_common.widgets.theme import (
-    BUTTON_CTA,
     BUTTON_PRIMARY,
     BUTTON_SECONDARY,
     BUTTON_STUDIO,
     DIALOG_DARK_THEME,
+    configure_tab_widget,
     create_section_card,
     style_section_header,
 )
-from iris_viewer.engine.disagreement import METHOD_QC_COLORS, _extract_masks_for_mode
+from iris_viewer.engine.curation import FINAL_CURATED_MASK_NAME, NO_CELL_CHOICE
+from iris_viewer.engine.disagreement import (
+    METHOD_QC_COLORS,
+    _extract_masks_for_mode,
+    compose_multichannel_patch_rgb,
+)
+from iris_viewer.widgets.disagreement_panel import (
+    build_keep_button_stylesheet,
+    compute_curation_progress,
+    count_item_cells_for_method,
+    extract_item_region_id,
+    resolve_curated_state_from_ctx,
+    resolve_patch_channels_from_ctx,
+    resolve_state_active_image,
+)
 
 CATEGORY_ORDER = [
     "Agreed",
@@ -83,9 +108,15 @@ class SegmentationStudioDialog(QDialog):
         self._current_hotspot_item: Any = None
         self._local_method_colors: Dict[str, str] = {}
         self._pill_widgets: List[QWidget] = []
+        self._hotspot_channel_indices: Optional[List[int]] = None
+        self._hotspot_channel_actions: Dict[int, QAction] = {}
+        self._hotspot_marker_names: List[str] = []
+        self._in_table_selection: bool = False
+        self.hotspot_keep_buttons: Dict[str, QPushButton] = {}
+        self._ordered_keep_methods: List[str] = []
 
         self.setWindowTitle("Segmentation Disagreement QC")
-        self.resize(1260, 800)
+        self.resize(1380, 820)
         self.setWindowFlags(self.windowFlags() | Qt.Window)
         self.setStyleSheet(DIALOG_DARK_THEME)
 
@@ -102,6 +133,15 @@ class SegmentationStudioDialog(QDialog):
         top_bar = QHBoxLayout()
         top_bar.setSpacing(8)
 
+        self.lbl_qc_sample = QLabel("Sample:")
+        self.combo_qc_sample = QComboBox()
+        self.combo_qc_sample.setToolTip("Switch Disagreement QC sample")
+        self.combo_qc_sample.currentTextChanged.connect(self._on_studio_qc_sample_changed)
+        self.lbl_qc_sample.setVisible(False)
+        self.combo_qc_sample.setVisible(False)
+        top_bar.addWidget(self.lbl_qc_sample)
+        top_bar.addWidget(self.combo_qc_sample)
+
         top_bar.addWidget(QLabel("Compare:"))
         self.combo_compare = QComboBox()
         self.combo_compare.addItems(["Nuclear Masks", "Cytoplasm Masks", "Both"])
@@ -114,10 +154,6 @@ class SegmentationStudioDialog(QDialog):
         top_bar.addWidget(QLabel("Reference:"))
         self.combo_ref_method = QComboBox()
         top_bar.addWidget(self.combo_ref_method)
-
-        top_bar.addWidget(QLabel("Active Mask:"))
-        self.combo_active_method = QComboBox()
-        top_bar.addWidget(self.combo_active_method)
 
         top_bar.addWidget(QLabel("IoU:"))
         self.slider_threshold = QSlider(Qt.Horizontal)
@@ -235,50 +271,104 @@ class SegmentationStudioDialog(QDialog):
         nav_row.addWidget(self.lbl_table_count)
         gl.addLayout(nav_row)
 
-        self.table_issues = QTableWidget(0, 7)
+        self.table_issues = QTableWidget(0, 8)
         self.table_issues.setAlternatingRowColors(True)
         self.table_issues.setHorizontalHeaderLabels(
-            ["#", "Region ID", "Category", "Best IoU", "Dice", "Overlap %", "Models"]
+            ["#", "Region ID", "Category", "Best IoU", "Dice", "Overlap %", "Models", "Picked"]
         )
         self.table_issues.verticalHeader().setVisible(False)
         self.table_issues.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table_issues.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table_issues.setSelectionMode(QAbstractItemView.ExtendedSelection)
         header = self.table_issues.horizontalHeader()
-        for col_idx in range(6):
+        for col_idx in (0, 1, 2, 3, 4, 5, 7):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.Stretch)
         self.table_issues.itemSelectionChanged.connect(self._on_table_region_selected)
         gl.addWidget(self.table_issues, 1)
 
-        # Model Flicker & Active Mask Selection Card
-        self.grp_actions, al = create_section_card("Model Flicker & Active Mask")
+        # Final Mask Curation Card
+        self.grp_actions, al = create_section_card(
+            "Final Mask Curation",
+            "Keep per-hotspot picks in the patch inspector, auto-resolve uncurated, or batch/ROI.",
+        )
 
         self.lbl_sel_region_info = QLabel(
-            "No region selected. Click a disputed region in the table above."
+            "No region selected. Click or multi-select disputed regions in the table above."
         )
         style_section_header(self.lbl_sel_region_info, subtitle=True)
         self.lbl_sel_region_info.setWordWrap(True)
         al.addWidget(self.lbl_sel_region_info)
 
-        flicker_row = QHBoxLayout()
-        flicker_row.setSpacing(6)
-        flicker_row.addWidget(QLabel("Flicker:"))
-        self.combo_flicker_a = QComboBox()
-        self.combo_flicker_b = QComboBox()
-        self.btn_flicker = QPushButton("Flicker Pair")
-        self.btn_flicker.setStyleSheet(BUTTON_STUDIO)
-        self.btn_flicker.clicked.connect(self._on_flicker_clicked)
-        flicker_row.addWidget(self.combo_flicker_a, 1)
-        flicker_row.addWidget(QLabel("vs"))
-        flicker_row.addWidget(self.combo_flicker_b, 1)
-        flicker_row.addWidget(self.btn_flicker)
-        al.addLayout(flicker_row)
-
-        self.btn_set_active_mask = QPushButton("Set Active Segmentation Mask")
-        self.btn_set_active_mask.setMinimumHeight(28)
-        self.btn_set_active_mask.setStyleSheet(BUTTON_CTA)
+        # Hidden legacy controls kept intact for programmatic callers
+        self._legacy_base_container = QWidget()
+        self._legacy_base_container.setVisible(False)
+        base_row = QHBoxLayout(self._legacy_base_container)
+        base_row.setContentsMargins(0, 0, 0, 0)
+        self.combo_active_method = QComboBox()
+        self.combo_active_method.setVisible(False)
+        self.btn_set_active_mask = QPushButton("Use Selected Pipeline as Final Mask")
+        self.btn_set_active_mask.setVisible(False)
         self.btn_set_active_mask.clicked.connect(self._on_set_active_mask_clicked)
-        al.addWidget(self.btn_set_active_mask)
+        base_row.addWidget(self.combo_active_method)
+        base_row.addWidget(self.btn_set_active_mask)
+        al.addWidget(self._legacy_base_container)
+
+        auto_row = QHBoxLayout()
+        auto_row.setSpacing(6)
+        self.btn_auto_consensus = QPushButton("Auto-Resolve Uncurated (Peer Consensus)")
+        self.btn_auto_consensus.setMinimumHeight(28)
+        self.btn_auto_consensus.setStyleSheet(BUTTON_PRIMARY)
+        self.btn_auto_consensus.clicked.connect(self._on_auto_consensus_clicked)
+        auto_row.addWidget(self.btn_auto_consensus, 1)
+
+        self.btn_reset_curation = QPushButton("Reset to Reference")
+        self.btn_reset_curation.setMinimumHeight(28)
+        self.btn_reset_curation.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_reset_curation.clicked.connect(self._on_reset_curation_clicked)
+        auto_row.addWidget(self.btn_reset_curation)
+        al.addLayout(auto_row)
+
+        override_row = QHBoxLayout()
+        override_row.setSpacing(6)
+        override_row.addWidget(QLabel("Batch / ROI Method:"))
+        self.combo_override_method = QComboBox()
+        override_row.addWidget(self.combo_override_method, 1)
+        al.addLayout(override_row)
+
+        override_btn_row1 = QHBoxLayout()
+        override_btn_row1.setSpacing(6)
+        self.btn_accept_selected_rows = QPushButton("Keep in Selected Rows")
+        self.btn_accept_selected_rows.setMinimumHeight(26)
+        self.btn_accept_selected_rows.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_accept_selected_rows.clicked.connect(self._on_accept_selected_rows_clicked)
+
+        self.btn_accept_filtered = QPushButton("Keep for All Filtered")
+        self.btn_accept_filtered.setMinimumHeight(26)
+        self.btn_accept_filtered.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_accept_filtered.clicked.connect(self._on_accept_filtered_clicked)
+        override_btn_row1.addWidget(self.btn_accept_selected_rows)
+        override_btn_row1.addWidget(self.btn_accept_filtered)
+        al.addLayout(override_btn_row1)
+
+        override_btn_row2 = QHBoxLayout()
+        override_btn_row2.setSpacing(6)
+        self.btn_draw_curation_roi = QPushButton("Draw ROI")
+        self.btn_draw_curation_roi.setMinimumHeight(26)
+        self.btn_draw_curation_roi.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_draw_curation_roi.clicked.connect(self._on_draw_curation_roi_clicked)
+
+        self.btn_apply_curation_roi = QPushButton("Keep in ROI")
+        self.btn_apply_curation_roi.setMinimumHeight(26)
+        self.btn_apply_curation_roi.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_apply_curation_roi.clicked.connect(self._on_apply_curation_roi_clicked)
+        override_btn_row2.addWidget(self.btn_draw_curation_roi)
+        override_btn_row2.addWidget(self.btn_apply_curation_roi)
+        al.addLayout(override_btn_row2)
+
+        self.lbl_final_mask_status = QLabel("Final Mask: None")
+        style_section_header(self.lbl_final_mask_status, subtitle=True)
+        self.lbl_final_mask_status.setWordWrap(True)
+        al.addWidget(self.lbl_final_mask_status)
 
         gl.addWidget(self.grp_actions)
         ll.addWidget(grp_table)
@@ -286,6 +376,8 @@ class SegmentationStudioDialog(QDialog):
 
         # Right: Analytics, Hotspot Patch Inspector & Feature Exploration Tabs
         self.right_tabs = QTabWidget()
+        configure_tab_widget(self.right_tabs)
+        self.right_tabs.setMinimumWidth(780)
 
         # Tab 0: IoU & Category Breakdown
         tab_iou = QWidget()
@@ -313,16 +405,119 @@ class SegmentationStudioDialog(QDialog):
         th_lyt.setSpacing(6)
 
         lbl_hs_desc = QLabel(
-            "Zoomed patch crop around the selected hotspot showing each method's labeled contour."
+            "Zoomed patch crop around the selected hotspot showing multi-channel fluorescence "
+            "and each method's labeled contour."
         )
         style_section_header(lbl_hs_desc, subtitle=True)
+        lbl_hs_desc.setWordWrap(True)
         th_lyt.addWidget(lbl_hs_desc)
+
+        hs_ctrl_row = QHBoxLayout()
+        hs_ctrl_row.setSpacing(8)
+        hs_ctrl_row.addWidget(QLabel("Markers:"))
+        self.btn_hotspot_channels = QPushButton("Markers: Active")
+        self.btn_hotspot_channels.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_hotspot_channels.setToolTip(
+            "Select which immunofluorescence marker channels to composite under contours"
+        )
+        self.menu_hotspot_channels = QMenu(self.btn_hotspot_channels)
+        self.btn_hotspot_channels.setMenu(self.menu_hotspot_channels)
+        hs_ctrl_row.addWidget(self.btn_hotspot_channels)
+
+        hs_ctrl_row.addWidget(QLabel("View:"))
+        self.combo_hotspot_view = QComboBox()
+        self.combo_hotspot_view.addItems(["Composite Overlay", "Side-by-Side Per Method"])
+        self.combo_hotspot_view.currentIndexChanged.connect(self._on_hotspot_controls_changed)
+        hs_ctrl_row.addWidget(self.combo_hotspot_view)
+
+        hs_ctrl_row.addWidget(QLabel("Contour:"))
+        self.spin_hotspot_lw = QDoubleSpinBox()
+        self.spin_hotspot_lw.setRange(0.5, 5.0)
+        self.spin_hotspot_lw.setSingleStep(0.5)
+        self.spin_hotspot_lw.setValue(2.2)
+        self.spin_hotspot_lw.setSuffix(" px")
+        self.spin_hotspot_lw.valueChanged.connect(self._on_hotspot_controls_changed)
+        hs_ctrl_row.addWidget(self.spin_hotspot_lw)
+
+        self.chk_hotspot_autocontrast = QCheckBox("Local Contrast")
+        self.chk_hotspot_autocontrast.setChecked(True)
+        self.chk_hotspot_autocontrast.setToolTip(
+            "Normalize each marker to 1-99.5% patch intensity so dim markers remain clear"
+        )
+        self.chk_hotspot_autocontrast.toggled.connect(self._on_hotspot_controls_changed)
+        hs_ctrl_row.addWidget(self.chk_hotspot_autocontrast)
+        hs_ctrl_row.addStretch(1)
+        th_lyt.addLayout(hs_ctrl_row)
 
         self.fig_hotspot = Figure(figsize=(6.0, 5.0), dpi=100)
         self.fig_hotspot.patch.set_facecolor("#14161d")
         self.canvas_hotspot = FigureCanvas(self.fig_hotspot)
         self.canvas_hotspot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         th_lyt.addWidget(self.canvas_hotspot, 1)
+
+        # Interactive Bottom Method-Selection Bar for Hotspot Patch Inspector
+        self.hotspot_curation_bar = QFrame()
+        self.hotspot_curation_bar.setStyleSheet(
+            "QFrame { background-color: #1b1f27; border: 1px solid #3c4352; "
+            "border-radius: 6px; }"
+        )
+        hb_lyt = QVBoxLayout(self.hotspot_curation_bar)
+        hb_lyt.setContentsMargins(10, 8, 10, 8)
+        hb_lyt.setSpacing(6)
+
+        hb_hdr_row = QHBoxLayout()
+        hb_hdr_row.setSpacing(10)
+        lbl_keep_hdr = QLabel("Keep segmentation for this hotspot:")
+        lbl_keep_hdr.setStyleSheet(
+            "color: #F0F2F5; font-size: 12px; font-weight: bold; border: none; "
+            "background-color: transparent;"
+        )
+        hb_hdr_row.addWidget(lbl_keep_hdr)
+
+        self.lbl_curation_progress = QLabel("Curated: 0 / 0")
+        self.lbl_curation_progress.setStyleSheet(
+            "color: #CCAA44; font-size: 11px; font-weight: bold; border: none; "
+            "background-color: transparent;"
+        )
+        hb_hdr_row.addWidget(self.lbl_curation_progress)
+        hb_hdr_row.addStretch(1)
+
+        self.chk_auto_advance = QCheckBox("Auto-advance")
+        self.chk_auto_advance.setChecked(True)
+        self.chk_auto_advance.setFocusPolicy(Qt.NoFocus)
+        self.chk_auto_advance.setStyleSheet("border: none; background-color: transparent;")
+        hb_hdr_row.addWidget(self.chk_auto_advance)
+
+        self.btn_skip_hotspot = QPushButton("Skip ->")
+        self.btn_skip_hotspot.setMinimumHeight(26)
+        self.btn_skip_hotspot.setFocusPolicy(Qt.NoFocus)
+        self.btn_skip_hotspot.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_skip_hotspot.setToolTip("Advance to the next hotspot without editing [Space]")
+        self.btn_skip_hotspot.clicked.connect(self._on_skip_hotspot_clicked)
+        hb_hdr_row.addWidget(self.btn_skip_hotspot)
+        hb_lyt.addLayout(hb_hdr_row)
+
+        hb_btns_row = QHBoxLayout()
+        hb_btns_row.setSpacing(8)
+        self.hotspot_keep_grid = QGridLayout()
+        self.hotspot_keep_grid.setContentsMargins(0, 0, 0, 0)
+        self.hotspot_keep_grid.setSpacing(6)
+        hb_btns_row.addLayout(self.hotspot_keep_grid)
+
+        self.btn_keep_no_cell = QPushButton("[0] No Cell / Artifact")
+        self.btn_keep_no_cell.setMinimumHeight(28)
+        self.btn_keep_no_cell.setFocusPolicy(Qt.NoFocus)
+        self.btn_keep_no_cell.setToolTip(
+            "Remove false-positive / artifact cells in this hotspot [0]"
+        )
+        self.btn_keep_no_cell.clicked.connect(
+            lambda _checked=False: self._on_hotspot_keep_method_clicked(NO_CELL_CHOICE)
+        )
+        hb_btns_row.addWidget(self.btn_keep_no_cell)
+        hb_btns_row.addStretch(1)
+        hb_lyt.addLayout(hb_btns_row)
+
+        th_lyt.addWidget(self.hotspot_curation_bar)
         self.right_tabs.addTab(tab_hotspot, "Hotspot Patch Inspector")
 
         # Tab 2: Pairwise Dice & IoU Matrix
@@ -367,7 +562,7 @@ class SegmentationStudioDialog(QDialog):
         f_btn_row = QHBoxLayout()
         f_btn_row.setSpacing(8)
         self.btn_extract_feat = QPushButton("Extract Features Now")
-        self.btn_extract_feat.setStyleSheet(BUTTON_CTA)
+        self.btn_extract_feat.setStyleSheet(BUTTON_PRIMARY)
         self.btn_extract_feat.clicked.connect(self._on_extract_features_clicked)
         f_btn_row.addWidget(self.btn_extract_feat)
         self.btn_export_feat = QPushButton("Export CSV")
@@ -380,8 +575,8 @@ class SegmentationStudioDialog(QDialog):
         self.right_tabs.addTab(tab_feat, "Extracted Features")
 
         splitter.addWidget(self.right_tabs)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 4)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
 
         main_layout.addWidget(splitter, 1)
 
@@ -396,6 +591,10 @@ class SegmentationStudioDialog(QDialog):
             if hasattr(self.disagreement_panel, "selectedMethodsChanged"):
                 self.disagreement_panel.selectedMethodsChanged.connect(
                     lambda _m: self._on_method_colors_synced()
+                )
+            if hasattr(self.disagreement_panel, "curationStateChanged"):
+                self.disagreement_panel.curationStateChanged.connect(
+                    self._on_curation_state_synced
                 )
         if self.feature_panel is not None:
             self.feature_panel.dataExtracted.connect(self._populate_feature_table)
@@ -416,7 +615,7 @@ class SegmentationStudioDialog(QDialog):
             methods = list(getattr(report, "methods", []))
         if not methods and self.disagreement_panel is not None:
             methods = list(getattr(self.disagreement_panel, "_methods", []))
-        return methods
+        return [m for m in methods if m != FINAL_CURATED_MASK_NAME]
 
     def _get_method_colors(self) -> Dict[str, str]:
         methods = self._get_available_methods()
@@ -483,7 +682,7 @@ class SegmentationStudioDialog(QDialog):
             btn_swatch.setToolTip(f"Click to change color for {m_name}")
             btn_swatch.setStyleSheet(
                 f"QPushButton {{ background-color: {hex_c}; border: 1px solid #E0E0E0; "
-                "border-radius: 2px; padding: 0px; }}"
+                "border-radius: 2px; padding: 0px; }"
             )
             btn_swatch.clicked.connect(
                 lambda _checked=False, name=m_name: self._on_pill_color_clicked(name)
@@ -521,31 +720,93 @@ class SegmentationStudioDialog(QDialog):
 
     def _on_method_colors_synced(self) -> None:
         self._rebuild_method_color_pills()
-        self._draw_hotspot_patch(self._current_hotspot_item)
+        self._sync_override_combo()
+        self._refresh_hotspot_curation_bar()
+        self._draw_hotspot_patch(self._active_hotspot_item())
+
+    def _on_curation_state_synced(self) -> None:
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
+
+    def _sync_sample_combo(self) -> None:
+        samples: List[str] = []
+        active_sample: Optional[str] = None
+        if self.disagreement_panel is not None:
+            samples = list(getattr(self.disagreement_panel, "_qc_samples", []) or [])
+            if not samples and hasattr(self.disagreement_panel, "combo_qc_sample"):
+                cb = self.disagreement_panel.combo_qc_sample
+                samples = [cb.itemText(i) for i in range(cb.count()) if cb.itemText(i).strip()]
+            if hasattr(self.disagreement_panel, "get_qc_sample"):
+                active_sample = self.disagreement_panel.get_qc_sample() or None
+        if not samples and self.ctx is not None and getattr(self.ctx, "state", None) is not None:
+            br = getattr(self.ctx.state, "batch_results", {}) or {}
+            samples = [
+                sn
+                for sn, entry in br.items()
+                if isinstance(entry, dict)
+                and any(
+                    isinstance(v, dict)
+                    and (v.get("nuclear") is not None or v.get("cytoplasm") is not None)
+                    for v in entry.values()
+                )
+            ]
+            active_sample = getattr(self.ctx.state, "current_sample_name", None)
+
+        show_sample = len(samples) > 1
+        self.combo_qc_sample.blockSignals(True)
+        self.combo_qc_sample.clear()
+        self.combo_qc_sample.addItems(samples)
+        if active_sample and active_sample in samples:
+            self.combo_qc_sample.setCurrentText(active_sample)
+        elif samples:
+            self.combo_qc_sample.setCurrentIndex(0)
+        self.combo_qc_sample.blockSignals(False)
+        self.lbl_qc_sample.setVisible(show_sample)
+        self.combo_qc_sample.setVisible(show_sample)
+
+    def _on_studio_qc_sample_changed(self, sample_name: str) -> None:
+        clean = str(sample_name).strip()
+        if not clean:
+            return
+        if self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "combo_qc_sample"
+        ):
+            if self.disagreement_panel.combo_qc_sample.currentText() != clean:
+                self.disagreement_panel.combo_qc_sample.setCurrentText(clean)
+        self._current_hotspot_item = None
+        self.refresh_data()
 
     def _sync_method_combos(self) -> None:
         methods = self._get_available_methods()
         report = self._get_report()
         active = None
         if self.ctx is not None and getattr(self.ctx, "state", None) is not None:
-            active = self.ctx.state.active_segmentation_method
+            cand_active = self.ctx.state.active_segmentation_method
+            if cand_active and cand_active != FINAL_CURATED_MASK_NAME:
+                active = cand_active
         if not active and self.disagreement_panel is not None:
             active = self.disagreement_panel.get_active_method()
 
         ref = getattr(report, "reference_method", None) if report is not None else None
+        if ref == FINAL_CURATED_MASK_NAME:
+            ref = None
         if not ref and self.disagreement_panel is not None:
             ref = self.disagreement_panel.get_reference_method()
 
-        second_method = (
-            methods[1]
-            if len(methods) > 1
-            else (methods[0] if methods else None)
-        )
+        override_pref = None
+        if self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "combo_override_method"
+        ):
+            override_pref = self.disagreement_panel.combo_override_method.currentText().strip()
+        if not override_pref:
+            override_pref = (
+                next((m for m in methods if m != ref), methods[0]) if methods else None
+            )
+
         for combo, preferred in (
             (self.combo_ref_method, ref),
             (self.combo_active_method, active),
-            (self.combo_flicker_a, ref),
-            (self.combo_flicker_b, second_method),
         ):
             curr = combo.currentText()
             combo.blockSignals(True)
@@ -557,6 +818,55 @@ class SegmentationStudioDialog(QDialog):
             elif methods:
                 combo.setCurrentIndex(0)
             combo.blockSignals(False)
+
+        self._sync_override_combo(ref=ref, override_pref=override_pref)
+
+    def _get_checked_active_methods(self) -> List[str]:
+        all_methods = self._get_available_methods()
+        if self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "get_selected_methods"
+        ):
+            if getattr(self.disagreement_panel, "_methods", []):
+                return [
+                    m
+                    for m in self.disagreement_panel.get_selected_methods()
+                    if m != FINAL_CURATED_MASK_NAME
+                ]
+        return all_methods
+
+    def _sync_override_combo(
+        self,
+        *,
+        ref: Optional[str] = None,
+        override_pref: Optional[str] = None,
+    ) -> None:
+        checked = self._get_checked_active_methods()
+        pool = checked if checked else self._get_available_methods()
+        items = list(pool)
+        if NO_CELL_CHOICE not in items:
+            items.append(NO_CELL_CHOICE)
+
+        curr = self.combo_override_method.currentText().strip()
+        if override_pref is None and self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "combo_override_method"
+        ):
+            override_pref = self.disagreement_panel.combo_override_method.currentText().strip()
+        if ref is None:
+            ref = self.combo_ref_method.currentText().strip()
+
+        self.combo_override_method.blockSignals(True)
+        self.combo_override_method.clear()
+        self.combo_override_method.addItems(items)
+        if curr in items:
+            self.combo_override_method.setCurrentText(curr)
+        elif override_pref in items:
+            self.combo_override_method.setCurrentText(override_pref)
+        elif pool:
+            alt = next((m for m in pool if m != ref), pool[0])
+            self.combo_override_method.setCurrentText(alt)
+        elif items:
+            self.combo_override_method.setCurrentIndex(0)
+        self.combo_override_method.blockSignals(False)
 
     # Event Handlers
 
@@ -599,20 +909,24 @@ class SegmentationStudioDialog(QDialog):
         if item is None:
             return
         self._current_hotspot_item = item
-        region_id = (
-            item.get("region_id")
-            if isinstance(item, dict)
-            else getattr(item, "region_id", None)
-        )
-        for r in range(self.table_issues.rowCount()):
-            cell_item = self.table_issues.item(r, 1)
-            if cell_item and cell_item.text() == str(region_id):
-                self.table_issues.blockSignals(True)
-                self.table_issues.selectRow(r)
-                self.table_issues.blockSignals(False)
-                break
-        self._update_region_card(item)
+        selected_rows = {idx.row() for idx in self.table_issues.selectedIndexes()}
+        if not self._in_table_selection:
+            region_id = (
+                item.get("region_id")
+                if isinstance(item, dict)
+                else getattr(item, "region_id", None)
+            )
+            for r in range(self.table_issues.rowCount()):
+                cell_item = self.table_issues.item(r, 1)
+                if cell_item and cell_item.text() == str(region_id):
+                    self.table_issues.blockSignals(True)
+                    self.table_issues.selectRow(r)
+                    self.table_issues.blockSignals(False)
+                    selected_rows = {r}
+                    break
+        self._update_region_card(item, selected_count=max(1, len(selected_rows)))
         self._draw_hotspot_patch(item)
+        self._refresh_hotspot_curation_bar()
 
     def _on_prev_issue(self) -> None:
         if self.ctx is not None and getattr(self.ctx, "review_svc", None) is not None:
@@ -623,25 +937,39 @@ class SegmentationStudioDialog(QDialog):
             self.ctx.review_svc.next_issue()
 
     def _on_table_region_selected(self) -> None:
+        selected_rows = sorted({idx.row() for idx in self.table_issues.selectedIndexes()})
+        if not selected_rows:
+            return
         curr_row = self.table_issues.currentRow()
+        if (
+            curr_row < 0
+            or curr_row >= len(self._displayed_items)
+            or curr_row not in selected_rows
+        ):
+            curr_row = selected_rows[-1]
         if curr_row < 0 or curr_row >= len(self._displayed_items):
             return
         item = self._displayed_items[curr_row]
         self._current_hotspot_item = item
-        self._update_region_card(item)
+        self._update_region_card(item, selected_count=len(selected_rows))
         self._draw_hotspot_patch(item)
+        self._refresh_hotspot_curation_bar()
 
         if self.ctx is not None and getattr(self.ctx, "review_svc", None) is not None:
-            rid = getattr(item, "region_id", None)
-            if hasattr(self.ctx.review_svc, "jump_to_region_id") and rid is not None:
-                self.ctx.review_svc.jump_to_region_id(int(rid))
-            else:
-                self.ctx.review_svc.jump_to_issue(curr_row)
+            self._in_table_selection = True
+            try:
+                rid = getattr(item, "region_id", None)
+                if hasattr(self.ctx.review_svc, "jump_to_region_id") and rid is not None:
+                    self.ctx.review_svc.jump_to_region_id(int(rid))
+                else:
+                    self.ctx.review_svc.jump_to_issue(curr_row)
+            finally:
+                self._in_table_selection = False
 
-    def _update_region_card(self, item: Any) -> None:
+    def _update_region_card(self, item: Any, selected_count: int = 1) -> None:
         if item is None:
             self.lbl_sel_region_info.setText(
-                "No region selected. Click a disputed region in the table above."
+                "No region selected. Click or multi-select disputed regions in the table above."
             )
             return
         if isinstance(item, dict):
@@ -659,47 +987,346 @@ class SegmentationStudioDialog(QDialog):
             ov = float(getattr(item, "overlap_coeff", 0.0))
             m_ids = dict(getattr(item, "method_cell_ids", {}))
 
+        sel_tag = (
+            f" &nbsp;|&nbsp; <b>Selected:</b> {selected_count} rows"
+            if selected_count > 1
+            else ""
+        )
         models_txt = ", ".join(f"{m}: {ids}" for m, ids in sorted(m_ids.items())) or "None"
         self.lbl_sel_region_info.setText(
-            f"<b>Region {rid}</b> ({cat}) &nbsp;|&nbsp; "
+            f"<b>Region {rid}</b> ({cat}){sel_tag} &nbsp;|&nbsp; "
             f"<b>IoU:</b> {iou:.3f} &nbsp;|&nbsp; <b>Dice:</b> {dice:.3f} &nbsp;|&nbsp; "
             f"<b>Overlap:</b> {ov * 100.0:.0f}%<br>"
             f"<b>Models:</b> {models_txt}"
         )
 
-    def _on_flicker_clicked(self) -> None:
-        m_a = self.combo_flicker_a.currentText().strip()
-        m_b = self.combo_flicker_b.currentText().strip()
-        if not m_a or not m_b:
-            return
-        if self.ctx is not None and getattr(self.ctx, "review_svc", None) is not None:
-            if hasattr(self.ctx.review_svc, "flicker_models"):
-                self.ctx.review_svc.flicker_models(m_a, m_b)
-        if self.disagreement_panel is not None:
-            self.disagreement_panel.flickerPairRequested.emit(m_a, m_b)
+    def _sync_final_mask_status(self) -> None:
+        txt = "Final Mask: None"
+        if self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "lbl_final_mask_status"
+        ):
+            dp_txt = self.disagreement_panel.lbl_final_mask_status.text().strip()
+            if dp_txt:
+                txt = dp_txt
+        elif self.ctx is not None and getattr(self.ctx, "state", None) is not None:
+            curated = getattr(self.ctx.state, "curated_mask_state", None)
+            if curated is not None:
+                n_cells = int(np.sum(np.unique(curated.nuclear) > 0))
+                txt = (
+                    f"Final Mask: {FINAL_CURATED_MASK_NAME} ({n_cells:,} cells | "
+                    f"base={curated.base_method} | {curated.curated_regions_count} curated)"
+                )
+        self.lbl_final_mask_status.setText(txt)
 
     def _on_set_active_mask_clicked(self) -> None:
         method = self.combo_active_method.currentText().strip()
         if not method:
             return
-        if self.ctx is not None and getattr(self.ctx, "state", None) is not None:
-            self.ctx.state.set_active_segmentation_method(method)
-        if self.ctx is not None and getattr(self.ctx, "review_svc", None) is not None:
-            if hasattr(self.ctx.review_svc, "set_active_mask_layers"):
-                self.ctx.review_svc.set_active_mask_layers(method)
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "use_pipeline_as_final_mask"):
+            review_svc.use_pipeline_as_final_mask(method)
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "useSingleModelRequested"
+        ):
+            self.disagreement_panel.useSingleModelRequested.emit(method)
+        else:
+            if self.ctx is not None and getattr(self.ctx, "state", None) is not None:
+                self.ctx.state.set_active_segmentation_method(method)
+            if review_svc is not None and hasattr(review_svc, "set_active_mask_layers"):
+                review_svc.set_active_mask_layers(method)
+            if self.feature_panel is not None:
+                self.feature_panel.update_mask_sources(
+                    self._get_available_methods(), active=method
+                )
         if self.disagreement_panel is not None:
+            self.disagreement_panel.combo_active_method.blockSignals(True)
             self.disagreement_panel.combo_active_method.setCurrentText(method)
-        if self.feature_panel is not None:
-            self.feature_panel.update_mask_sources(
-                self._get_available_methods(), active=method
+            self.disagreement_panel.combo_active_method.blockSignals(False)
+        self._sync_final_mask_status()
+
+    def _on_auto_consensus_clicked(self) -> None:
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "auto_adjudicate_final_mask"):
+            review_svc.auto_adjudicate_final_mask()
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "autoConsensusRequested"
+        ):
+            self.disagreement_panel.autoConsensusRequested.emit()
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
+
+    def _on_reset_curation_clicked(self) -> None:
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "reset_curated_mask_to_reference"):
+            review_svc.reset_curated_mask_to_reference()
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "resetCurationRequested"
+        ):
+            self.disagreement_panel.resetCurationRequested.emit()
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
+
+    def _on_skip_hotspot_clicked(self) -> None:
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "next_issue"):
+            review_svc.next_issue()
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "skipHotspotRequested"
+        ):
+            self.disagreement_panel.skipHotspotRequested.emit()
+
+    def _on_hotspot_keep_method_clicked(self, choice: str) -> None:
+        target_item = self._active_hotspot_item()
+        auto_adv = bool(self.chk_auto_advance.isChecked())
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "curate_hotspot_and_advance"):
+            review_svc.curate_hotspot_and_advance(
+                choice,
+                item=target_item,
+                auto_advance=auto_adv,
             )
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "hotspotKeepRequested"
+        ):
+            self.disagreement_panel.hotspotKeepRequested.emit(choice, auto_adv)
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
+
+    def _refresh_hotspot_curation_bar(self) -> None:
+        checked = self._get_checked_active_methods()
+        item = self._active_hotspot_item()
+        rid = extract_item_region_id(item)
+        curated = resolve_curated_state_from_ctx(self.ctx)
+        decisions = (
+            getattr(curated, "region_decisions", {}) or {} if curated is not None else {}
+        )
+        decision = decisions.get(rid) if rid is not None else None
+
+        state = getattr(self.ctx, "state", None) if self.ctx is not None else None
+        seg_results = getattr(state, "segmentation_results", {}) or {} if state is not None else {}
+        compare_mode = (
+            self.combo_compare.currentText() if hasattr(self, "combo_compare") else "Nuclear Masks"
+        )
+        colors = self._get_method_colors()
+
+        if checked != self._ordered_keep_methods:
+            for btn in self.hotspot_keep_buttons.values():
+                self.hotspot_keep_grid.removeWidget(btn)
+                btn.deleteLater()
+            self.hotspot_keep_buttons.clear()
+            self._ordered_keep_methods = list(checked)
+            max_cols = 4
+            for idx, m_name in enumerate(self._ordered_keep_methods):
+                btn = QPushButton()
+                btn.setMinimumHeight(28)
+                btn.setFocusPolicy(Qt.NoFocus)
+                btn.setToolTip(f"Keep '{m_name}' segmentation for this hotspot [{idx + 1}]")
+                btn.clicked.connect(
+                    lambda _checked=False, m=m_name: self._on_hotspot_keep_method_clicked(m)
+                )
+                self.hotspot_keep_grid.addWidget(btn, idx // max_cols, idx % max_cols)
+                self.hotspot_keep_buttons[m_name] = btn
+
+        for idx, m_name in enumerate(self._ordered_keep_methods):
+            btn = self.hotspot_keep_buttons[m_name]
+            n_cells = count_item_cells_for_method(item, m_name, seg_results, compare_mode)
+            is_picked = decision == m_name
+            suffix = " [Picked]" if is_picked else ""
+            btn.setText(f"[{idx + 1}] Keep {m_name} ({n_cells}){suffix}")
+            hex_c = colors.get(m_name, METHOD_QC_COLORS[idx % len(METHOD_QC_COLORS)])
+            btn.setStyleSheet(build_keep_button_stylesheet(hex_c, active=is_picked))
+            btn.setEnabled(item is not None)
+
+        is_no_cell = decision == NO_CELL_CHOICE
+        self.btn_keep_no_cell.setText(
+            "[0] No Cell / Artifact" + (" [Picked]" if is_no_cell else "")
+        )
+        self.btn_keep_no_cell.setStyleSheet(
+            build_keep_button_stylesheet("#CC4444", active=is_no_cell, is_no_cell=True)
+        )
+        self.btn_keep_no_cell.setEnabled(item is not None)
+
+        cur_x, tot_y = compute_curation_progress(
+            self.ctx, curated, fallback_items=self._displayed_items
+        )
+        self.lbl_curation_progress.setText(f"Curated: {cur_x} / {tot_y}")
+
+    def _on_accept_selected_rows_clicked(self) -> None:
+        source_method = self.combo_override_method.currentText().strip()
+        if not source_method:
+            return
+        selected_rows = sorted({idx.row() for idx in self.table_issues.selectedIndexes()})
+        items = [
+            self._displayed_items[r]
+            for r in selected_rows
+            if 0 <= r < len(self._displayed_items)
+        ]
+        if not items and self._current_hotspot_item is not None:
+            items = [self._current_hotspot_item]
+        if not items:
+            return
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "apply_hotspot_curation"):
+            review_svc.apply_hotspot_curation(
+                source_method, items=items, use_filtered_category=False
+            )
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "overrideHotspotsRequested"
+        ):
+            self.disagreement_panel.overrideHotspotsRequested.emit(source_method, items)
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
+
+    def _on_accept_filtered_clicked(self) -> None:
+        source_method = self.combo_override_method.currentText().strip()
+        if not source_method:
+            return
+        items = list(self._displayed_items) if self._displayed_items else None
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "apply_hotspot_curation"):
+            review_svc.apply_hotspot_curation(
+                source_method, items=items, use_filtered_category=True
+            )
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "overrideHotspotsRequested"
+        ):
+            self.disagreement_panel.overrideHotspotsRequested.emit(source_method, None)
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
+
+    def _on_draw_curation_roi_clicked(self) -> None:
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "draw_curation_roi"):
+            review_svc.draw_curation_roi()
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "drawCurationRoiRequested"
+        ):
+            self.disagreement_panel.drawCurationRoiRequested.emit()
+
+    def _on_apply_curation_roi_clicked(self) -> None:
+        source_method = self.combo_override_method.currentText().strip()
+        if not source_method:
+            return
+        review_svc = getattr(self.ctx, "review_svc", None) if self.ctx is not None else None
+        if review_svc is not None and hasattr(review_svc, "apply_roi_curation"):
+            review_svc.apply_roi_curation(source_method)
+        elif self.disagreement_panel is not None and hasattr(
+            self.disagreement_panel, "applyCurationRoiRequested"
+        ):
+            self.disagreement_panel.applyCurationRoiRequested.emit(source_method)
+        self._update_table_picked_column()
+        self._refresh_hotspot_curation_bar()
+        self._sync_final_mask_status()
 
     # Refresh & Plotting
 
+    def _active_hotspot_item(self) -> Any:
+        if self._current_hotspot_item is not None:
+            return self._current_hotspot_item
+        return self._displayed_items[0] if self._displayed_items else None
+
+    def _on_hotspot_controls_changed(self, *_args: Any) -> None:
+        self._draw_hotspot_patch(self._active_hotspot_item())
+
+    def _update_hotspot_channel_button_text(self) -> None:
+        markers = self._hotspot_marker_names
+        if not markers:
+            self.btn_hotspot_channels.setText("Markers: N/A")
+            return
+        chosen = [idx for idx, act in self._hotspot_channel_actions.items() if act.isChecked()]
+        if not chosen:
+            self.btn_hotspot_channels.setText("Markers: None")
+        elif len(chosen) <= 2:
+            names = [markers[i] for i in chosen if i < len(markers)]
+            self.btn_hotspot_channels.setText(f"Markers: {', '.join(names)}")
+        else:
+            self.btn_hotspot_channels.setText(f"Markers: {len(chosen)}/{len(markers)}")
+
+    def _sync_hotspot_channels_from_viewer(self, *, redraw: bool = True) -> None:
+        marker_names, active_idxs, _colors, _limits = resolve_patch_channels_from_ctx(self.ctx)
+        self._hotspot_marker_names = marker_names
+        self._hotspot_channel_indices = None
+        active_set = set(active_idxs)
+        for idx, act in self._hotspot_channel_actions.items():
+            act.blockSignals(True)
+            act.setChecked(idx in active_set)
+            act.blockSignals(False)
+        self._update_hotspot_channel_button_text()
+        if redraw:
+            self._draw_hotspot_patch(self._active_hotspot_item())
+
+    def _set_all_hotspot_channels(self, checked: bool) -> None:
+        self._hotspot_channel_indices = (
+            list(sorted(self._hotspot_channel_actions.keys())) if checked else []
+        )
+        for act in self._hotspot_channel_actions.values():
+            act.blockSignals(True)
+            act.setChecked(checked)
+            act.blockSignals(False)
+        self._update_hotspot_channel_button_text()
+        self._draw_hotspot_patch(self._active_hotspot_item())
+
+    def _on_hotspot_channel_action_toggled(self, _checked: bool = False) -> None:
+        self._hotspot_channel_indices = [
+            idx for idx, act in sorted(self._hotspot_channel_actions.items()) if act.isChecked()
+        ]
+        self._update_hotspot_channel_button_text()
+        self._draw_hotspot_patch(self._active_hotspot_item())
+
+    def _rebuild_hotspot_channel_menu(self) -> None:
+        marker_names, active_idxs, _colors, _limits = resolve_patch_channels_from_ctx(self.ctx)
+        self._hotspot_marker_names = marker_names
+        self.menu_hotspot_channels.clear()
+        self._hotspot_channel_actions.clear()
+
+        if not marker_names:
+            empty_act = QAction("No channels available", self.menu_hotspot_channels)
+            empty_act.setEnabled(False)
+            self.menu_hotspot_channels.addAction(empty_act)
+            self._update_hotspot_channel_button_text()
+            return
+
+        act_sync = QAction("Sync Active Viewer Channels", self.menu_hotspot_channels)
+        act_sync.triggered.connect(lambda: self._sync_hotspot_channels_from_viewer(redraw=True))
+        self.menu_hotspot_channels.addAction(act_sync)
+
+        act_all = QAction("Select All Markers", self.menu_hotspot_channels)
+        act_all.triggered.connect(lambda: self._set_all_hotspot_channels(True))
+        self.menu_hotspot_channels.addAction(act_all)
+
+        act_clear = QAction("Clear Markers (Dark Background)", self.menu_hotspot_channels)
+        act_clear.triggered.connect(lambda: self._set_all_hotspot_channels(False))
+        self.menu_hotspot_channels.addAction(act_clear)
+
+        self.menu_hotspot_channels.addSeparator()
+
+        if self._hotspot_channel_indices is None:
+            checked_set = set(active_idxs)
+        else:
+            checked_set = {i for i in self._hotspot_channel_indices if 0 <= i < len(marker_names)}
+
+        for idx, m_name in enumerate(marker_names):
+            act = QAction(f"[{idx + 1}] {m_name}", self.menu_hotspot_channels)
+            act.setCheckable(True)
+            act.setChecked(idx in checked_set)
+            act.toggled.connect(self._on_hotspot_channel_action_toggled)
+            self.menu_hotspot_channels.addAction(act)
+            self._hotspot_channel_actions[idx] = act
+
+        self._update_hotspot_channel_button_text()
+
     def refresh_data(self) -> None:
         """Refresh KPI badges, method color key, disputed table, plots, and feature preview."""
+        self._sync_sample_combo()
         self._sync_method_combos()
         self._rebuild_method_color_pills()
+        self._rebuild_hotspot_channel_menu()
+        self._sync_final_mask_status()
         report = self._get_report()
         methods = self._get_available_methods()
 
@@ -737,6 +1364,7 @@ class SegmentationStudioDialog(QDialog):
         if preview_item is None and self._displayed_items:
             preview_item = self._displayed_items[0]
         self._draw_hotspot_patch(preview_item)
+        self._refresh_hotspot_curation_bar()
 
         if (
             self.feature_panel is not None
@@ -771,6 +1399,11 @@ class SegmentationStudioDialog(QDialog):
         self.lbl_table_count.setText(f"{len(items)} regions")
         self.table_issues.setRowCount(len(items))
 
+        curated = resolve_curated_state_from_ctx(self.ctx)
+        decisions = (
+            getattr(curated, "region_decisions", {}) or {} if curated is not None else {}
+        )
+
         for row_idx, it in enumerate(items):
             if isinstance(it, dict):
                 rid = it.get("region_id", row_idx + 1)
@@ -790,6 +1423,8 @@ class SegmentationStudioDialog(QDialog):
             models_summary = ", ".join(
                 f"{m} ({len(ids)})" for m, ids in sorted(m_ids.items())
             )
+            rid_int = extract_item_region_id(it)
+            picked_val = str(decisions.get(rid_int, "Ref")) if rid_int is not None else "Ref"
 
             item_idx = QTableWidgetItem(str(row_idx + 1))
             item_rid = QTableWidgetItem(str(rid))
@@ -798,6 +1433,7 @@ class SegmentationStudioDialog(QDialog):
             item_dice = QTableWidgetItem(f"{dice:.3f}")
             item_ov = QTableWidgetItem(f"{ov * 100.0:.1f}%")
             item_models = QTableWidgetItem(models_summary)
+            item_picked = self._make_picked_table_item(picked_val)
 
             for centered in (item_idx, item_rid, item_iou, item_dice, item_ov):
                 centered.setTextAlignment(Qt.AlignCenter)
@@ -809,19 +1445,85 @@ class SegmentationStudioDialog(QDialog):
             self.table_issues.setItem(row_idx, 4, item_dice)
             self.table_issues.setItem(row_idx, 5, item_ov)
             self.table_issues.setItem(row_idx, 6, item_models)
+            self.table_issues.setItem(row_idx, 7, item_picked)
 
         self.table_issues.blockSignals(False)
+        self._refresh_hotspot_curation_bar()
+
+    @staticmethod
+    def _make_picked_table_item(picked_val: str) -> QTableWidgetItem:
+        cell = QTableWidgetItem(picked_val)
+        cell.setTextAlignment(Qt.AlignCenter)
+        if picked_val == "Ref":
+            cell.setForeground(QColor("#9AA4B2"))
+        elif picked_val == NO_CELL_CHOICE:
+            cell.setForeground(QColor("#FF6B6B"))
+        elif picked_val.startswith("Consensus:"):
+            cell.setForeground(QColor("#44AAFF"))
+        else:
+            cell.setForeground(QColor("#34C759"))
+        return cell
+
+    def _update_table_picked_column(self) -> None:
+        """Update column 7 ('Picked') in place without clearing row selection or scroll."""
+        curated = resolve_curated_state_from_ctx(self.ctx)
+        decisions = (
+            getattr(curated, "region_decisions", {}) or {} if curated is not None else {}
+        )
+        self.table_issues.blockSignals(True)
+        try:
+            n_rows = self.table_issues.rowCount()
+            for row_idx, it in enumerate(self._displayed_items):
+                if row_idx >= n_rows:
+                    break
+                rid_int = extract_item_region_id(it)
+                picked_val = str(decisions.get(rid_int, "Ref")) if rid_int is not None else "Ref"
+                existing_item = self.table_issues.item(row_idx, 7)
+                if existing_item is None:
+                    self.table_issues.setItem(row_idx, 7, self._make_picked_table_item(picked_val))
+                else:
+                    existing_item.setText(picked_val)
+                    styled = self._make_picked_table_item(picked_val)
+                    existing_item.setForeground(styled.foreground())
+        finally:
+            self.table_issues.blockSignals(False)
+
+    @staticmethod
+    def _plot_method_contours_on_ax(
+        ax: Any,
+        sub_mask: np.ndarray,
+        hex_color: str,
+        target_cids: Sequence[int],
+        base_lw: float,
+    ) -> None:
+        """Draw solid target and dashed neighboring cell contours on *ax*."""
+        unique_ids = [int(v) for v in np.unique(sub_mask) if v > 0]
+        neighbor_lw = max(0.8, base_lw * 0.45)
+        for cid in unique_ids:
+            is_target = cid in target_cids
+            lw = base_lw if is_target else neighbor_lw
+            alpha = 0.95 if is_target else 0.40
+            ls = "-" if is_target else "--"
+            for cnt in find_contours((sub_mask == cid).astype(np.float32), 0.5):
+                ax.plot(
+                    cnt[:, 1],
+                    cnt[:, 0],
+                    color=hex_color,
+                    linewidth=lw,
+                    linestyle=ls,
+                    alpha=alpha,
+                )
 
     def _draw_hotspot_patch(self, item: Any) -> None:
-        """Render zoomed crop around *item* with each method's labeled colored contour."""
+        """Render zoomed crop around *item* with selected markers and method contours."""
         self.fig_hotspot.clear()
-        ax = self.fig_hotspot.add_subplot(111)
-        ax.set_facecolor("#14161d")
 
         state = getattr(self.ctx, "state", None) if self.ctx is not None else None
         seg_results = getattr(state, "segmentation_results", {}) if state is not None else {}
 
         if item is None or not seg_results:
+            ax = self.fig_hotspot.add_subplot(111)
+            ax.set_facecolor("#14161d")
             ax.text(
                 0.5,
                 0.5,
@@ -867,13 +1569,15 @@ class SegmentationStudioDialog(QDialog):
             filtered_seg = (
                 {m: seg_results[m] for m in selected if m in seg_results}
                 if selected
-                else seg_results
+                else {m: r for m, r in seg_results.items() if m != FINAL_CURATED_MASK_NAME}
             )
             masks = _extract_masks_for_mode(filtered_seg, compare_mode)
         except Exception:
             masks = {}
 
         if not masks:
+            ax = self.fig_hotspot.add_subplot(111)
+            ax.set_facecolor("#14161d")
             ax.text(
                 0.5,
                 0.5,
@@ -898,49 +1602,82 @@ class SegmentationStudioDialog(QDialog):
         if pr1 <= pr0 or pc1 <= pc0:
             pr0, pc0, pr1, pc1 = 0, 0, h, w
 
-        # Background raw image crop (slice lazy Dask arrays BEFORE computing!)
-        bg_crop = self._extract_bg_crop(state, pr0, pc0, pr1, pc1)
-        if bg_crop is not None:
-            ax.imshow(bg_crop, cmap="gray", origin="upper", interpolation="nearest")
+        marker_names, active_idxs, ch_colors, ch_limits = resolve_patch_channels_from_ctx(self.ctx)
+        if self._hotspot_channel_indices is None:
+            chosen_indices = list(active_idxs)
         else:
-            ax.imshow(
-                np.zeros((pr1 - pr0, pc1 - pc0), dtype=np.float32),
-                cmap="gray",
-                vmin=0.0,
-                vmax=1.0,
-                origin="upper",
-            )
+            chosen_indices = [
+                i for i in self._hotspot_channel_indices if 0 <= i < len(marker_names)
+            ]
+
+        raw_img = resolve_state_active_image(state)
+        rgb_patch = compose_multichannel_patch_rgb(
+            raw_img,
+            (pr0, pc0, pr1, pc1),
+            channel_indices=chosen_indices,
+            channel_colors=ch_colors,
+            contrast_limits=ch_limits,
+            local_autocontrast=bool(self.chk_hotspot_autocontrast.isChecked()),
+        )
+        if rgb_patch is None:
+            rgb_patch = np.zeros((pr1 - pr0, pc1 - pc0, 3), dtype=np.float32)
 
         method_colors = self._get_method_colors()
+        base_lw = float(self.spin_hotspot_lw.value())
+        view_mode = self.combo_hotspot_view.currentText()
+        shown_markers = [(marker_names[i], ch_colors.get(i, "#E0E0E0")) for i in chosen_indices]
+
+        if view_mode == "Side-by-Side Per Method" and len(masks) > 1:
+            n_m = len(masks)
+            ncols = n_m if n_m <= 3 else int(np.ceil(n_m / 2))
+            nrows = 1 if n_m <= 3 else 2
+            for idx, (m_name, mask) in enumerate(masks.items()):
+                ax = self.fig_hotspot.add_subplot(nrows, ncols, idx + 1)
+                ax.set_facecolor("#14161d")
+                ax.imshow(rgb_patch, origin="upper", interpolation="nearest")
+                hex_c = method_colors.get(m_name, METHOD_QC_COLORS[idx % len(METHOD_QC_COLORS)])
+                cids = m_cell_ids.get(m_name, [])
+                self._plot_method_contours_on_ax(ax, mask[pr0:pr1, pc0:pc1], hex_c, cids, base_lw)
+                ax.set_xlim(-0.5, (pc1 - pc0) - 0.5)
+                ax.set_ylim((pr1 - pr0) - 0.5, -0.5)
+                ax.tick_params(colors="#CCCCCC", labelsize=7)
+                for spine in ax.spines.values():
+                    spine.set_color(hex_c)
+                ax.set_title(
+                    f"{m_name} ({len(cids)} cell{'s' if len(cids) != 1 else ''})",
+                    color=hex_c,
+                    fontsize=9.5,
+                    fontweight="bold",
+                )
+            marker_summary = ", ".join(m for m, _ in shown_markers) or "None"
+            self.fig_hotspot.suptitle(
+                f"Hotspot #{rid} ({cat}) | IoU={best_iou:.2f}, Dice={dice:.2f}, "
+                f"Overlap={ov * 100.0:.0f}% | Markers: {marker_summary}",
+                color="#FFFFFF",
+                fontsize=10,
+                fontweight="bold",
+            )
+            self.fig_hotspot.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
+            self.canvas_hotspot.draw()
+            return
+
+        ax = self.fig_hotspot.add_subplot(111)
+        ax.set_facecolor("#14161d")
+        ax.imshow(rgb_patch, origin="upper", interpolation="nearest")
+
+        method_handles = []
         for idx, (m_name, mask) in enumerate(masks.items()):
             hex_c = method_colors.get(m_name, METHOD_QC_COLORS[idx % len(METHOD_QC_COLORS)])
-            sub = mask[pr0:pr1, pc0:pc1]
             cids = m_cell_ids.get(m_name, [])
-            unique_ids = [int(v) for v in np.unique(sub) if v > 0]
-
-            for cid in unique_ids:
-                is_target = cid in cids
-                lw = 2.2 if is_target else 1.0
-                alpha = 0.95 if is_target else 0.40
-                ls = "-" if is_target else "--"
-                contours = find_contours((sub == cid).astype(np.float32), 0.5)
-                for cnt in contours:
-                    ax.plot(
-                        cnt[:, 1],
-                        cnt[:, 0],
-                        color=hex_c,
-                        linewidth=lw,
-                        linestyle=ls,
-                        alpha=alpha,
-                    )
-
-            ax.plot(
+            self._plot_method_contours_on_ax(ax, mask[pr0:pr1, pc0:pc1], hex_c, cids, base_lw)
+            (h_line,) = ax.plot(
                 [],
                 [],
                 color=hex_c,
                 linewidth=2.4,
                 label=f"{m_name} ({len(cids)} cell{'s' if len(cids) != 1 else ''})",
             )
+            method_handles.append(h_line)
 
         ax.set_xlim(-0.5, (pc1 - pc0) - 0.5)
         ax.set_ylim((pr1 - pr0) - 0.5, -0.5)
@@ -956,16 +1693,35 @@ class SegmentationStudioDialog(QDialog):
             fontsize=10,
             fontweight="bold",
         )
-        leg = ax.legend(
-            loc="upper right",
-            facecolor="#1f232b",
-            edgecolor="#4A5162",
-            labelcolor="#FFFFFF",
-            fontsize=8,
-        )
-        if leg is not None:
-            leg.set_title("Methods", prop={"size": 8, "weight": "bold"})
-            leg.get_title().set_color("#E0E0E0")
+
+        if method_handles:
+            leg_methods = ax.legend(
+                handles=method_handles,
+                loc="upper right",
+                facecolor="#1f232b",
+                edgecolor="#4A5162",
+                labelcolor="#FFFFFF",
+                fontsize=8,
+            )
+            leg_methods.set_title("Methods", prop={"size": 8, "weight": "bold"})
+            leg_methods.get_title().set_color("#E0E0E0")
+            ax.add_artist(leg_methods)
+
+        if shown_markers:
+            marker_handles = [
+                ax.plot([], [], color=mc, linewidth=4.0, label=mn)[0]
+                for mn, mc in shown_markers
+            ]
+            leg_markers = ax.legend(
+                handles=marker_handles,
+                loc="lower left",
+                facecolor="#1f232b",
+                edgecolor="#4A5162",
+                labelcolor="#FFFFFF",
+                fontsize=8,
+            )
+            leg_markers.set_title("Markers", prop={"size": 8, "weight": "bold"})
+            leg_markers.get_title().set_color("#E0E0E0")
 
         self.fig_hotspot.tight_layout()
         self.canvas_hotspot.draw()
@@ -974,33 +1730,11 @@ class SegmentationStudioDialog(QDialog):
     def _extract_bg_crop(
         state: Any, pr0: int, pc0: int, pr1: int, pc1: int
     ) -> Optional[np.ndarray]:
-        if state is None:
+        img = resolve_state_active_image(state)
+        rgb = compose_multichannel_patch_rgb(img, (pr0, pc0, pr1, pc1), channel_indices=[0])
+        if rgb is None:
             return None
-        img = getattr(state, "raw_image", None)
-        if img is None:
-            multi = getattr(state, "multi_sample_images", None)
-            if multi:
-                cur = getattr(state, "current_sample_name", None)
-                img = multi.get(cur) if cur in multi else next(iter(multi.values()))
-        if img is None:
-            return None
-
-        try:
-            crop = img[pr0:pr1, pc0:pc1] if img.ndim == 2 else img[0, pr0:pr1, pc0:pc1]
-            if hasattr(crop, "compute"):
-                crop = crop.compute()
-            arr = np.asarray(crop, dtype=np.float32)
-            if arr.size == 0:
-                return None
-            lo = float(np.percentile(arr, 1.0))
-            hi = float(np.percentile(arr, 99.5))
-            if hi > lo:
-                arr = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
-            else:
-                arr = np.zeros_like(arr, dtype=np.float32)
-            return arr
-        except Exception:
-            return None
+        return np.max(rgb, axis=-1)
 
     def _draw_iou_and_category_plot(self) -> None:
         self.fig_iou.clear()
@@ -1101,6 +1835,25 @@ class SegmentationStudioDialog(QDialog):
         dice_df = getattr(report, "pairwise_dice", None) if report is not None else None
         iou_df = getattr(report, "pairwise_iou", None) if report is not None else None
         summary_df = getattr(report, "model_summary", None) if report is not None else None
+
+        if dice_df is not None and not getattr(dice_df, "empty", True):
+            dice_df = dice_df.drop(
+                index=FINAL_CURATED_MASK_NAME,
+                columns=FINAL_CURATED_MASK_NAME,
+                errors="ignore",
+            )
+        if iou_df is not None and not getattr(iou_df, "empty", True):
+            iou_df = iou_df.drop(
+                index=FINAL_CURATED_MASK_NAME,
+                columns=FINAL_CURATED_MASK_NAME,
+                errors="ignore",
+            )
+        if (
+            summary_df is not None
+            and not getattr(summary_df, "empty", True)
+            and "Method" in summary_df.columns
+        ):
+            summary_df = summary_df[summary_df["Method"] != FINAL_CURATED_MASK_NAME]
 
         if (
             dice_df is None
@@ -1225,12 +1978,23 @@ class SegmentationStudioDialog(QDialog):
         per_cell_iou = dict(getattr(report, "per_cell_iou", {})) if report is not None else {}
         cat_counts = dict(getattr(report, "category_counts", {})) if report is not None else {}
         model_summary = (
-            report.model_summary.copy()
-            if (report is not None and getattr(report, "model_summary", None) is not None)
+            report.model_summary[
+                report.model_summary["Method"] != FINAL_CURATED_MASK_NAME
+            ].copy()
+            if (
+                report is not None
+                and getattr(report, "model_summary", None) is not None
+                and not report.model_summary.empty
+                and "Method" in report.model_summary.columns
+            )
             else pd.DataFrame(columns=["Method", "Cell_Count", "Median_Area_px", "Mean_Peer_IoU"])
         )
         pairwise_iou = (
-            report.pairwise_iou.copy()
+            report.pairwise_iou.drop(
+                index=FINAL_CURATED_MASK_NAME,
+                columns=FINAL_CURATED_MASK_NAME,
+                errors="ignore",
+            ).copy()
             if (report is not None and getattr(report, "pairwise_iou", None) is not None)
             else pd.DataFrame()
         )
@@ -1318,6 +2082,40 @@ class SegmentationStudioDialog(QDialog):
         self.publication_dialog.show()
         self.publication_dialog.raise_()
         self.publication_dialog.activateWindow()
+
+    def keyPressEvent(self, event) -> None:
+        if event is None:
+            return
+        if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            super().keyPressEvent(event)
+            return
+        focus_w = QApplication.focusWidget()
+        if isinstance(focus_w, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
+            super().keyPressEvent(event)
+            return
+
+        if self.right_tabs.currentIndex() == 1 or focus_w is None or self.isAncestorOf(focus_w):
+            key = event.key()
+            if Qt.Key_1 <= key <= Qt.Key_9:
+                idx = key - Qt.Key_1
+                if 0 <= idx < len(self._ordered_keep_methods):
+                    btn = self.hotspot_keep_buttons.get(self._ordered_keep_methods[idx])
+                    if btn is not None and btn.isEnabled():
+                        btn.click()
+                        event.accept()
+                        return
+            elif key == Qt.Key_0:
+                if self.btn_keep_no_cell.isEnabled():
+                    self.btn_keep_no_cell.click()
+                    event.accept()
+                    return
+            elif key == Qt.Key_Space:
+                if self.btn_skip_hotspot.isEnabled():
+                    self.btn_skip_hotspot.click()
+                    event.accept()
+                    return
+
+        super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
         if self.publication_dialog is not None:

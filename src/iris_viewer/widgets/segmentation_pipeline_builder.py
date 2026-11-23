@@ -10,6 +10,7 @@ Sequence and pipeline builder widgets for segmentation methods:
 """
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional, Sequence
 
 from qtpy.QtCore import QTimer, Signal
@@ -35,7 +36,7 @@ from qtpy.QtWidgets import (
 )
 
 from iris_common.widgets.sample_scope import SCOPE_ACTIVE, SampleScopeBar
-from iris_viewer.engine.pipeline import SegmentationStep
+from iris_viewer.engine.pipeline import SegmentationSequence, SegmentationStep
 from iris_viewer.widgets.styles import (
     BUTTON_CTA,
     BUTTON_DANGER,
@@ -45,6 +46,7 @@ from iris_viewer.widgets.styles import (
     SECTION_SUBTITLE_STYLE,
     SECTION_TITLE_STYLE,
     SHARED_DARK_THEME,
+    configure_tab_widget,
     create_section_card,
 )
 
@@ -105,8 +107,6 @@ class StepWidget(QFrame):
     STEP_TYPES = [
         "Nuclear (Base)",
         "Cytoplasm (Sequential)",
-        "Cytoplasm (Dilate Remaining)",
-        "Independent (Whole-Cell / Dual)",
     ]
 
     def __init__(self, available_methods: List[str], markers: List[str], parent=None):
@@ -211,11 +211,125 @@ class StepWidget(QFrame):
         row_area.addStretch()
         main_layout.addWidget(self.row_min_area_widget)
 
+        # Collapsible Advanced Native Parameters section
+        self.btn_toggle_advanced = QPushButton("More Native Parameters")
+        self.btn_toggle_advanced.setCheckable(True)
+        self.btn_toggle_advanced.setChecked(False)
+        self.btn_toggle_advanced.setStyleSheet(BUTTON_SECONDARY)
+        self.btn_toggle_advanced.toggled.connect(self._on_advanced_toggled)
+        main_layout.addWidget(self.btn_toggle_advanced)
+
+        self.advanced_container = QFrame()
+        self.advanced_container.setObjectName("AdvancedParamsFrame")
+        self.advanced_container.setStyleSheet(
+            "QFrame#AdvancedParamsFrame { background-color: #1b1f27; "
+            "border: 1px solid #3c4352; border-radius: 6px; padding: 4px; }"
+        )
+        adv_layout = QVBoxLayout(self.advanced_container)
+        adv_layout.setContentsMargins(6, 6, 6, 6)
+        adv_layout.setSpacing(6)
+
+        self._build_shared_advanced_section(adv_layout)
+
+        self.adv_stack = QStackedWidget()
+        self._build_cellpose_advanced_page()
+        self._build_stardist_advanced_page()
+        self._build_instanseg_advanced_page()
+        self._build_cellsam_advanced_page()
+        self.adv_page_empty = QWidget()
+        self.adv_stack.addWidget(self.adv_page_empty)
+        adv_layout.addWidget(self.adv_stack)
+
+        self.advanced_container.setVisible(False)
+        main_layout.addWidget(self.advanced_container)
+
         # Wire paramsChanged across all controls
         self._wire_param_signals()
 
         self._on_method_changed(self.combo_method.currentText())
         self._on_type_changed(self.combo_type.currentText())
+
+    def _on_advanced_toggled(self, checked: bool) -> None:
+        self.advanced_container.setVisible(bool(checked))
+
+    def _build_shared_advanced_section(self, parent_layout: QVBoxLayout) -> None:
+        shared_form = QFormLayout()
+        shared_form.setContentsMargins(0, 0, 0, 0)
+        shared_form.setSpacing(4)
+
+        row_area_sigma = QHBoxLayout()
+        self.spin_max_cell_area = QSpinBox()
+        self.spin_max_cell_area.setRange(0, 1000000)
+        self.spin_max_cell_area.setValue(0)
+        self.spin_max_cell_area.setSpecialValueText("Unlimited")
+        self.spin_gaussian_sigma = QDoubleSpinBox()
+        self.spin_gaussian_sigma.setRange(0.0, 10.0)
+        self.spin_gaussian_sigma.setSingleStep(0.1)
+        self.spin_gaussian_sigma.setDecimals(2)
+        self.spin_gaussian_sigma.setValue(0.0)
+        row_area_sigma.addWidget(self.spin_max_cell_area, 1)
+        row_area_sigma.addWidget(QLabel("Sigma:"))
+        row_area_sigma.addWidget(self.spin_gaussian_sigma)
+        shared_form.addRow("Max Area (px):", row_area_sigma)
+
+        row_norm = QHBoxLayout()
+        self.spin_norm_pmin = QDoubleSpinBox()
+        self.spin_norm_pmin.setRange(0.0, 50.0)
+        self.spin_norm_pmin.setSingleStep(0.5)
+        self.spin_norm_pmin.setDecimals(1)
+        self.spin_norm_pmin.setValue(1.0)
+        self.spin_norm_pmax = QDoubleSpinBox()
+        self.spin_norm_pmax.setRange(50.0, 100.0)
+        self.spin_norm_pmax.setSingleStep(0.1)
+        self.spin_norm_pmax.setDecimals(1)
+        self.spin_norm_pmax.setValue(99.8)
+        row_norm.addWidget(self.spin_norm_pmin, 1)
+        row_norm.addWidget(QLabel("Max %:"))
+        row_norm.addWidget(self.spin_norm_pmax, 1)
+        shared_form.addRow("Norm Min %:", row_norm)
+
+        row_expand = QHBoxLayout()
+        self.spin_expand_radius = QSpinBox()
+        self.spin_expand_radius.setRange(0, 200)
+        self.spin_expand_radius.setValue(0)
+        self.combo_expansion_mode = QComboBox()
+        self.combo_expansion_mode.addItems(["distance", "watershed"])
+        row_expand.addWidget(self.spin_expand_radius)
+        row_expand.addWidget(QLabel("Mode:"))
+        row_expand.addWidget(self.combo_expansion_mode, 1)
+        shared_form.addRow("Expand (px):", row_expand)
+
+        self.txt_extra_kwargs = QLineEdit()
+        self.txt_extra_kwargs.setPlaceholderText('{"key": value} optional native kwargs')
+        self.txt_extra_kwargs.textChanged.connect(self._validate_extra_kwargs_style)
+        shared_form.addRow("Extra Kwargs:", self.txt_extra_kwargs)
+
+        parent_layout.addLayout(shared_form)
+
+    def _validate_extra_kwargs_style(self, text: str) -> None:
+        raw = text.strip()
+        if not raw:
+            self.txt_extra_kwargs.setStyleSheet("")
+            return
+        try:
+            parsed = json.loads(raw)
+            valid = isinstance(parsed, dict)
+        except (ValueError, TypeError):
+            valid = False
+        if valid:
+            self.txt_extra_kwargs.setStyleSheet("")
+        else:
+            self.txt_extra_kwargs.setStyleSheet("QLineEdit { border: 1px solid #CC4444; }")
+
+    def _parse_extra_kwargs(self) -> dict:
+        raw = self.txt_extra_kwargs.text().strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _build_cellpose_page(self) -> None:
         self.page_cp = QWidget()
@@ -225,7 +339,13 @@ class StepWidget(QFrame):
 
         row_top = QHBoxLayout()
         self.combo_cp_model = QComboBox()
-        self.combo_cp_model.addItems(["cpsam", "cyto3", "cyto2", "cyto", "nuclei"])
+        self.combo_cp_model.setEditable(True)
+        self.combo_cp_model.addItems(
+            ["cpsam", "cpsam_v2", "cpdino", "cpdino-vitb", "cyto3", "cyto2", "cyto", "nuclei"]
+        )
+        self.combo_cp_model.setToolTip(
+            "Select built-in Cellpose model or enter custom weights path"
+        )
         self.spin_cp_diam = QSpinBox()
         self.spin_cp_diam.setRange(0, 500)
         self.spin_cp_diam.setSpecialValueText("Auto")
@@ -253,13 +373,71 @@ class StepWidget(QFrame):
         form.addRow("Flow Thresh:", row_thresh)
 
         self.spin_cp_tile_overlap = QDoubleSpinBox()
-        self.spin_cp_tile_overlap.setRange(0.0, 0.5)
+        self.spin_cp_tile_overlap.setRange(0.05, 0.50)
         self.spin_cp_tile_overlap.setSingleStep(0.05)
         self.spin_cp_tile_overlap.setDecimals(2)
-        self.spin_cp_tile_overlap.setValue(0.1)
+        self.spin_cp_tile_overlap.setValue(0.10)
+        self.spin_cp_tile_overlap.setToolTip(
+            "Fraction of tile overlap (0.05 to 0.50 required by Cellpose tiling)"
+        )
         form.addRow("Tile Overlap:", self.spin_cp_tile_overlap)
 
         self.stack.addWidget(self.page_cp)
+
+    def _build_cellpose_advanced_page(self) -> None:
+        self.adv_page_cp = QWidget()
+        form = QFormLayout(self.adv_page_cp)
+        form.setContentsMargins(0, 2, 0, 2)
+        form.setSpacing(4)
+
+        row_flags = QHBoxLayout()
+        self.chk_cp_resample = QCheckBox("Resample")
+        self.chk_cp_resample.setChecked(True)
+        self.chk_cp_augment = QCheckBox("Augment")
+        self.chk_cp_augment.setChecked(False)
+        self.chk_cp_normalize = QCheckBox("Normalize")
+        self.chk_cp_normalize.setChecked(True)
+        row_flags.addWidget(self.chk_cp_resample)
+        row_flags.addWidget(self.chk_cp_augment)
+        row_flags.addWidget(self.chk_cp_normalize)
+        form.addRow("Options:", row_flags)
+
+        row_niter = QHBoxLayout()
+        self.spin_cp_niter = QSpinBox()
+        self.spin_cp_niter.setRange(0, 2000)
+        self.spin_cp_niter.setValue(0)
+        self.spin_cp_niter.setSpecialValueText("Auto")
+        self.spin_cp_max_size_frac = QDoubleSpinBox()
+        self.spin_cp_max_size_frac.setRange(0.05, 1.00)
+        self.spin_cp_max_size_frac.setSingleStep(0.05)
+        self.spin_cp_max_size_frac.setDecimals(2)
+        self.spin_cp_max_size_frac.setValue(0.40)
+        row_niter.addWidget(self.spin_cp_niter, 1)
+        row_niter.addWidget(QLabel("Max Size Frac:"))
+        row_niter.addWidget(self.spin_cp_max_size_frac)
+        form.addRow("Niter:", row_niter)
+
+        row_batch = QHBoxLayout()
+        self.spin_cp_batch_size = QSpinBox()
+        self.spin_cp_batch_size.setRange(1, 64)
+        self.spin_cp_batch_size.setValue(8)
+        self.spin_cp_bsize = QSpinBox()
+        self.spin_cp_bsize.setRange(0, 1024)
+        self.spin_cp_bsize.setValue(0)
+        self.spin_cp_bsize.setSpecialValueText("Auto")
+        row_batch.addWidget(self.spin_cp_batch_size, 1)
+        row_batch.addWidget(QLabel("Tile bsize:"))
+        row_batch.addWidget(self.spin_cp_bsize, 1)
+        form.addRow("Batch Size:", row_batch)
+
+        self.spin_cp_stitch = QDoubleSpinBox()
+        self.spin_cp_stitch.setRange(0.0, 1.0)
+        self.spin_cp_stitch.setSingleStep(0.05)
+        self.spin_cp_stitch.setDecimals(2)
+        self.spin_cp_stitch.setValue(0.0)
+        form.addRow("Stitch Thresh:", self.spin_cp_stitch)
+
+        self.adv_stack.addWidget(self.adv_page_cp)
 
     def _build_stardist_page(self) -> None:
         self.page_sd = QWidget()
@@ -268,6 +446,7 @@ class StepWidget(QFrame):
         form.setSpacing(4)
 
         self.combo_sd_model = QComboBox()
+        self.combo_sd_model.setEditable(True)
         self.combo_sd_model.addItems(
             ["2D_versatile_fluo", "2D_versatile_he", "2D_paper_dsb2018"]
         )
@@ -297,6 +476,41 @@ class StepWidget(QFrame):
 
         self.stack.addWidget(self.page_sd)
 
+    def _build_stardist_advanced_page(self) -> None:
+        self.adv_page_sd = QWidget()
+        form = QFormLayout(self.adv_page_sd)
+        form.setContentsMargins(0, 2, 0, 2)
+        form.setSpacing(4)
+
+        self.chk_sd_model_defaults = QCheckBox("Use Model Default Thresholds")
+        self.chk_sd_model_defaults.setChecked(False)
+        self.chk_sd_model_defaults.toggled.connect(self._on_sd_defaults_toggled)
+        form.addRow("", self.chk_sd_model_defaults)
+
+        row_scale = QHBoxLayout()
+        self.spin_sd_scale = QDoubleSpinBox()
+        self.spin_sd_scale.setRange(0.10, 5.00)
+        self.spin_sd_scale.setSingleStep(0.10)
+        self.spin_sd_scale.setDecimals(2)
+        self.spin_sd_scale.setValue(1.00)
+        self.chk_sd_sparse = QCheckBox("Sparse")
+        self.chk_sd_sparse.setChecked(True)
+        row_scale.addWidget(self.spin_sd_scale, 1)
+        row_scale.addWidget(self.chk_sd_sparse)
+        form.addRow("Scale:", row_scale)
+
+        self.spin_sd_n_tiles = QSpinBox()
+        self.spin_sd_n_tiles.setRange(0, 32)
+        self.spin_sd_n_tiles.setValue(0)
+        self.spin_sd_n_tiles.setSpecialValueText("Auto")
+        form.addRow("Tiles Grid (n):", self.spin_sd_n_tiles)
+
+        self.adv_stack.addWidget(self.adv_page_sd)
+
+    def _on_sd_defaults_toggled(self, checked: bool) -> None:
+        self.spin_sd_prob.setEnabled(not checked)
+        self.spin_sd_nms.setEnabled(not checked)
+
     def _build_instanseg_page(self) -> None:
         self.page_is = QWidget()
         form = QFormLayout(self.page_is)
@@ -304,8 +518,18 @@ class StepWidget(QFrame):
         form.setSpacing(4)
 
         self.combo_is_model = QComboBox()
+        self.combo_is_model.setEditable(True)
         self.combo_is_model.addItems(
-            ["fluorescence_nuclei_and_cells", "fluorescence_nuclei", "brightfield_nuclei"]
+            [
+                "fluorescence_nuclei_and_cells",
+                "fluorescence_nuclei",
+                "fluorescence_cells",
+                "brightfield_nuclei",
+            ]
+        )
+        self.combo_is_model.setToolTip(
+            "InstanSeg model/head preset ('fluorescence_nuclei' and 'fluorescence_cells' "
+            "run the nuclear or whole-cell head of fluorescence_nuclei_and_cells)"
         )
         form.addRow("Model:", self.combo_is_model)
 
@@ -322,6 +546,84 @@ class StepWidget(QFrame):
         form.addRow("Pixel Size (µm):", row_opts)
 
         self.stack.addWidget(self.page_is)
+
+    def _build_instanseg_advanced_page(self) -> None:
+        self.adv_page_is = QWidget()
+        form = QFormLayout(self.adv_page_is)
+        form.setContentsMargins(0, 2, 0, 2)
+        form.setSpacing(4)
+
+        self.combo_is_target = QComboBox()
+        self.combo_is_target.addItems(["auto", "all_outputs", "nuclei", "cells"])
+        form.addRow("Target Head:", self.combo_is_target)
+
+        self.chk_is_resolve = QCheckBox("Resolve Cell & Nucleus")
+        self.chk_is_resolve.setChecked(True)
+        form.addRow("", self.chk_is_resolve)
+
+        row_norm = QHBoxLayout()
+        self.chk_is_normalise = QCheckBox("Normalise")
+        self.chk_is_normalise.setChecked(True)
+        self.chk_is_rescale_output = QCheckBox("Rescale Output")
+        self.chk_is_rescale_output.setChecked(True)
+        row_norm.addWidget(self.chk_is_normalise)
+        row_norm.addWidget(self.chk_is_rescale_output)
+        form.addRow("Pipeline:", row_norm)
+
+        row_tile = QHBoxLayout()
+        self.spin_is_tile_size = QSpinBox()
+        self.spin_is_tile_size.setRange(128, 2048)
+        self.spin_is_tile_size.setSingleStep(64)
+        self.spin_is_tile_size.setValue(512)
+        self.spin_is_batch_size = QSpinBox()
+        self.spin_is_batch_size.setRange(1, 32)
+        self.spin_is_batch_size.setValue(1)
+        row_tile.addWidget(self.spin_is_tile_size, 1)
+        row_tile.addWidget(QLabel("Batch:"))
+        row_tile.addWidget(self.spin_is_batch_size)
+        form.addRow("Tile Size:", row_tile)
+
+        row_seed = QHBoxLayout()
+        self.spin_is_seed_thresh = QDoubleSpinBox()
+        self.spin_is_seed_thresh.setRange(0.0, 1.0)
+        self.spin_is_seed_thresh.setSingleStep(0.05)
+        self.spin_is_seed_thresh.setDecimals(2)
+        self.spin_is_seed_thresh.setValue(0.0)
+        self.spin_is_seed_thresh.setSpecialValueText("Auto")
+        self.spin_is_mask_thresh = QDoubleSpinBox()
+        self.spin_is_mask_thresh.setRange(0.0, 1.0)
+        self.spin_is_mask_thresh.setSingleStep(0.05)
+        self.spin_is_mask_thresh.setDecimals(2)
+        self.spin_is_mask_thresh.setValue(0.0)
+        self.spin_is_mask_thresh.setSpecialValueText("Auto")
+        row_seed.addWidget(self.spin_is_seed_thresh, 1)
+        row_seed.addWidget(QLabel("Mask:"))
+        row_seed.addWidget(self.spin_is_mask_thresh, 1)
+        form.addRow("Seed Thresh:", row_seed)
+
+        row_peak = QHBoxLayout()
+        self.spin_is_peak_dist = QSpinBox()
+        self.spin_is_peak_dist.setRange(0, 50)
+        self.spin_is_peak_dist.setValue(0)
+        self.spin_is_peak_dist.setSpecialValueText("Auto")
+        self.spin_is_overlap_thresh = QDoubleSpinBox()
+        self.spin_is_overlap_thresh.setRange(0.0, 1.0)
+        self.spin_is_overlap_thresh.setSingleStep(0.05)
+        self.spin_is_overlap_thresh.setDecimals(2)
+        self.spin_is_overlap_thresh.setValue(0.0)
+        self.spin_is_overlap_thresh.setSpecialValueText("Auto")
+        row_peak.addWidget(self.spin_is_peak_dist, 1)
+        row_peak.addWidget(QLabel("Overlap:"))
+        row_peak.addWidget(self.spin_is_overlap_thresh, 1)
+        form.addRow("Peak Dist:", row_peak)
+
+        self.spin_is_window_size = QSpinBox()
+        self.spin_is_window_size.setRange(0, 512)
+        self.spin_is_window_size.setValue(0)
+        self.spin_is_window_size.setSpecialValueText("Auto")
+        form.addRow("Window Size:", self.spin_is_window_size)
+
+        self.adv_stack.addWidget(self.adv_page_is)
 
     def _build_cellsam_page(self) -> None:
         self.page_cs = QWidget()
@@ -343,6 +645,77 @@ class StepWidget(QFrame):
 
         self.stack.addWidget(self.page_cs)
 
+    def _build_cellsam_advanced_page(self) -> None:
+        self.adv_page_cs = QWidget()
+        form = QFormLayout(self.adv_page_cs)
+        form.setContentsMargins(0, 2, 0, 2)
+        form.setSpacing(4)
+
+        self.txt_cs_model_path = QLineEdit()
+        self.txt_cs_model_path.setPlaceholderText("Optional local checkpoint path")
+        form.addRow("Model Path:", self.txt_cs_model_path)
+
+        row_wsi = QHBoxLayout()
+        self.combo_cs_use_wsi = QComboBox()
+        self.combo_cs_use_wsi.addItems(["auto", "true", "false"])
+        self.chk_cs_low_contrast = QCheckBox("Low Contrast")
+        self.chk_cs_low_contrast.setChecked(False)
+        row_wsi.addWidget(self.combo_cs_use_wsi, 1)
+        row_wsi.addWidget(self.chk_cs_low_contrast)
+        form.addRow("WSI Mode:", row_wsi)
+
+        row_block = QHBoxLayout()
+        self.spin_cs_block_size = QSpinBox()
+        self.spin_cs_block_size.setRange(128, 2048)
+        self.spin_cs_block_size.setSingleStep(32)
+        self.spin_cs_block_size.setValue(400)
+        self.spin_cs_overlap = QSpinBox()
+        self.spin_cs_overlap.setRange(16, 512)
+        self.spin_cs_overlap.setSingleStep(8)
+        self.spin_cs_overlap.setValue(56)
+        row_block.addWidget(self.spin_cs_block_size, 1)
+        row_block.addWidget(QLabel("Overlap:"))
+        row_block.addWidget(self.spin_cs_overlap, 1)
+        form.addRow("Block Size:", row_block)
+
+        row_iou = QHBoxLayout()
+        self.spin_cs_iou_depth = QSpinBox()
+        self.spin_cs_iou_depth.setRange(16, 512)
+        self.spin_cs_iou_depth.setSingleStep(8)
+        self.spin_cs_iou_depth.setValue(56)
+        self.spin_cs_iou_thresh = QDoubleSpinBox()
+        self.spin_cs_iou_thresh.setRange(0.05, 0.95)
+        self.spin_cs_iou_thresh.setSingleStep(0.05)
+        self.spin_cs_iou_thresh.setDecimals(2)
+        self.spin_cs_iou_thresh.setValue(0.50)
+        row_iou.addWidget(self.spin_cs_iou_depth, 1)
+        row_iou.addWidget(QLabel("IoU Thresh:"))
+        row_iou.addWidget(self.spin_cs_iou_thresh, 1)
+        form.addRow("IoU Depth:", row_iou)
+
+        row_flags_a = QHBoxLayout()
+        self.chk_cs_gauge_size = QCheckBox("Gauge Size")
+        self.chk_cs_gauge_size.setChecked(False)
+        self.chk_cs_postprocess = QCheckBox("Postprocess")
+        self.chk_cs_postprocess.setChecked(False)
+        self.chk_cs_remove_bounds = QCheckBox("Remove Bounds")
+        self.chk_cs_remove_bounds.setChecked(False)
+        row_flags_a.addWidget(self.chk_cs_gauge_size)
+        row_flags_a.addWidget(self.chk_cs_postprocess)
+        row_flags_a.addWidget(self.chk_cs_remove_bounds)
+        form.addRow("WSI / Clean:", row_flags_a)
+
+        row_flags_b = QHBoxLayout()
+        self.chk_cs_fast = QCheckBox("Fast")
+        self.chk_cs_fast.setChecked(False)
+        self.chk_cs_all_channels = QCheckBox("Use All Channels")
+        self.chk_cs_all_channels.setChecked(False)
+        row_flags_b.addWidget(self.chk_cs_fast)
+        row_flags_b.addWidget(self.chk_cs_all_channels)
+        form.addRow("Mode:", row_flags_b)
+
+        self.adv_stack.addWidget(self.adv_page_cs)
+
     def _wire_param_signals(self) -> None:
         emit_fn = lambda *_args: self.paramsChanged.emit()  # noqa: E731
         for combo in (
@@ -353,6 +726,9 @@ class StepWidget(QFrame):
             self.combo_sd_model,
             self.combo_is_model,
             self.combo_dilate_mode,
+            self.combo_expansion_mode,
+            self.combo_is_target,
+            self.combo_cs_use_wsi,
         ):
             combo.currentTextChanged.connect(emit_fn)
 
@@ -364,17 +740,60 @@ class StepWidget(QFrame):
             self.spin_cp_flow,
             self.spin_cp_cellprob,
             self.spin_cp_tile_overlap,
+            self.spin_cp_niter,
+            self.spin_cp_max_size_frac,
+            self.spin_cp_batch_size,
+            self.spin_cp_bsize,
+            self.spin_cp_stitch,
             self.spin_sd_prob,
             self.spin_sd_nms,
+            self.spin_sd_scale,
+            self.spin_sd_n_tiles,
             self.spin_is_pixel_size,
+            self.spin_is_tile_size,
+            self.spin_is_batch_size,
+            self.spin_is_seed_thresh,
+            self.spin_is_mask_thresh,
+            self.spin_is_peak_dist,
+            self.spin_is_overlap_thresh,
+            self.spin_is_window_size,
             self.spin_cs_bbox,
+            self.spin_cs_block_size,
+            self.spin_cs_overlap,
+            self.spin_cs_iou_depth,
+            self.spin_cs_iou_thresh,
             self.spin_min_cell_area,
+            self.spin_max_cell_area,
+            self.spin_gaussian_sigma,
+            self.spin_norm_pmin,
+            self.spin_norm_pmax,
+            self.spin_expand_radius,
         ):
             spin.valueChanged.connect(emit_fn)
 
-        self.chk_sd_norm.toggled.connect(emit_fn)
-        self.chk_is_cleanup.toggled.connect(emit_fn)
+        for chk in (
+            self.chk_sd_norm,
+            self.chk_sd_model_defaults,
+            self.chk_sd_sparse,
+            self.chk_is_cleanup,
+            self.chk_is_resolve,
+            self.chk_is_normalise,
+            self.chk_is_rescale_output,
+            self.chk_cp_resample,
+            self.chk_cp_augment,
+            self.chk_cp_normalize,
+            self.chk_cs_low_contrast,
+            self.chk_cs_gauge_size,
+            self.chk_cs_postprocess,
+            self.chk_cs_remove_bounds,
+            self.chk_cs_fast,
+            self.chk_cs_all_channels,
+        ):
+            chk.toggled.connect(emit_fn)
+
         self.txt_cs_token.textChanged.connect(emit_fn)
+        self.txt_cs_model_path.textChanged.connect(emit_fn)
+        self.txt_extra_kwargs.textChanged.connect(emit_fn)
 
     def _update_dropdowns(self) -> None:
         curr_nuc = self.combo_nuc.currentText()
@@ -414,21 +833,24 @@ class StepWidget(QFrame):
     def _on_method_changed(self, method_name: str) -> None:
         if method_name == "Cellpose":
             self.stack.setCurrentWidget(self.page_cp)
+            self.adv_stack.setCurrentWidget(self.adv_page_cp)
         elif method_name == "StarDist":
             self.stack.setCurrentWidget(self.page_sd)
+            self.adv_stack.setCurrentWidget(self.adv_page_sd)
         elif method_name == "InstanSeg":
             self.stack.setCurrentWidget(self.page_is)
+            self.adv_stack.setCurrentWidget(self.adv_page_is)
         elif method_name == "CellSAM":
             self.stack.setCurrentWidget(self.page_cs)
+            self.adv_stack.setCurrentWidget(self.adv_page_cs)
         else:
             self.stack.setCurrentWidget(self.page_empty)
+            self.adv_stack.setCurrentWidget(self.adv_page_empty)
 
         step_type = self.combo_type.currentText()
         if step_type == "Nuclear (Base)":
             self.lbl_mem.hide()
             self.combo_mem.hide()
-        elif step_type == "Cytoplasm (Dilate Remaining)":
-            self._on_dilate_mode_changed(self.combo_dilate_mode.currentText())
         elif step_type == "Cytoplasm (Sequential)" and method_name == "StarDist":
             self.lbl_mem.hide()
             self.combo_mem.hide()
@@ -443,45 +865,19 @@ class StepWidget(QFrame):
             self.combo_mem.setVisible(show_mem)
 
     def _on_type_changed(self, step_type: str) -> None:
-        if step_type == "Nuclear (Base)":
-            self.combo_method.show()
-            self.lbl_algorithm.show()
-            self.spin_dilate.hide()
-            self.lbl_dilate.hide()
-            self.lbl_dilate_mode.hide()
-            self.combo_dilate_mode.hide()
-            self.lbl_nuc.show()
-            self.combo_nuc.show()
-            self.lbl_mem.hide()
-            self.combo_mem.hide()
-            self.stack.show()
-            self.row_min_area_widget.show()
-        elif step_type in ("Cytoplasm (Sequential)", "Independent (Whole-Cell / Dual)"):
-            self.combo_method.show()
-            self.lbl_algorithm.show()
-            self.spin_dilate.hide()
-            self.lbl_dilate.hide()
-            self.lbl_dilate_mode.hide()
-            self.combo_dilate_mode.hide()
-            self.lbl_nuc.show()
-            self.combo_nuc.show()
-            self.lbl_mem.show()
-            self.combo_mem.show()
-            self.stack.show()
-            self.row_min_area_widget.show()
-            self._on_method_changed(self.combo_method.currentText())
-        elif step_type == "Cytoplasm (Dilate Remaining)":
-            self.combo_method.hide()
-            self.lbl_algorithm.hide()
-            self.lbl_dilate.show()
-            self.spin_dilate.show()
-            self.lbl_dilate_mode.show()
-            self.combo_dilate_mode.show()
-            self.lbl_nuc.hide()
-            self.combo_nuc.hide()
-            self.stack.hide()
-            self.row_min_area_widget.hide()
-            self._on_dilate_mode_changed(self.combo_dilate_mode.currentText())
+        self.combo_method.show()
+        self.lbl_algorithm.show()
+        self.lbl_dilate.hide()
+        self.spin_dilate.hide()
+        self.lbl_dilate_mode.hide()
+        self.combo_dilate_mode.hide()
+        self.lbl_nuc.show()
+        self.combo_nuc.show()
+        self.stack.show()
+        self.row_min_area_widget.show()
+        self.btn_toggle_advanced.show()
+        self.advanced_container.setVisible(self.btn_toggle_advanced.isChecked())
+        self._on_method_changed(self.combo_method.currentText())
 
     def update_markers(self, markers: List[str]) -> None:
         self.markers = list(markers)
@@ -522,34 +918,78 @@ class StepWidget(QFrame):
             "nuclear_channel": nuc_idx,
             "membrane_channels": mem_indices,
             "dilation_radius": 0,
-            "gaussian_sigma": 0.0,
-            "norm_pmin": 1.0,
-            "norm_pmax": 99.8,
+            "gaussian_sigma": float(self.spin_gaussian_sigma.value()),
+            "norm_pmin": float(self.spin_norm_pmin.value()),
+            "norm_pmax": float(self.spin_norm_pmax.value()),
             "min_cell_area": int(self.spin_min_cell_area.value()),
-            "max_cell_area": 0,
-            "expand_radius": 0,
-            "expansion_mode": "distance",
+            "max_cell_area": int(self.spin_max_cell_area.value()),
+            "expand_radius": int(self.spin_expand_radius.value()),
+            "expansion_mode": self.combo_expansion_mode.currentText(),
+            "extra_kwargs": self._parse_extra_kwargs(),
         }
 
         if method == "Cellpose":
             diam = self.spin_cp_diam.value()
-            params["model_type"] = self.combo_cp_model.currentText()
+            niter_val = self.spin_cp_niter.value()
+            bsize_val = self.spin_cp_bsize.value()
+            params["model_type"] = self.combo_cp_model.currentText().strip()
             params["diameter"] = diam if diam > 0 else None
             params["flow_threshold"] = float(self.spin_cp_flow.value())
             params["cellprob_threshold"] = float(self.spin_cp_cellprob.value())
             params["tile_overlap"] = float(self.spin_cp_tile_overlap.value())
+            params["resample"] = bool(self.chk_cp_resample.isChecked())
+            params["augment"] = bool(self.chk_cp_augment.isChecked())
+            params["niter"] = int(niter_val) if niter_val > 0 else None
+            params["max_size_fraction"] = float(self.spin_cp_max_size_frac.value())
+            params["batch_size"] = int(self.spin_cp_batch_size.value())
+            params["bsize"] = int(bsize_val) if bsize_val > 0 else None
+            params["stitch_threshold"] = float(self.spin_cp_stitch.value())
+            params["cellpose_normalize"] = bool(self.chk_cp_normalize.isChecked())
         elif method == "StarDist":
-            params["model_name"] = self.combo_sd_model.currentText()
-            params["prob_thresh"] = float(self.spin_sd_prob.value())
-            params["nms_thresh"] = float(self.spin_sd_nms.value())
+            use_defaults = bool(self.chk_sd_model_defaults.isChecked())
+            params["model_name"] = self.combo_sd_model.currentText().strip()
+            params["use_model_default_thresholds"] = use_defaults
+            params["prob_thresh"] = None if use_defaults else float(self.spin_sd_prob.value())
+            params["nms_thresh"] = None if use_defaults else float(self.spin_sd_nms.value())
             params["normalize_input"] = bool(self.chk_sd_norm.isChecked())
+            params["scale"] = float(self.spin_sd_scale.value())
+            params["sparse"] = bool(self.chk_sd_sparse.isChecked())
+            params["n_tiles_grid"] = int(self.spin_sd_n_tiles.value())
         elif method == "InstanSeg":
-            params["model_name"] = self.combo_is_model.currentText()
+            seed_t = float(self.spin_is_seed_thresh.value())
+            mask_t = float(self.spin_is_mask_thresh.value())
+            peak_d = int(self.spin_is_peak_dist.value())
+            ov_t = float(self.spin_is_overlap_thresh.value())
+            win_sz = int(self.spin_is_window_size.value())
+            params["model_name"] = self.combo_is_model.currentText().strip()
             params["pixel_size"] = float(self.spin_is_pixel_size.value())
             params["cleanup_fragments"] = bool(self.chk_is_cleanup.isChecked())
+            params["target"] = self.combo_is_target.currentText()
+            params["resolve_cell_and_nucleus"] = bool(self.chk_is_resolve.isChecked())
+            params["normalise"] = bool(self.chk_is_normalise.isChecked())
+            params["rescale_output"] = bool(self.chk_is_rescale_output.isChecked())
+            params["tile_size"] = int(self.spin_is_tile_size.value())
+            params["batch_size"] = int(self.spin_is_batch_size.value())
+            params["seed_threshold"] = seed_t if seed_t > 0.0 else None
+            params["mask_threshold"] = mask_t if mask_t > 0.0 else None
+            params["peak_distance"] = peak_d if peak_d > 0 else None
+            params["overlap_threshold"] = ov_t if ov_t > 0.0 else None
+            params["window_size"] = win_sz if win_sz > 0 else None
         elif method == "CellSAM":
             params["token"] = self.txt_cs_token.text().strip()
             params["bbox_threshold"] = float(self.spin_cs_bbox.value())
+            params["model_path"] = self.txt_cs_model_path.text().strip()
+            params["low_contrast_enhancement"] = bool(self.chk_cs_low_contrast.isChecked())
+            params["use_wsi"] = self.combo_cs_use_wsi.currentText()
+            params["gauge_cell_size"] = bool(self.chk_cs_gauge_size.isChecked())
+            params["block_size"] = int(self.spin_cs_block_size.value())
+            params["overlap"] = int(self.spin_cs_overlap.value())
+            params["iou_depth"] = int(self.spin_cs_iou_depth.value())
+            params["iou_threshold"] = float(self.spin_cs_iou_thresh.value())
+            params["postprocess"] = bool(self.chk_cs_postprocess.isChecked())
+            params["remove_boundaries"] = bool(self.chk_cs_remove_bounds.isChecked())
+            params["fast"] = bool(self.chk_cs_fast.isChecked())
+            params["use_all_channels"] = bool(self.chk_cs_all_channels.isChecked())
 
         return SegmentationStep(method_name=method, params=params, rule=rule)
 
@@ -601,9 +1041,78 @@ class PipelineGroupWidget(QWidget):
         self.btn_add.setStyleSheet(BUTTON_SECONDARY)
         self.btn_add.clicked.connect(self._add_step)
         self.main_layout.addWidget(self.btn_add)
+
+        # Completion Dilation Bar
+        self.completion_bar = QFrame()
+        self.completion_bar.setObjectName("CompletionDilationBar")
+        self.completion_bar.setStyleSheet(
+            "QFrame#CompletionDilationBar { background-color: #232832; "
+            "border: 1px solid #3c4352; border-radius: 6px; padding: 4px; }"
+        )
+        comp_layout = QVBoxLayout(self.completion_bar)
+        comp_layout.setContentsMargins(6, 6, 6, 6)
+        comp_layout.setSpacing(4)
+
+        self.chk_auto_complete_cyto = QCheckBox("Auto-dilate unmatched nuclei")
+        self.chk_auto_complete_cyto.setChecked(True)
+        self.chk_auto_complete_cyto.toggled.connect(self._on_auto_complete_toggled)
+        comp_layout.addWidget(self.chk_auto_complete_cyto)
+
+        comp_opts = QHBoxLayout()
+        comp_opts.setSpacing(6)
+        comp_opts.addWidget(QLabel("Radius (px):"))
+        self.spin_fallback_dilate = QSpinBox()
+        self.spin_fallback_dilate.setRange(1, 200)
+        self.spin_fallback_dilate.setValue(5)
+        comp_opts.addWidget(self.spin_fallback_dilate)
+        comp_opts.addWidget(QLabel("Mode:"))
+        self.combo_fallback_mode = QComboBox()
+        self.combo_fallback_mode.addItems(["distance", "watershed"])
+        self.combo_fallback_mode.currentTextChanged.connect(self._on_fallback_mode_changed)
+        comp_opts.addWidget(self.combo_fallback_mode, 1)
+        comp_layout.addLayout(comp_opts)
+
+        comp_mem_row = QHBoxLayout()
+        comp_mem_row.setSpacing(6)
+        self.lbl_fallback_mem = QLabel("Mem:")
+        self.combo_fallback_mem = MultiSelectButton()
+        self.combo_fallback_mem.addItems(self.markers)
+        comp_mem_row.addWidget(self.lbl_fallback_mem)
+        comp_mem_row.addWidget(self.combo_fallback_mem, 1)
+        comp_layout.addLayout(comp_mem_row)
+
+        self._on_auto_complete_toggled(self.chk_auto_complete_cyto.isChecked())
+        self._on_fallback_mode_changed(self.combo_fallback_mode.currentText())
+
+        self.chk_auto_complete_cyto.toggled.connect(
+            lambda _checked: self.groupParamsChanged.emit()
+        )
+        self.spin_fallback_dilate.valueChanged.connect(
+            lambda _val: self.groupParamsChanged.emit()
+        )
+        self.combo_fallback_mode.currentTextChanged.connect(
+            lambda _txt: self.groupParamsChanged.emit()
+        )
+        self.combo_fallback_mem.selectionChanged.connect(
+            lambda: self.groupParamsChanged.emit()
+        )
+
+        self.main_layout.addWidget(self.completion_bar)
         self.main_layout.addStretch()
 
         self._add_step()
+
+    def _on_auto_complete_toggled(self, checked: bool) -> None:
+        enabled = bool(checked)
+        self.spin_fallback_dilate.setEnabled(enabled)
+        self.combo_fallback_mode.setEnabled(enabled)
+        self.lbl_fallback_mem.setEnabled(enabled)
+        self.combo_fallback_mem.setEnabled(enabled)
+
+    def _on_fallback_mode_changed(self, mode: str) -> None:
+        show_mem = str(mode) == "watershed"
+        self.lbl_fallback_mem.setVisible(show_mem)
+        self.combo_fallback_mem.setVisible(show_mem)
 
     def _add_step(self) -> StepWidget:
         step = StepWidget(self.available_methods, self.markers)
@@ -627,6 +1136,12 @@ class PipelineGroupWidget(QWidget):
 
     def update_markers(self, markers: List[str]) -> None:
         self.markers = list(markers)
+        checked_fb_mem = self.combo_fallback_mem.get_checked_items()
+        self.combo_fallback_mem.blockSignals(True)
+        self.combo_fallback_mem.clear()
+        self.combo_fallback_mem.addItems(self.markers)
+        self.combo_fallback_mem.set_checked_items(checked_fb_mem)
+        self.combo_fallback_mem.blockSignals(False)
         for sw in self.step_widgets:
             sw.update_markers(self.markers)
 
@@ -637,11 +1152,52 @@ class PipelineGroupWidget(QWidget):
 
     def set_running_state(self, is_running: bool) -> None:
         self.btn_add.setEnabled(not is_running)
+        self.completion_bar.setEnabled(not is_running)
+        if not is_running:
+            self._on_auto_complete_toggled(self.chk_auto_complete_cyto.isChecked())
         for sw in self.step_widgets:
             sw.setEnabled(not is_running)
 
+    def _get_fallback_membrane_indices(self) -> List[int]:
+        checked = self.combo_fallback_mem.get_checked_items()
+        return [self.markers.index(m) for m in checked if m in self.markers]
+
     def get_steps(self) -> List[SegmentationStep]:
-        return [sw.get_step_config(self.markers) for sw in self.step_widgets]
+        auto_complete = bool(self.chk_auto_complete_cyto.isChecked())
+        fallback_radius = int(self.spin_fallback_dilate.value())
+        fallback_mode = self.combo_fallback_mode.currentText()
+        fallback_mem_channels = self._get_fallback_membrane_indices()
+        steps: List[SegmentationStep] = []
+        for sw in self.step_widgets:
+            step = sw.get_step_config(self.markers)
+            step.params["auto_complete_cytoplasm"] = auto_complete
+            step.params["fallback_dilation_radius"] = fallback_radius
+            step.params["fallback_dilation_mode"] = fallback_mode
+            step.params["fallback_membrane_channels"] = list(fallback_mem_channels)
+            steps.append(step)
+        return steps
+
+    def get_sequence(self) -> SegmentationSequence:
+        steps = self.get_steps()
+        auto_complete = bool(self.chk_auto_complete_cyto.isChecked())
+        fallback_radius = int(self.spin_fallback_dilate.value())
+        fallback_mode = self.combo_fallback_mode.currentText()
+        fallback_mem_channels = self._get_fallback_membrane_indices()
+        try:
+            return SegmentationSequence(
+                steps=steps,
+                auto_complete_cytoplasm=auto_complete,
+                fallback_dilation_radius=fallback_radius,
+                fallback_dilation_mode=fallback_mode,
+                fallback_membrane_channels=fallback_mem_channels,
+            )
+        except TypeError:
+            seq = SegmentationSequence(steps=steps)
+            seq.auto_complete_cytoplasm = auto_complete
+            seq.fallback_dilation_radius = fallback_radius
+            seq.fallback_dilation_mode = fallback_mode
+            seq.fallback_membrane_channels = fallback_mem_channels
+            return seq
 
 
 class PipelineBuilderWidget(QWidget):
@@ -666,11 +1222,11 @@ class PipelineBuilderWidget(QWidget):
 
         # Header controls
         row_header = QHBoxLayout()
-        title = QLabel("Method Groups (Pipelines)")
+        title = QLabel("Methods / Pipelines")
         title.setStyleSheet(SECTION_TITLE_STYLE)
         row_header.addWidget(title)
 
-        self.btn_add_group = QPushButton("+ New Group")
+        self.btn_add_group = QPushButton("+ New Pipeline")
         self.btn_add_group.setMinimumHeight(26)
         self.btn_add_group.setStyleSheet(BUTTON_SECONDARY)
         self.btn_add_group.clicked.connect(self._add_group)
@@ -679,6 +1235,7 @@ class PipelineBuilderWidget(QWidget):
         main_layout.addLayout(row_header)
 
         self.tab_widget = QTabWidget()
+        configure_tab_widget(self.tab_widget)
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.tabCloseRequested.connect(self._close_tab)
         main_layout.addWidget(self.tab_widget)
@@ -705,7 +1262,7 @@ class PipelineBuilderWidget(QWidget):
         roi_btn_row.addWidget(self.btn_preview_roi, 1)
         roi_lyt.addLayout(roi_btn_row)
 
-        self.chk_auto_preview = QCheckBox("Auto-Preview on parameter change (400 ms)")
+        self.chk_auto_preview = QCheckBox("Auto-Preview on parameter change")
         self.chk_auto_preview.setChecked(False)
         roi_lyt.addWidget(self.chk_auto_preview)
         main_layout.addWidget(roi_box)
@@ -727,12 +1284,12 @@ class PipelineBuilderWidget(QWidget):
         # Execution Row
         exec_row = QHBoxLayout()
         exec_row.setSpacing(8)
-        self.btn_run_active = QPushButton("Run Active Group")
+        self.btn_run_active = QPushButton("Run Active Pipeline")
         self.btn_run_active.setMinimumHeight(30)
         self.btn_run_active.setStyleSheet(BUTTON_CTA)
         self.btn_run_active.clicked.connect(self._emit_run_active_signal)
 
-        self.btn_run = QPushButton("Run All Groups")
+        self.btn_run = QPushButton("Run All Pipelines")
         self.btn_run.setMinimumHeight(30)
         self.btn_run.setStyleSheet(BUTTON_PRIMARY)
         self.btn_run.clicked.connect(self._emit_run_signal)
@@ -867,6 +1424,39 @@ class PipelineBuilderWidget(QWidget):
         for i in range(self.tab_widget.count()):
             self.tab_widget.widget(i).set_running_state(is_running)
 
+    def get_all_groups(self) -> Dict[str, List[SegmentationStep]]:
+        groups: Dict[str, List[SegmentationStep]] = {}
+        for i in range(self.tab_widget.count()):
+            name = self.tab_widget.tabText(i)
+            widget = self.tab_widget.widget(i)
+            if widget is None:
+                continue
+            steps = widget.get_steps()
+            if steps:
+                groups[name] = steps
+        return groups
+
+    def get_all_sequences(self) -> Dict[str, SegmentationSequence]:
+        sequences: Dict[str, SegmentationSequence] = {}
+        for i in range(self.tab_widget.count()):
+            name = self.tab_widget.tabText(i)
+            widget = self.tab_widget.widget(i)
+            if widget is None:
+                continue
+            seq = widget.get_sequence()
+            if seq.steps:
+                sequences[name] = seq
+        return sequences
+
+    def get_active_sequence(self) -> Optional[SegmentationSequence]:
+        idx = self.tab_widget.currentIndex()
+        if idx < 0:
+            return None
+        group_widget = self.tab_widget.widget(idx)
+        if group_widget is None:
+            return None
+        return group_widget.get_sequence()
+
     def _emit_preview_roi(self) -> None:
         idx = self.tab_widget.currentIndex()
         if idx < 0:
@@ -892,11 +1482,6 @@ class PipelineBuilderWidget(QWidget):
             self.runSequence.emit({name: steps})
 
     def _emit_run_signal(self) -> None:
-        groups = {}
-        for i in range(self.tab_widget.count()):
-            name = self.tab_widget.tabText(i)
-            steps = self.tab_widget.widget(i).get_steps()
-            if steps:
-                groups[name] = steps
+        groups = self.get_all_groups()
         if groups:
             self.runSequence.emit(groups)

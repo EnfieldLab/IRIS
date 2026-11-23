@@ -44,6 +44,7 @@ from iris_common.widgets.theme import (
     SHARED_DARK_THEME,
     STATUS_STYLES,
     configure_independent_window,
+    configure_tab_widget,
     create_section_card,
     style_section_header,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "DEFAULT_MARKER_COLORS",
     "DEFAULT_CELLTYPE_PALETTE",
     "configure_independent_window",
+    "configure_tab_widget",
     "style_section_header",
     "create_section_card",
 ]

@@ -283,9 +283,9 @@ class MarkerExpressionDialog(QDialog):
             self.toolbar = NavigationToolbar(self.canvas, self)
             self.toolbar.setStyleSheet(
                 "QToolBar { background-color: #1f232b; border: 1px solid #3c4352; "
-                "spacing: 4px; padding: 2px; }"
+                "spacing: 4px; padding: 2px; } "
                 "QToolButton { background-color: transparent; border: 1px solid transparent; "
-                "border-radius: 3px; padding: 3px; }"
+                "border-radius: 3px; padding: 3px; } "
                 "QToolButton:hover { background-color: #3A6A9A; border: 1px solid #4B82B5; }"
             )
             cc_layout.addWidget(self.toolbar)

@@ -136,7 +136,8 @@ class TestHeadlessEngineDecoupling:
         assert captured["image"][1, 2, 2] == 30.0
         assert captured["image"][1, 5, 5] == 70.0
         np.testing.assert_array_equal(res["nuclear"], nuc_mask)
-        np.testing.assert_array_equal(res["cytoplasm"], cyto_mask)
+        # Nuclear-anchored pairing reconciles cyto label 2 to overlapping nuclear ID 1
+        np.testing.assert_array_equal(res["cytoplasm"], nuc_mask)
 
     def test_pipeline_independent_rule_sync_no_membrane(self):
         img = np.zeros((2, 12, 12), dtype=np.float32)
@@ -238,11 +239,11 @@ class TestHeadlessEngineDecoupling:
 
         assert not err_calls
         assert len(step_calls) == 1
-        assert step_calls[0][3]["nuclear"] is nuc
-        assert step_calls[0][3]["cytoplasm"] is cyto
+        np.testing.assert_array_equal(step_calls[0][3]["nuclear"], nuc)
+        np.testing.assert_array_equal(step_calls[0][3]["cytoplasm"], nuc)
         assert len(group_calls) == 1
         np.testing.assert_array_equal(group_calls[0][1]["nuclear"], nuc)
-        np.testing.assert_array_equal(group_calls[0][1]["cytoplasm"], cyto)
+        np.testing.assert_array_equal(group_calls[0][1]["cytoplasm"], nuc)
         assert done_calls == [True]
 
 
@@ -672,12 +673,25 @@ class TestUIWiringWindowFlagsScalebarAndWorkers:
         dp.combo_active_method.setCurrentText("StarDist")
         dummy_ctrl._on_active_segmentation_method_changed.assert_called_with("StarDist")
 
-        dp.btn_flicker.click()
-        review_svc.flicker_models.assert_called_once()
+        assert not hasattr(dp, "btn_flicker")
+        dp.btn_use_single_model.click()
+        review_svc.use_pipeline_as_final_mask.assert_called_with("StarDist")
+
+        dp.btn_auto_consensus.click()
+        review_svc.auto_adjudicate_final_mask.assert_called_once()
+
+        dp.combo_override_method.setCurrentText("Cellpose")
+        dp.btn_draw_curation_roi.click()
+        review_svc.draw_curation_roi.assert_called_once()
+
+        dp.btn_apply_curation_roi.click()
+        review_svc.apply_roi_curation.assert_called_with("Cellpose")
 
         dp.combo_category_filter.setCurrentText("Split")
         review_svc.set_category_filter.assert_called_with("Split")
 
+        dp.chk_show_heatmap.setChecked(True)
+        review_svc.toggle_overlay_visibility.assert_called_with(True, True)
         dp.chk_show_heatmap.setChecked(False)
         review_svc.toggle_overlay_visibility.assert_called_with(False, True)
 
@@ -691,14 +705,25 @@ class TestUIWiringWindowFlagsScalebarAndWorkers:
         studio.btn_prev_issue.click()
         assert review_svc.prev_issue.call_count == 2
 
-        studio.combo_flicker_a.setCurrentText("Cellpose")
-        studio.combo_flicker_b.setCurrentText("StarDist")
-        studio.btn_flicker.click()
-        assert review_svc.flicker_models.call_count >= 2
+        assert not hasattr(studio, "btn_flicker")
+        assert not hasattr(studio, "combo_flicker_a")
+        assert not hasattr(studio, "combo_flicker_b")
 
         studio.combo_active_method.setCurrentText("StarDist")
         studio.btn_set_active_mask.click()
-        review_svc.set_active_mask_layers.assert_called_with("StarDist")
+        review_svc.use_pipeline_as_final_mask.assert_called_with("StarDist")
+        assert review_svc.use_pipeline_as_final_mask.call_count == 2
+
+        studio.btn_auto_consensus.click()
+        assert review_svc.auto_adjudicate_final_mask.call_count == 2
+
+        studio.btn_draw_curation_roi.click()
+        assert review_svc.draw_curation_roi.call_count == 2
+
+        studio.combo_override_method.setCurrentText("Cellpose")
+        studio.btn_apply_curation_roi.click()
+        review_svc.apply_roi_curation.assert_called_with("Cellpose")
+        assert review_svc.apply_roi_curation.call_count == 2
 
         studio.close()
         dp.close()

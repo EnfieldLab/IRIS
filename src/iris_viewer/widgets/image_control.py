@@ -394,7 +394,7 @@ class ImageControlWidget(QWidget):
         row_size_btns.addWidget(self.btn_apply_canvas_size)
 
         self.btn_reset_canvas_size = QPushButton("Reset Auto Fit")
-        self.btn_reset_canvas_size.setToolTip("Unlock canvas to dynamically fit the IRIS-Viewer window")
+        self.btn_reset_canvas_size.setToolTip("Unlock canvas to dynamically fit the IRIS window")
         self.btn_reset_canvas_size.clicked.connect(self._reset_canvas_size)
         row_size_btns.addWidget(self.btn_reset_canvas_size)
         layout.addLayout(row_size_btns)

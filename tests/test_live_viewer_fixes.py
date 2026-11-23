@@ -39,7 +39,10 @@ from iris_viewer.widgets.phenotyping.gating_studio_dialog import GatingStudioDia
 from iris_viewer.widgets.phenotyping.panel import PhenotyperPanelWidget
 from iris_viewer.widgets.phenotyping.sample_impact_dialog import SampleImpactDialog
 from iris_viewer.widgets.segmentation_panel import SegmentationPanelWidget
-from iris_viewer.widgets.segmentation_pipeline_builder import StepWidget
+from iris_viewer.widgets.segmentation_pipeline_builder import (
+    PipelineGroupWidget,
+    StepWidget,
+)
 from iris_viewer.widgets.segmentation_studio_dialog import SegmentationStudioDialog
 
 
@@ -440,47 +443,62 @@ def test_live_roi_preview_lazy_dask_and_multi_sample_offset(qapp, monkeypatch):
 
 
 def test_simplified_step_widget_ui_and_watershed_dilation(qapp):
-    """Test 5: Simplified StepWidget UI and watershed Cytoplasm (Dilate Remaining) execution."""
+    """Test 5: 2-mode StepWidget UI, watershed completion bar, and engine dilation."""
     markers = ["DAPI", "PanCK", "CD3"]
     sw = StepWidget(["Cellpose", "StarDist", "InstanSeg", "CellSAM"], markers)
+    group = PipelineGroupWidget(["Cellpose", "StarDist", "InstanSeg", "CellSAM"], markers)
     try:
         sw.show()
+        group.show()
         qapp.processEvents()
 
         assert not hasattr(sw, "btn_toggle_prepost")
         assert not hasattr(sw, "prepost_container")
         assert hasattr(sw, "spin_min_cell_area")
+        assert sw.btn_toggle_advanced.text() == "More Native Parameters"
+        assert [sw.combo_type.itemText(i) for i in range(sw.combo_type.count())] == [
+            "Nuclear (Base)",
+            "Cytoplasm (Sequential)",
+        ]
 
         cp_models = [sw.combo_cp_model.itemText(i) for i in range(sw.combo_cp_model.count())]
         assert "cpsam" in cp_models
 
-        sw.combo_type.setCurrentText("Cytoplasm (Dilate Remaining)")
-        qapp.processEvents()
-
-        dilate_modes = [
-            sw.combo_dilate_mode.itemText(i) for i in range(sw.combo_dilate_mode.count())
-        ]
-        assert "distance" in dilate_modes
-        assert "watershed" in dilate_modes
-
-        sw.combo_dilate_mode.setCurrentText("distance")
-        qapp.processEvents()
+        assert sw.lbl_mem.isVisible() is False
         assert sw.combo_mem.isVisible() is False
 
-        sw.combo_dilate_mode.setCurrentText("watershed")
+        sw.combo_type.setCurrentText("Cytoplasm (Sequential)")
         qapp.processEvents()
         assert sw.lbl_mem.isVisible() is True
         assert sw.combo_mem.isVisible() is True
 
-        sw.spin_dilate.setValue(18)
-        sw.combo_mem.set_checked_items(["PanCK"])
-        step_cfg = sw.get_step_config(markers)
-        assert step_cfg.rule == "Cytoplasm (Dilate Remaining)"
-        assert step_cfg.params["dilation_mode"] == "watershed"
-        assert step_cfg.params["membrane_channels"] == [1]
-        assert step_cfg.params["dilation_radius"] == 18
+        # Completion bar watershed Auto-dilate unmatched nuclei with combo_fallback_mem
+        assert group.chk_auto_complete_cyto.text() == "Auto-dilate unmatched nuclei"
+        dilate_modes = [
+            group.combo_fallback_mode.itemText(i)
+            for i in range(group.combo_fallback_mode.count())
+        ]
+        assert dilate_modes == ["distance", "watershed"]
 
-        # Execute Cytoplasm (Dilate Remaining) in watershed mode via execute_group_sync
+        group.combo_fallback_mode.setCurrentText("distance")
+        qapp.processEvents()
+        assert group.lbl_fallback_mem.isVisible() is False
+        assert group.combo_fallback_mem.isVisible() is False
+
+        group.combo_fallback_mode.setCurrentText("watershed")
+        qapp.processEvents()
+        assert group.lbl_fallback_mem.isVisible() is True
+        assert group.combo_fallback_mem.isVisible() is True
+
+        group.spin_fallback_dilate.setValue(18)
+        group.combo_fallback_mem.set_checked_items(["PanCK"])
+        seq_from_ui = group.get_sequence()
+        assert seq_from_ui.auto_complete_cytoplasm is True
+        assert seq_from_ui.fallback_dilation_mode == "watershed"
+        assert seq_from_ui.fallback_dilation_radius == 18
+        assert seq_from_ui.fallback_membrane_channels == [1]
+
+        # Execute programmatic Cytoplasm (Dilate Remaining) in watershed mode
         nuc_mask = np.zeros((40, 60), dtype=np.uint32)
         nuc_mask[18:22, 13:17] = 1
         nuc_mask[18:22, 43:47] = 2
@@ -497,10 +515,20 @@ def test_simplified_step_widget_ui_and_watershed_dilation(qapp):
             def segment(self, **_kwargs):
                 return {"nuclear": nuc_mask.copy(), "cytoplasm": None}
 
+        dilate_step = SegmentationStep(
+            "Dilation",
+            {
+                "nuclear_channel": 0,
+                "membrane_channels": [1],
+                "dilation_radius": 18,
+                "dilation_mode": "watershed",
+            },
+            rule="Cytoplasm (Dilate Remaining)",
+        )
         seq_ws = SegmentationSequence(
             steps=[
                 SegmentationStep("FixedNuc", {"nuclear_channel": 0}, rule="Nuclear (Base)"),
-                step_cfg,
+                dilate_step,
             ]
         )
         res_ws = execute_group_sync(
@@ -510,8 +538,27 @@ def test_simplified_step_widget_ui_and_watershed_dilation(qapp):
         assert cyto_ws is not None
         assert int(cyto_ws.max()) == 2
         assert cyto_ws[20, 28] == 2  # Assigned across dark cleft by watershed signal
+
+        # Also execute auto_complete watershed fallback driven by fallback_membrane_channels
+        seq_auto = SegmentationSequence(
+            steps=[
+                SegmentationStep("FixedNuc", {"nuclear_channel": 0}, rule="Nuclear (Base)"),
+            ],
+            auto_complete_cytoplasm=True,
+            fallback_dilation_radius=18,
+            fallback_dilation_mode="watershed",
+            fallback_membrane_channels=seq_from_ui.fallback_membrane_channels,
+        )
+        res_auto = execute_group_sync(
+            "ws_auto", seq_auto, image, {"FixedNuc": _FixedNuclearBackend()}, device="cpu"
+        )
+        cyto_auto = res_auto["cytoplasm"]
+        assert cyto_auto is not None
+        assert int(cyto_auto.max()) == 2
+        assert cyto_auto[20, 28] == 2
     finally:
         sw.close()
+        group.close()
         qapp.processEvents()
 
 

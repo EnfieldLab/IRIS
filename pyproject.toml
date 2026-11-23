@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "iris-viewer"
 version = "0.2.0"
-description = "IRIS-Suite: Interactive Spatial Proteomics, Multiplexed Imaging, Single-Cell Phenotyping & Microenvironment Analysis"
+description = "IRIS: Interactive Research viewer for Integrated Spatial-omics (Viewer, Phenotyper & Analyzer)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -61,6 +61,7 @@ all = [
 dev = ["pytest>=7.0", "pytest-qt>=4.0"]
 
 [project.scripts]
+iris = "iris_viewer.main:main"
 iris-viewer = "iris_viewer.main:main"
 
 [tool.setuptools.packages.find]

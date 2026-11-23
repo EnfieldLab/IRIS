@@ -11,6 +11,7 @@ Heavy per-domain logic lives in:
 """
 from __future__ import annotations
 
+import gc
 import os
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple, Union
@@ -52,6 +53,7 @@ from iris_viewer.core import (
     get_layer_sample_name,
     get_layer_type,
 )
+from iris_viewer.engine.curation import FINAL_CURATED_MASK_NAME
 from iris_viewer.engine.disagreement import compute_model_disagreement
 from iris_viewer.engine.feature_extraction import extract_cell_features
 from iris_viewer.engine.pipeline import (
@@ -101,7 +103,7 @@ class ViewerController:
         self._roi_sample_offset: Tuple[float, float] = (0.0, 0.0)
 
         # napari Viewer
-        self.viewer = napari.Viewer(title="IRIS-Viewer")
+        self.viewer = napari.Viewer(title="IRIS")
         try:
             self.viewer.scale_bar.visible = False
             self.viewer.scale_bar.ticks = False
@@ -228,6 +230,7 @@ class ViewerController:
         self._ctx.track_worker = self.track_worker
         self.legend_widget.ctx = self._ctx
         self.segmentation_panel.ctx = self._ctx
+        self.disagreement_panel.ctx = self._ctx
         self.phenotyper_panel.ctx = self._ctx
         self.analyzer_panel.ctx = self._ctx
 
@@ -490,6 +493,69 @@ class ViewerController:
             self, "_on_selected_qc_methods_changed"
         ):
             dp.selectedMethodsChanged.connect(self._on_selected_qc_methods_changed)
+        if hasattr(dp, "contourStyleChanged") and hasattr(
+            self.review_svc, "refresh_contour_style"
+        ):
+            dp.contourStyleChanged.connect(self.review_svc.refresh_contour_style)
+        if hasattr(dp, "qcSampleChanged") and hasattr(self, "_on_qc_sample_changed"):
+            dp.qcSampleChanged.connect(self._on_qc_sample_changed)
+        if hasattr(dp, "useSingleModelRequested") and hasattr(
+            self.review_svc, "use_pipeline_as_final_mask"
+        ):
+            dp.useSingleModelRequested.connect(self.review_svc.use_pipeline_as_final_mask)
+        if hasattr(dp, "autoConsensusRequested") and hasattr(
+            self.review_svc, "auto_adjudicate_final_mask"
+        ):
+            dp.autoConsensusRequested.connect(self.review_svc.auto_adjudicate_final_mask)
+        if hasattr(dp, "overrideHotspotsRequested") and hasattr(
+            self.review_svc, "apply_hotspot_curation"
+        ):
+
+            def _dispatch_override(method_name: str, target: Any) -> None:
+                if target is None or target == "filtered_category":
+                    self.review_svc.apply_hotspot_curation(
+                        method_name, items=None, use_filtered_category=True
+                    )
+                else:
+                    items_list = (
+                        list(target) if isinstance(target, (list, tuple)) else [target]
+                    )
+                    if not items_list and hasattr(self, "_ctx"):
+                        flagged = getattr(self._ctx, "flagged_cells", []) or []
+                        idx = getattr(self._ctx, "current_issue_idx", -1)
+                        if 0 <= idx < len(flagged):
+                            items_list = [flagged[idx]]
+                    self.review_svc.apply_hotspot_curation(
+                        method_name, items=items_list, use_filtered_category=False
+                    )
+
+            dp.overrideHotspotsRequested.connect(_dispatch_override)
+        if hasattr(dp, "drawCurationRoiRequested") and hasattr(
+            self.review_svc, "draw_curation_roi"
+        ):
+            dp.drawCurationRoiRequested.connect(self.review_svc.draw_curation_roi)
+        if hasattr(dp, "applyCurationRoiRequested") and hasattr(
+            self.review_svc, "apply_roi_curation"
+        ):
+            dp.applyCurationRoiRequested.connect(self.review_svc.apply_roi_curation)
+        if hasattr(dp, "hotspotKeepRequested") and hasattr(
+            self.review_svc, "curate_hotspot_and_advance"
+        ):
+            dp.hotspotKeepRequested.connect(
+                lambda choice, auto_adv: self.review_svc.curate_hotspot_and_advance(
+                    choice, auto_advance=bool(auto_adv)
+                )
+            )
+        if hasattr(dp, "resetCurationRequested") and hasattr(
+            self.review_svc, "reset_curated_mask_to_reference"
+        ):
+            dp.resetCurationRequested.connect(
+                self.review_svc.reset_curated_mask_to_reference
+            )
+        if hasattr(dp, "skipHotspotRequested") and hasattr(
+            self.review_svc, "next_issue"
+        ):
+            dp.skipHotspotRequested.connect(self.review_svc.next_issue)
         self.legend_widget.layerSelected.connect(self._select_layer)
 
     def _bind_feature_signals(self) -> None:
@@ -591,6 +657,12 @@ class ViewerController:
             base = get_layer_base_name(layer)
             if base == layer_name:
                 self.viewer.layers.selection.add(layer)
+                if layer_name in ("Segmentation Preview ROI", "Curation Selection ROI"):
+                    try:
+                        layer.visible = True
+                        layer.mode = "select"
+                    except Exception:
+                        pass
                 break
 
     def _toggle_view_lock(self, is_locked: bool) -> None:
@@ -838,6 +910,16 @@ class ViewerController:
         except Exception:
             pass
 
+        legend = getattr(self, "legend_widget", None)
+        entries = getattr(self, "added_legend_entries", None)
+        if legend is not None and hasattr(legend, "add_segmentation_row"):
+            try:
+                legend.add_segmentation_row(lyr, roi_name, "#00E5FF", layer_type="shapes")
+            except TypeError:
+                legend.add_segmentation_row(lyr, roi_name, "#00E5FF")
+            if isinstance(entries, set):
+                entries.add(roi_name)
+
         self.state.preview_roi_bbox = bbox
         return bbox
 
@@ -947,7 +1029,8 @@ class ViewerController:
         iris_log(
             "IRIS-Viewer",
             "ROI Preview",
-            f"Executing '{group_name}'{sample_tag} on ROI y={bbox[0]}:{bbox[2]}, x={bbox[1]}:{bbox[3]}...",
+            f"Executing '{group_name}'{sample_tag} on ROI "
+            f"y={bbox[0]}:{bbox[2]}, x={bbox[1]}:{bbox[3]}...",
         )
         self.pipeline_service.execute_roi_preview(
             group_name=group_name,
@@ -974,16 +1057,16 @@ class ViewerController:
         if pb is not None and hasattr(pb, "btn_preview_roi"):
             pb.btn_preview_roi.setEnabled(True)
 
-        for key, layer_name, opac in (
-            ("nuclear", "ROI Preview - Nuclear", 0.8),
-            ("cytoplasm", "ROI Preview - Cytoplasm", 0.5),
+        for key, layer_name, opac, legend_color in (
+            ("nuclear", "ROI Preview - Nuclear", 0.8, "#4CC9F0"),
+            ("cytoplasm", "ROI Preview - Cytoplasm", 0.5, "#F72585"),
         ):
             mask_arr = res.get(key)
             if mask_arr is None:
                 if layer_name in self.viewer.layers:
                     self.viewer.layers[layer_name].visible = False
                 continue
-            self._upsert_labels_layer(
+            lyr = self._upsert_labels_layer(
                 mask_arr,
                 layer_name=layer_name,
                 scale_val=scale_val,
@@ -991,6 +1074,12 @@ class ViewerController:
                 visible=True,
                 opacity=opac,
             )
+            legend = getattr(self, "legend_widget", None)
+            entries = getattr(self, "added_legend_entries", None)
+            if legend is not None and hasattr(legend, "add_segmentation_row"):
+                legend.add_segmentation_row(lyr, layer_name, legend_color)
+                if isinstance(entries, set):
+                    entries.add(layer_name)
 
         n_nuc = _count_labels(res.get("nuclear"))
         n_cyto = _count_labels(res.get("cytoplasm"))
@@ -1138,7 +1227,10 @@ class ViewerController:
                     for sn in target_samples
                     if (
                         sn in self.state.multi_sample_images
-                        or (sn == self.state.current_sample_name and self.state.raw_image is not None)
+                        or (
+                            sn == self.state.current_sample_name
+                            and self.state.raw_image is not None
+                        )
                         or sn in self.state.file_map
                     )
                 ]
@@ -1307,7 +1399,8 @@ class ViewerController:
         @thread_worker
         def _process_all():
             for s_idx, (sample_name, image, img_path) in enumerate(sample_sources, start=1):
-                if image is None and img_path is not None:
+                loaded_from_disk = image is None and img_path is not None
+                if loaded_from_disk:
                     image, _ = load_multichannel_tiff(img_path)
                 if image is None:
                     continue
@@ -1370,6 +1463,10 @@ class ViewerController:
                         f"{group_name} -> {n_nuc} nuclei, {n_cyto} cytoplasm",
                     )
                     yield ("group_done", s_idx, n_samples, sample_name, group_name, group_res)
+
+                if loaded_from_disk:
+                    image = None
+                    gc.collect()
 
         def _upsert_sample_mask_layer(
             sample_name: str,
@@ -1483,7 +1580,7 @@ class ViewerController:
 
                 if group_name == active_group and nuc is not None:
                     self.state.masks_map[sample_name] = nuc
-                if sample_name == rep_sample or group_name not in self.state.segmentation_results:
+                if sample_name == rep_sample:
                     self.state.segmentation_results[group_name] = res
 
                 if sample_name in displayed_samples:
@@ -1518,7 +1615,39 @@ class ViewerController:
             if fatal_error[0]:
                 return
 
+            segmented_samples = [
+                sn
+                for sn, _img, _p in sample_sources
+                if isinstance(self.state.batch_results.get(sn), dict)
+                and any(
+                    isinstance(v, dict)
+                    and (v.get("nuclear") is not None or v.get("cytoplasm") is not None)
+                    for v in self.state.batch_results[sn].values()
+                )
+            ]
+            qc_sample = (
+                rep_sample
+                if rep_sample in segmented_samples
+                else (segmented_samples[0] if segmented_samples else None)
+            )
+            if qc_sample is not None:
+                self.state.current_sample_name = qc_sample
+                qc_entry = self.state.batch_results[qc_sample]
+                self.state.segmentation_results.clear()
+                self.state.segmentation_results.update(
+                    {
+                        g: r
+                        for g, r in qc_entry.items()
+                        if isinstance(r, dict)
+                        and (r.get("nuclear") is not None or r.get("cytoplasm") is not None)
+                    }
+                )
+
             self._sync_segmentation_sources()
+            if hasattr(self.disagreement_panel, "update_available_samples"):
+                self.disagreement_panel.update_available_samples(
+                    segmented_samples, active_sample=qc_sample
+                )
 
             if not self._multi_any_masks:
                 detail = (
@@ -1683,6 +1812,11 @@ class ViewerController:
             return
 
         self._sync_segmentation_sources()
+        if hasattr(self.disagreement_panel, "update_available_samples"):
+            cur_s = self.state.current_sample_name
+            self.disagreement_panel.update_available_samples(
+                [cur_s] if cur_s else [], active_sample=cur_s
+            )
         n = len(masks)
         active = self.state.active_segmentation_method or next(iter(masks))
         nuc_active, cyto_active = self.state.get_active_masks()
@@ -1741,6 +1875,83 @@ class ViewerController:
 
     # Active Mask & Disagreement QC
 
+    def _on_qc_sample_changed(self, sample_name: str) -> None:
+        sample_name = str(sample_name).strip()
+        if not sample_name:
+            return
+        entry = self.state.batch_results.get(sample_name)
+        if not isinstance(entry, dict):
+            return
+        sample_seg = {
+            g: res
+            for g, res in entry.items()
+            if isinstance(res, dict)
+            and (res.get("nuclear") is not None or res.get("cytoplasm") is not None)
+        }
+        if not sample_seg:
+            return
+
+        had_report = self.state.disagreement_report is not None
+        self.state.current_sample_name = sample_name
+        self.state.segmentation_results.clear()
+        self.state.segmentation_results.update(sample_seg)
+        self.state.disagreement_report = None
+        self.state.disagreement_heatmap = None
+        self._ctx.flagged_cells = []
+        self._ctx.current_issue_idx = -1
+
+        self._sync_segmentation_sources()
+
+        dp = self.disagreement_panel
+        if hasattr(dp, "set_final_mask_status"):
+            cur_states = getattr(getattr(self, "review_svc", None), "_curated_states", {})
+            self.state.curated_mask_state = cur_states.get(sample_name)
+            self.state._curated_sample_name = sample_name
+            if sample_name in cur_states:
+                curated = cur_states[sample_name]
+                n_cells = (
+                    int(np.sum(np.unique(curated.nuclear) > 0))
+                    if curated.nuclear.size > 0
+                    else 0
+                )
+                dp.set_final_mask_status(
+                    f"Final Mask: {FINAL_CURATED_MASK_NAME} "
+                    f"({n_cells:,} cells | base={curated.base_method} | "
+                    f"{curated.curated_regions_count} region(s) curated)",
+                    active=True,
+                )
+            elif FINAL_CURATED_MASK_NAME in sample_seg:
+                nuc_c = sample_seg[FINAL_CURATED_MASK_NAME].get("nuclear")
+                n_cells = int(np.sum(np.unique(nuc_c) > 0)) if nuc_c is not None else 0
+                dp.set_final_mask_status(
+                    f"Final Mask: {FINAL_CURATED_MASK_NAME} ({n_cells:,} cells)",
+                    active=True,
+                )
+            else:
+                dp.set_final_mask_status("Final Mask: None", active=False)
+        if had_report and hasattr(self, "review_svc") and self.review_svc is not None:
+            self.review_svc.update_disagreement_overlay(dp.get_threshold())
+        else:
+            for lname in (
+                "Disagreement Heatmap",
+                "Disagreement Contours",
+                "Method Comparison Overlay",
+                "Active Disagreement Isolation",
+            ):
+                if lname in self.viewer.layers:
+                    self.viewer.layers[lname].visible = False
+            if "Review BBox" in self.viewer.layers:
+                try:
+                    self.viewer.layers["Review BBox"].data = []
+                except Exception:
+                    pass
+            if hasattr(dp, "clear_region_review"):
+                dp.clear_region_review()
+
+        sp = getattr(self, "segmentation_panel", None)
+        if sp is not None and sp.popup_dialog is not None and sp.popup_dialog.isVisible():
+            sp.popup_dialog.refresh_data()
+
     def _on_active_segmentation_method_changed(self, method: str) -> None:
         method = str(method).strip()
         if not method or method not in self.state.segmentation_results:
@@ -1773,7 +1984,10 @@ class ViewerController:
     def _on_selected_qc_methods_changed(self, selected_methods: list) -> None:
         if not hasattr(self, "review_svc") or self.review_svc is None:
             return
-        if getattr(self.state, "disagreement_report", None) is not None and len(selected_methods) >= 1:
+        if (
+            getattr(self.state, "disagreement_report", None) is not None
+            and len(selected_methods) >= 1
+        ):
             self.review_svc.update_disagreement_overlay(self.disagreement_panel.get_threshold())
         else:
             self.review_svc.render_disagreement_overlays()
@@ -1799,6 +2013,10 @@ class ViewerController:
 
         seg_results: dict = {}
         for m, res in self.state.segmentation_results.items():
+            if m == FINAL_CURATED_MASK_NAME and (
+                selected_methods is None or m not in selected_methods
+            ):
+                continue
             if selected_methods is not None and m not in selected_methods:
                 continue
             if compare_mode == "Nuclear Masks":
@@ -1862,10 +2080,11 @@ class ViewerController:
         self.disagreement_panel.set_computing_state(False)
         self.state.disagreement_report = report
         self.state.disagreement_heatmap = report.disagreement_heatmap
-        self.review_svc.render_disagreement_overlays(report)
 
         if not self.state.active_segmentation_method and report.reference_method:
             self._on_active_segmentation_method_changed(report.reference_method)
+
+        self.review_svc.render_disagreement_overlays(report)
 
         iris_log(
             "IRIS-Viewer",
@@ -2242,7 +2461,11 @@ class ViewerController:
         if filepath:
             try:
                 export_disagreement_map(Path(filepath), heatmap)
-                iris_log("IRIS-Viewer", "Export", f"Saved disagreement map to {Path(filepath).name}.")
+                iris_log(
+                    "IRIS-Viewer",
+                    "Export",
+                    f"Saved disagreement map to {Path(filepath).name}.",
+                )
                 QMessageBox.information(
                     self.control_widget,
                     "Export Complete",
